@@ -1,7 +1,7 @@
 ---
 milestone: 0000
 title: Contracts and module rules
-status: Planned
+status: Done
 depends-on: none
 ships-in: unscheduled
 deadline: none
@@ -19,19 +19,19 @@ them when an import breaks a module boundary.
 
 ## Done when
 
-- [ ] The five modules build, and `make check` passes in each
-- [ ] An import that breaks a module dependency rule fails `make lint`,
+- [x] The five modules build, and `make check` passes in each
+- [x] An import that breaks a module dependency rule fails `make lint`,
       naming the rule it broke
-- [ ] `core` builds with `CGO_ENABLED=0`
-- [ ] `trust.Fidelity` orders none below syntactic below indexed below
+- [x] `core` builds with `CGO_ENABLED=0`
+- [x] `trust.Fidelity` orders none below syntactic below indexed below
       resolved
-- [ ] `trust.SupportsNegativeClaim` returns true for resolved binding
+- [x] `trust.SupportsNegativeClaim` returns true for resolved binding
       together with total completeness, and false for every other pair
-- [ ] `trust.Status` tells apart an answer nothing could serve, an answer
+- [x] `trust.Status` tells apart an answer nothing could serve, an answer
       served below the fidelity asked for, and an answer that found
       nothing
-- [ ] A type can satisfy one engine port without implementing any other
-- [ ] Every operation declares the target kinds it accepts, the
+- [x] A type can satisfy one engine port without implementing any other
+- [x] Every operation declares the target kinds it accepts, the
       parameters it needs, and the weakest fidelity it can be correct on
 
 ## Why now
@@ -66,3 +66,4 @@ import direction.
 | Date | What changed | Why |
 |---|---|---|
 | 2026-09-01 | Created | First milestone on the roadmap |
+| 2026-09-01 | Closed | Every criterion met; core builds CGO-free and depguard names the rule an import breaks |

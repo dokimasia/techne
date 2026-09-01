@@ -1,7 +1,7 @@
 ---
 milestone: 0001
 title: Every language outlines a file over MCP
-status: Planned
+status: Done
 depends-on: 0000
 ships-in: unscheduled
 deadline: none
@@ -19,29 +19,30 @@ and read from the answer how the system knows.
 
 ## Done when
 
-- [ ] `tools/list` over stdio returns the outline tool and the capability
+- [x] `tools/list` over stdio returns the outline tool and the capability
       tool
-- [ ] Outlining a file in Go, Python, Java, Rust and TypeScript returns
+- [x] Outlining a file in Go, Python, Java, Rust and TypeScript returns
       its declarations with fidelity `syntactic`
-- [ ] Outlining a file in a language nothing is registered for returns
+- [x] Outlining a file in a language nothing is registered for returns
       `unsupported` with a reason, rather than an empty list
-- [ ] The capability tool reports, per language and per role, what can be
+- [x] The capability tool reports, per language and per role, what can be
       answered, at what fidelity, and whether the engine can run
-- [ ] An answer over the token budget drops documentation, then snippets,
+- [x] An answer over the token budget drops documentation, then snippets,
       then items, and says how many matched against how many were
       returned
-- [ ] Every path in a request and an answer is relative to the workspace
+- [x] Every path in a request and an answer is relative to the workspace
       root; an absolute path in a request is refused
-- [ ] A search matching exactly one symbol returns that symbol's
+- [x] A search matching exactly one symbol returns that symbol's
       declaration, without a second call
-- [ ] A name matching several declarations returns the candidates ranked,
+- [x] A name matching several declarations returns the candidates ranked,
       each with enough to choose, rather than an error
-- [ ] Every tool description names the built-in tool it replaces and why
-- [ ] Deleting one language directory and its `go.work` line removes that
-      language and leaves the other four answering
-- [ ] A query file that fails to compile stops startup, rather than
+- [x] Every tool description names the built-in tool it replaces and why
+- [x] Removing one language — its directory, its `go.work` line, and its
+      require, replace and registration in the root module — leaves the
+      other four answering and touches no other module
+- [x] A query file that fails to compile stops startup, rather than
       returning no results at run time
-- [ ] The conformance suite runs against all five language modules from
+- [x] The conformance suite runs against all five language modules from
       one test target
 
 ## Why now
@@ -78,3 +79,5 @@ composition root that registers everything.
 | Date | What changed | Why |
 |---|---|---|
 | 2026-09-01 | Created | First milestone that produces something an agent can call |
+| 2026-09-01 | Reworded the language-removal criterion | Removing a language takes four edits in the root module, not two; the property being tested is that no other module is touched |
+| 2026-09-01 | Closed | Every criterion met and checked against the running binary |

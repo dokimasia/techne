@@ -28,8 +28,10 @@ type register func(fs.FS, *lang.Registry, *engine.Catalog) error
 
 // languages are the modules this binary ships with.
 //
-// Removing one from this list removes it from the binary; removing its
-// directory and its go.work line removes it from the tree.
+// Removing a language takes four edits, all in the root module: this
+// list, the import above, the require and replace in go.mod, and the use
+// line in go.work. The directory then goes. No other module names a
+// language, so none of them is touched.
 var languages = []register{
 	golang.Register,
 	python.Register,
