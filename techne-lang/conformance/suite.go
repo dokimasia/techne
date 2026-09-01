@@ -120,6 +120,22 @@ func Run(t *testing.T, s Suite) {
 			}
 		})
 
+		t.Run("carries the source text its span names", func(t *testing.T) {
+			t.Parallel()
+			for _, sym := range got.Items {
+				content, known := s.Files[string(sym.Span.Path)]
+				if !known {
+					continue
+				}
+				assert.True(t, sym.Span.End.Offset <= len(content),
+					"a span names bytes inside the file it points at")
+				assert.Equal(t, sym.Snippet, content[sym.Span.Start.Offset:sym.Span.End.Offset],
+					"the snippet is the span's own bytes, so the two cannot describe different code")
+				assert.Contains(t, sym.Snippet, sym.Name,
+					"a declaration's own text contains the name it declares")
+			}
+		})
+
 		t.Run("reports it covered the whole scope", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, got.Completeness, trust.ScopeTotal,

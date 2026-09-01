@@ -15,7 +15,8 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// many builds an answer holding n documented symbols.
+// many builds an answer holding n documented symbols, each carrying the
+// source text of its declaration.
 func many(n int) engine.Answer[sema.Symbol] {
 	items := make([]sema.Symbol, 0, n)
 	for i := range n {
@@ -27,6 +28,7 @@ func many(n int) engine.Answer[sema.Symbol] {
 			Span:       source.Span{Path: "pkg/a.fx"},
 			Visibility: sema.Exported,
 			Doc:        strings.Repeat("documentation that costs a caller context. ", 8),
+			Snippet:    strings.Repeat("func SymbolA() { return }\n", 6),
 		})
 	}
 	return engine.Answer[sema.Symbol]{
@@ -54,6 +56,15 @@ func documented(a engine.Answer[sema.Symbol]) bool {
 	return false
 }
 
+func snippeted(a engine.Answer[sema.Symbol]) bool {
+	for _, s := range a.Items {
+		if s.Snippet != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func TestBudget(t *testing.T) {
 	t.Parallel()
 
@@ -75,6 +86,46 @@ func TestBudget(t *testing.T) {
 			got := tool.Fit(many(40), tool.Budget{MaxTokens: 900, Detail: tool.Full})
 			assert.False(t, documented(got), "documentation goes before any item does")
 			assert.True(t, len(got.Items) > 8, "thinning bought room for names that would have been dropped")
+		})
+
+		t.Run("drops documentation before it drops source text", func(t *testing.T) {
+			t.Parallel()
+			// The ladder is documentation, then source text, then items.
+			// Sweeping the ceiling checks the order holds at every width
+			// rather than at one hand-picked number.
+			for ceiling := 50; ceiling <= 4000; ceiling += 50 {
+				got := tool.Fit(many(8), tool.Budget{MaxTokens: ceiling, Detail: tool.Full})
+				if !snippeted(got) {
+					assert.False(t, documented(got),
+						"source text is the later rung, so nothing keeps a doc after losing it")
+				}
+			}
+		})
+
+		t.Run("keeps source text at a budget the documentation alone paid for", func(t *testing.T) {
+			t.Parallel()
+			// Proves the two are separate rungs. Were they one step, no
+			// ceiling would ever drop the documentation and keep the code.
+			var found bool
+			for ceiling := 50; ceiling <= 4000 && !found; ceiling += 25 {
+				got := tool.Fit(many(8), tool.Budget{MaxTokens: ceiling, Detail: tool.Full})
+				found = !documented(got) && snippeted(got) && len(got.Items) == 8
+			}
+			assert.True(t, found,
+				"dropping the prose is enough at some width, and the code then survives whole")
+		})
+
+		t.Run("drops source text before it drops any item", func(t *testing.T) {
+			t.Parallel()
+			// A name a caller can act on outlives the text of a
+			// declaration it was not going to read in full.
+			for ceiling := 50; ceiling <= 4000; ceiling += 50 {
+				got := tool.Fit(many(8), tool.Budget{MaxTokens: ceiling, Detail: tool.Full})
+				if len(got.Items) < 8 {
+					assert.False(t, snippeted(got),
+						"items go last, so nothing is dropped while source text remains")
+				}
+			}
 		})
 
 		t.Run("drops items only once thinning is not enough", func(t *testing.T) {
@@ -132,6 +183,7 @@ func TestBudget(t *testing.T) {
 			assert.NotEmpty(t, string(got.Items[0].ID), "a summary still identifies the declaration")
 			assert.NotEmpty(t, got.Items[0].Name, "a summary still names the declaration")
 			assert.Empty(t, got.Items[0].Doc, "a summary carries no documentation")
+			assert.Empty(t, got.Items[0].Snippet, "a summary carries no source text")
 			assert.NotEmpty(t, string(got.Items[0].Span.Path), "a summary still says which file holds it")
 			assert.Equal(t, got.Items[0].Span.Start, source.Position{},
 				"the offsets are what standard adds, so a summary carries none")
@@ -145,12 +197,16 @@ func TestBudget(t *testing.T) {
 			assert.NotEmpty(t, string(got.Items[0].Span.Path), "standard says which file declares it")
 			assert.Equal(t, got.Items[0].Visibility, sema.Exported, "standard carries the visibility")
 			assert.Empty(t, got.Items[0].Doc, "standard carries no documentation")
+			assert.Empty(t, got.Items[0].Snippet,
+				"standard says where the declaration is rather than repeating it")
 		})
 
-		t.Run("full carries the documentation", func(t *testing.T) {
+		t.Run("full carries the documentation and the source text", func(t *testing.T) {
 			t.Parallel()
 			got := tool.Fit(many(1), tool.Budget{MaxTokens: 100000, Detail: tool.Full})
 			assert.NotEmpty(t, got.Items[0].Doc, "full is the level that carries documentation")
+			assert.NotEmpty(t, got.Items[0].Snippet,
+				"full is what a caller asks for to read the declaration without a second call")
 		})
 
 		t.Run("an unset detail is standard", func(t *testing.T) {
@@ -160,6 +216,7 @@ func TestBudget(t *testing.T) {
 			got := tool.Fit(many(1), tool.Budget{MaxTokens: 100000})
 			assert.NotEmpty(t, string(got.Items[0].Span.Path), "the default says where the declaration is")
 			assert.Empty(t, got.Items[0].Doc, "the default carries no documentation")
+			assert.Empty(t, got.Items[0].Snippet, "the default carries no source text")
 		})
 	})
 }

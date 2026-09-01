@@ -24,7 +24,8 @@ const (
 	Standard Detail = ""
 	// Summary identifies a declaration and no more.
 	Summary Detail = "summary"
-	// Full adds the documentation comment.
+	// Full adds the documentation comment and the declaration's own
+	// source text.
 	Full Detail = "full"
 )
 
@@ -52,8 +53,13 @@ type Budget struct {
 // Fit returns the answer thinned to the budget.
 //
 // It applies [Budget.Detail] first, then removes documentation from
-// every item, then drops items from the end. An answer that lost items
-// carries [trust.CaveatTruncated] naming how many matched.
+// every item, then the source text, then drops items from the end. An
+// answer that lost items carries [trust.CaveatTruncated] naming how many
+// matched.
+//
+// Prose goes before code because a caller that asked what a scope
+// declares can act on a name alone, and the sentence describing it was
+// the least of what it asked for.
 //
 // The provenance is never changed: thinning an answer says nothing about
 // the evidence behind it.
@@ -72,6 +78,13 @@ func Fit(a engine.Answer[sema.Symbol], b Budget) engine.Answer[sema.Symbol] {
 	// Thinning first: a name a caller can act on outlives a sentence it
 	// was not going to read.
 	a.Items = undocumented(a.Items)
+	if estimate(a) <= ceiling {
+		return truncate(a, matched)
+	}
+
+	// Then the source text. It is the largest thing an item carries, and
+	// a caller holding a span can still read it.
+	a.Items = unsnipped(a.Items)
 	if estimate(a) <= ceiling {
 		return truncate(a, matched)
 	}
@@ -103,7 +116,7 @@ func project(items []sema.Symbol, d Detail) []sema.Symbol {
 		case Full:
 			out[i] = s
 		default:
-			s.Doc = ""
+			s.Doc, s.Snippet = "", ""
 			out[i] = s
 		}
 	}
@@ -116,6 +129,17 @@ func undocumented(items []sema.Symbol) []sema.Symbol {
 	out := make([]sema.Symbol, len(items))
 	for i, s := range items {
 		s.Doc = ""
+		out[i] = s
+	}
+	return out
+}
+
+// unsnipped returns the items with their source text removed. A caller
+// keeps the span, so what was dropped is still one read away.
+func unsnipped(items []sema.Symbol) []sema.Symbol {
+	out := make([]sema.Symbol, len(items))
+	for i, s := range items {
+		s.Snippet = ""
 		out[i] = s
 	}
 	return out

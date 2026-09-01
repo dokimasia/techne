@@ -19,10 +19,19 @@ type Symbol struct {
 	// unit, and is [VisibilityUnknown] where the engine could not tell.
 	// What visibility means is the language's decision, not this
 	// package's.
-	Visibility Visibility
+	//
+	// It carries no omitempty: [VisibilityUnknown] is an answer, and a
+	// caller that could not tell it from an absent field would read
+	// "the engine was unsure" as "the engine said nothing".
+	Visibility Visibility `json:"visibility"`
 	// Doc is the documentation comment. The output budget drops this
 	// before it drops anything else, so a caller must not depend on it.
 	Doc string `json:"doc,omitempty"`
+	// Snippet is the declaration's own source text, so a caller that
+	// found what it wanted needs no second call to read it. The output
+	// budget drops it after the documentation and before it drops any
+	// item, so a caller must not depend on it.
+	Snippet string `json:"snippet,omitempty"`
 }
 
 // Unit is what a language calls the thing a file belongs to: a package

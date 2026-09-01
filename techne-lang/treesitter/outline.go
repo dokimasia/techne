@@ -112,6 +112,7 @@ func (e *Engine) declarations(p source.Path, content []byte) ([]sema.Symbol, err
 			Language:   e.declared.Language,
 			Span:       span,
 			Visibility: e.declared.Visibility(named),
+			Snippet:    snippetOf(content, span),
 		})
 	}
 	return out, nil
@@ -150,6 +151,25 @@ func read(
 		return 0, "", source.Span{}, false
 	}
 	return kind, named, span, true
+}
+
+// snippetOf returns the source text a span covers.
+//
+// Every symbol carries one and the output budget drops it for any detail
+// level below full, which costs a copy per declaration on a scope that
+// will not send it. The alternative is telling the engine what the
+// caller intends to print, and how an answer is rendered is not
+// something a parser should have to know.
+//
+// Offsets outside the content describe no text and yield none. They
+// should not occur: the span came from a node in the tree this content
+// was parsed into.
+func snippetOf(content []byte, s source.Span) string {
+	start, end := s.Start.Offset, s.End.Offset
+	if start < 0 || end > len(content) || start >= end {
+		return ""
+	}
+	return string(content[start:end])
 }
 
 // spanOf converts a node's range into a span. tree-sitter counts a row
