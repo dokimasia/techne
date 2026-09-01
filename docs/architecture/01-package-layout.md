@@ -180,16 +180,22 @@ binary can write their own `main` over the same `Register` calls.
 
 ## File conventions inside a package
 
-- One file per family of related declarations, with a banner comment at
-  the top naming the family. The banner is the file boundary: when a
-  second family appears in a file, it moves to its own.
-- `doc.go` holds the package comment and the `# Dependency position`
-  heading. It declares no types.
-- Tests are black-box by default: `foo.go` is tested by `foo_test.go` in
-  package `<pkg>_test`. A white-box test file exists only where the test
-  needs an unexported symbol, and says why at the top.
-- Subtests are named `Test<Unit>/<Method>/<case>`, so a failure names the
-  case without reading the test body.
-- Every exported declaration carries a doc comment stating its contract:
-  what it returns, what it does on a zero value, and what it does on
-  cancellation.
+- Name a file after the unit or family it holds, never after a technical
+  layer. No `types.go`, `interfaces.go`, `helpers.go`.
+- A banner comment grouping declarations inside a file is a file boundary
+  that was not drawn. Those groups are the files.
+- `doc.go` carries the package comment: a `Package <name> <verb phrase>`
+  first line, a `# Heading` per concern, doc links to the package's own
+  symbols, and a `# Dependency position` section naming what it imports.
+- Tests are black-box: the test package is `<pkg>_test`.
+- One test file per production file, paired in both directions. A file
+  holding only type declarations still gets its twin, covering the zero
+  values and the contracts its docblocks state.
+- One `Test<Unit>` function per production file. Everything below it is
+  `t.Run`, and the path reads `Test<Unit>/<Method>/<case>`. Error cases
+  are cases under their method, not a group of their own.
+- `t.Parallel()` at every level.
+- Every exported declaration carries a docblock stating its contract:
+  what it returns, what the zero value means, what it does on failure.
+  State a convention shared across many types once, under a `doc.go`
+  heading, rather than repeating it on each.

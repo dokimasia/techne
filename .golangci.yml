@@ -158,7 +158,8 @@ formatters:
     golines:
       max-len: 120
     gofumpt:
-      extra-rules: true
+      extra:
+        group-params: true
 
 issues:
   max-issues-per-linter: 0

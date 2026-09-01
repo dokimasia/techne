@@ -74,29 +74,29 @@ const (
 type Completeness uint8
 
 const (
-	// Unspecified means the engine cannot say what it covered.
-	Unspecified Completeness = iota
-	// Partial means the engine names what it missed. Read the caveats.
-	Partial
-	// Total means the engine examined every file in the requested scope.
-	Total
+	// ScopeUnknown means the engine cannot say what it covered.
+	ScopeUnknown Completeness = iota
+	// ScopePartial means the engine names what it missed. Read the caveats.
+	ScopePartial
+	// ScopeTotal means every file in the requested scope was examined.
+	ScopeTotal
 )
 
 // SupportsNegativeClaim reports whether an empty answer means there are
 // none, rather than that none were found. It takes both: a type checker
 // bound the name, and the engine covered the whole scope.
 func SupportsNegativeClaim(f Fidelity, c Completeness) bool {
-	return f == Resolved && c == Total
+	return f == Resolved && c == ScopeTotal
 }
 ```
 
 A language server that resolves through the type system reports
 `Resolved` for the roles where it does, and reports its own completeness
-honestly: `Total` once its index is built and the workspace is the scope
-it indexed, `Partial` while it is still warming, `Unspecified` if it
-cannot tell. An agent asking for callers gets a trustworthy negative from
-any language whose server reports both, and never gets one from a server
-that is mid-index.
+honestly: `ScopeTotal` once its index is built and the workspace is the
+scope it indexed, `ScopePartial` while it is still warming, and
+`ScopeUnknown` if it cannot tell. An agent asking for callers gets a
+trustworthy negative from any language whose server reports both, and
+never gets one from a server that is mid-index.
 
 This is the one place the proposal departs from treating fidelity as a
 single ordering. Everything else follows from it.
@@ -194,7 +194,10 @@ type Symbol struct {
 type RelationKind uint8
 
 const (
-	Calls RelationKind = iota
+	// RelationUnknown means the edge was not classified. It has no
+	// inverse.
+	RelationUnknown RelationKind = iota
+	Calls
 	CalledBy
 	Implements
 	ImplementedBy
@@ -238,8 +241,11 @@ survive an edit that moves a declaration down a file.
 type Status uint8
 
 const (
+	// Unset means nobody assigned a status. It is never valid on an
+	// answer that left a service.
+	Unset Status = iota
 	// OK means an engine answered at the fidelity it advertises.
-	OK Status = iota
+	OK
 	// Degraded means an engine answered below the fidelity the caller
 	// asked for.
 	Degraded
@@ -290,6 +296,21 @@ and tells a caller nothing it can act on.
 string-keyed dispatch, struct tags and runtime patching are invisible to
 every engine here, so even `Resolved` and `Total` together mean "there
 are none that static analysis can see".
+
+### Every enum's zero value means nothing was chosen
+
+`Status` starts at `Unset`, `Role` at `RoleUnset`, `Completeness` at
+`ScopeUnknown`, `edit.TargetKind` at `TargetUnset`, `edit.ChangeKind` at
+`ChangeUnset` and `diag.Severity` at `SeverityUnset`.
+
+A struct field nobody assigned then reads as absent rather than as a
+valid choice. The alternative puts the commonest value at zero, which is
+convenient until a service forgets to set one and the answer claims to
+have succeeded.
+
+The coverage values carry a `Scope` prefix because `Status` also has a
+`Partial` and both live in `trust`. `Status` is named on every answer, so
+it keeps the bare names.
 
 ### The ports
 
@@ -361,11 +382,17 @@ type Relator interface {
 }
 
 type Planner interface {
-	Plan(ctx context.Context, req Request, op edit.Operation, target edit.Target, args edit.Args) (edit.Plan, error)
+	Plan(
+		ctx context.Context,
+		req Request,
+		op edit.Operation,
+		target edit.Target,
+		args edit.Args,
+	) (Answer[edit.Change], error)
 }
 
 type Formatter interface {
-	Format(ctx context.Context, paths []source.Path) (edit.Plan, error)
+	Format(ctx context.Context, paths []source.Path) (Answer[edit.Change], error)
 }
 
 type Verifier interface {
