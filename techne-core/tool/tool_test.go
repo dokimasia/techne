@@ -9,7 +9,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/tool"
 )
 
@@ -33,6 +35,67 @@ func greeter(t *testing.T) tool.Tool {
 		})
 	assert.NoError(t, err, "a handler over serialisable types produces a tool")
 	return built
+}
+
+// symbolProperties reaches the schema of one item in a read tool's
+// answer, which is where a type that marshals as a word rather than as
+// its Go type shows up.
+func symbolProperties(t *testing.T, out *jsonschema.Schema) map[string]*jsonschema.Schema {
+	t.Helper()
+	items, held := out.Properties["items"]
+	assert.True(t, held, "a read tool answers with items")
+	assert.NotNil(t, items.Items, "the items are a list of symbols")
+	return items.Items.Properties
+}
+
+func TestSchema(t *testing.T) {
+	t.Parallel()
+
+	t.Run("OutputSchema", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("describes a kind as the word it marshals to", func(t *testing.T) {
+			t.Parallel()
+			// The Go type is a uint8 and the wire form is a word. A
+			// schema derived from the Go type alone would say integer,
+			// and a caller validating an answer against it would reject
+			// every answer it got.
+			built, err := tool.New("t", "d",
+				func(context.Context, struct{}) (tool.Answer, error) { return tool.Answer{}, nil })
+			assert.NoError(t, err, "a tool over the shared answer type builds")
+
+			properties := symbolProperties(t, built.OutputSchema())
+			kind, held := properties["kind"]
+			assert.True(t, held, "every symbol states its kind")
+			assert.Equal(t, kind.Type, "string", "a kind reaches a caller as a word")
+
+			want := make([]any, 0, len(sema.Kinds()))
+			for _, k := range sema.Kinds() {
+				want = append(want, k.String())
+			}
+			assert.Equal(t, kind.Enum, want,
+				"the schema names the vocabulary itself, so a kind added there needs no second edit")
+		})
+
+		t.Run("describes a visibility as the word it marshals to", func(t *testing.T) {
+			t.Parallel()
+			built, err := tool.New("t", "d",
+				func(context.Context, struct{}) (tool.Answer, error) { return tool.Answer{}, nil })
+			assert.NoError(t, err, "a tool over the shared answer type builds")
+
+			properties := symbolProperties(t, built.OutputSchema())
+			visibility, held := properties["visibility"]
+			assert.True(t, held, "every symbol states its visibility")
+			assert.Equal(t, visibility.Type, "string", "a visibility reaches a caller as a word")
+
+			want := make([]any, 0, len(sema.Visibilities()))
+			for _, v := range sema.Visibilities() {
+				want = append(want, v.String())
+			}
+			assert.Equal(t, visibility.Enum, want,
+				"unknown is one of the answers, so it is in the set a caller may see")
+		})
+	})
 }
 
 func TestTool(t *testing.T) {

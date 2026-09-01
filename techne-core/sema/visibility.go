@@ -50,3 +50,11 @@ func (v Visibility) String() string {
 func (v Visibility) MarshalJSON() ([]byte, error) {
 	return json.Marshal(v.String())
 }
+
+// Visibilities returns every value, [VisibilityUnknown] included.
+//
+// Unlike [Kinds], the unknown value is one of the answers rather than
+// the absence of one: an engine that could not tell says so.
+func Visibilities() []Visibility {
+	return []Visibility{VisibilityUnknown, Unexported, Exported}
+}

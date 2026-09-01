@@ -7,8 +7,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"go.dokimi.dev/techne/core/sema"
 )
 
 // Tool is one operation an agent can call.
@@ -72,15 +74,41 @@ func New[In, Out any](
 	name, description string,
 	run func(context.Context, In) (Out, error),
 ) (Tool, error) {
-	in, err := jsonschema.For[In](nil)
+	in, err := jsonschema.For[In](&jsonschema.ForOptions{TypeSchemas: marshalled})
 	if err != nil {
 		return nil, fmt.Errorf("tool: %q input schema: %w", name, err)
 	}
-	out, err := jsonschema.For[Out](nil)
+	out, err := jsonschema.For[Out](&jsonschema.ForOptions{TypeSchemas: marshalled})
 	if err != nil {
 		return nil, fmt.Errorf("tool: %q output schema: %w", name, err)
 	}
 	return &typed[In, Out]{name: name, description: description, in: in, out: out, run: run}, nil
+}
+
+// marshalled names the types whose schema is not the one their Go type
+// implies.
+//
+// A schema is derived from the Go type, and a type with its own
+// MarshalJSON writes something else: [sema.Kind] is a uint8 that
+// marshals as a word. Without this a tool would advertise an integer and
+// return a string, and a caller validating against the schema would
+// reject every answer it got.
+//
+// The values come from the vocabulary itself rather than a list here, so
+// a kind added there reaches the schema without a second edit.
+var marshalled = map[reflect.Type]*jsonschema.Schema{
+	reflect.TypeFor[sema.Kind]():       enumOf(sema.Kinds()),
+	reflect.TypeFor[sema.Visibility](): enumOf(sema.Visibilities()),
+}
+
+// enumOf builds the schema for a type that marshals as one of a closed
+// set of words.
+func enumOf[T fmt.Stringer](values []T) *jsonschema.Schema {
+	out := make([]any, 0, len(values))
+	for _, v := range values {
+		out = append(out, v.String())
+	}
+	return &jsonschema.Schema{Type: "string", Enum: out}
 }
 
 // typed is a tool over one input and output type.
