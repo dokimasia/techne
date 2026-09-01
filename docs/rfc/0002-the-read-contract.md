@@ -325,11 +325,6 @@ type Request struct {
 	Scope     source.Path     // one file or one directory
 	Language  source.Language
 	Preferred trust.Fidelity  // the caller's minimum; a weaker answer is marked Degraded
-
-	// Since narrows the scope to what changed after this version-control
-	// ref. Empty means the whole scope. It is the narrowing that gets
-	// used in practice: "what did I just break" beats naming paths.
-	Since string
 }
 
 // Query is what to search for. Text matches symbol names fuzzily and
@@ -540,12 +535,7 @@ between adapters.
 
 ## Open questions
 
-1. `Request.Since` is a version-control ref, so resolving it means `core`
-   knowing about version control, which it otherwise does not. Either
-   `core` gains that dependency, or the caller resolves the ref to a path
-   list and the field becomes `[]source.Path`, which puts the work back
-   on the agent.
-2. `Query.Text` matches names and doc comments with one string. Whether
+1. `Query.Text` matches names and doc comments with one string. Whether
    one scorer can serve both without one drowning the other is a question
    for the first engine that implements it.
 
@@ -555,6 +545,15 @@ Three roles from the prototype are not proposed here: reporting what
 units a project is made of, deriving edges a framework's conventions
 imply, and asking a language server for the fixes it would offer for a
 diagnostic. Each needs a consumer before it needs a port.
+
+Narrowing a request to what changed since a version-control ref is not
+proposed, and techne understands no version control. A caller that wants
+it resolves the ref itself and passes paths, which its own tooling does
+correctly and this would have to reimplement. "Changed since" means at
+least four different sets depending on whether staged and untracked files
+count, and getting that wrong would let an answer report total coverage
+of a scope that silently missed files, which is the failure this
+proposal's completeness field exists to prevent.
 
 The shape of a plan, the operation catalogue and the write pipeline are a
 separate proposal.

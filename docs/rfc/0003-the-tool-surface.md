@@ -52,6 +52,7 @@ alone is ambiguous.
 | `search` | where is the thing called X |
 | `resolve` | what does this name denote, and is it ambiguous |
 | `relations` | how does this symbol connect to the rest |
+| `verify` | does this build, and what does the linter say |
 | `capabilities` | what can you answer, per language, and how well |
 | `rename.symbol` | rename this declaration and every reference |
 | `move.file` | move this file and fix what referred to it |
@@ -223,8 +224,13 @@ An operation nothing implements anywhere is not a tool. It appears in
 `capabilities` with `available: false`, so an agent is told the operation
 exists and cannot run rather than that no such operation exists.
 
-That rule keeps the list proportional to what works. Seven tools serve
+That rule keeps the list proportional to what works. Eight tools serve
 five languages today.
+
+`verify` runs a language's gate without changing anything, so an agent
+can check its own work before asking for a change. It is the same
+verifier the write path runs, reached directly, and a failed run carries
+its fixes the same way.
 
 ## Alternatives considered
 
