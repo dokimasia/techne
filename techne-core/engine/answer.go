@@ -9,7 +9,12 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// Answer carries what an engine found and the evidence behind it.
+// Answer is what a service publishes to a caller: what an engine found,
+// and the evidence behind it.
+//
+// An engine returns a [Result] and never builds one of these. [Publish]
+// stamps the provenance from the engine that answered, so an adapter
+// cannot name itself or its own tier.
 //
 // Items being empty means nothing on its own. Read [trust.Status.Answered]
 // to learn whether an engine ran at all, and

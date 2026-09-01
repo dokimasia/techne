@@ -157,7 +157,11 @@ package sema
 // go:./internal/fsx#Digest:function.
 type ID string
 
-// Kind is what a symbol is.
+// Kind is what a symbol is. The set is smaller than any one language's
+// grammar and larger than the weakest engine can tell apart: it is sized
+// for the strongest engine, because a kind the vocabulary cannot express
+// would make a stronger tier lossy for no reason. A distinction only one
+// language draws is not carried.
 type Kind uint8
 
 const (
@@ -166,9 +170,13 @@ const (
 	KindPackage
 	KindFile
 	KindType
+	KindStruct
+	KindEnum
+	KindEnumMember
 	KindInterface
 	KindFunction
 	KindMethod
+	KindConstructor
 	KindField
 	KindVariable
 	KindConstant
@@ -332,12 +340,25 @@ const (
 	RoleIndex
 )
 
-// Answer carries items and the evidence behind them.
+// Result is what an engine returns. It carries what the engine found and
+// the limits only the engine knows, and no field it could use to
+// overstate itself: an engine names neither itself nor its tier.
+type Result[T any] struct {
+	Items        []T
+	Completeness trust.Completeness
+	Caveats      []trust.Caveat
+}
+
+// Answer is what a service publishes. Publish stamps the provenance from
+// the engine that answered, and derives the status in one place so what
+// counts as degraded cannot drift between roles.
 type Answer[T any] struct {
 	Items      []T
 	Status     trust.Status
 	Provenance trust.Provenance
 }
+
+func Publish[T any](r Result[T], e Engine, role Role, want trust.Fidelity) Answer[T]
 
 // Request is the scope of a question.
 type Request struct {
@@ -364,19 +385,19 @@ type Query struct {
 var ErrDecline = errors.New("engine: decline")
 
 type Outliner interface {
-	Outline(ctx context.Context, req Request) (Answer[sema.Symbol], error)
+	Outline(ctx context.Context, req Request) (Result[sema.Symbol], error)
 }
 
 type Searcher interface {
-	Search(ctx context.Context, req Request, q Query) (Answer[sema.Symbol], error)
+	Search(ctx context.Context, req Request, q Query) (Result[sema.Symbol], error)
 }
 
 type Resolver interface {
-	Resolve(ctx context.Context, req Request, at source.Position) (Answer[sema.Symbol], error)
+	Resolve(ctx context.Context, req Request, at source.Position) (Result[sema.Symbol], error)
 }
 
 type Relator interface {
-	Relate(ctx context.Context, req Request, of sema.ID, kind sema.RelationKind) (Answer[sema.Relation], error)
+	Relate(ctx context.Context, req Request, of sema.ID, kind sema.RelationKind) (Result[sema.Relation], error)
 }
 
 type Planner interface {
@@ -386,11 +407,11 @@ type Planner interface {
 		op edit.Operation,
 		target edit.Target,
 		args edit.Args,
-	) (Answer[edit.Change], error)
+	) (Result[edit.Change], error)
 }
 
 type Formatter interface {
-	Format(ctx context.Context, paths []source.Path) (Answer[edit.Change], error)
+	Format(ctx context.Context, paths []source.Path) (Result[edit.Change], error)
 }
 
 type Verifier interface {

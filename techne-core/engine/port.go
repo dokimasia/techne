@@ -14,24 +14,24 @@ import (
 
 // Outliner reports what a scope declares.
 type Outliner interface {
-	Outline(ctx context.Context, req Request) (Answer[sema.Symbol], error)
+	Outline(ctx context.Context, req Request) (Result[sema.Symbol], error)
 }
 
 // Searcher reports which declarations match a query.
 type Searcher interface {
-	Search(ctx context.Context, req Request, q Query) (Answer[sema.Symbol], error)
+	Search(ctx context.Context, req Request, q Query) (Result[sema.Symbol], error)
 }
 
 // Resolver reports what the name at a position denotes. More than one
 // item means the name is ambiguous, and the caller chooses.
 type Resolver interface {
-	Resolve(ctx context.Context, req Request, at source.Position) (Answer[sema.Symbol], error)
+	Resolve(ctx context.Context, req Request, at source.Position) (Result[sema.Symbol], error)
 }
 
 // Relator reports how a symbol connects to the rest, in one direction.
 // A service inverts the kind when an engine stores the other direction.
 type Relator interface {
-	Relate(ctx context.Context, req Request, of sema.ID, kind sema.RelationKind) (Answer[sema.Relation], error)
+	Relate(ctx context.Context, req Request, of sema.ID, kind sema.RelationKind) (Result[sema.Relation], error)
 }
 
 // Planner computes the edits an operation would need, and writes
@@ -44,19 +44,19 @@ type Planner interface {
 		op edit.Operation,
 		target edit.Target,
 		args edit.Args,
-	) (Answer[edit.Change], error)
+	) (Result[edit.Change], error)
 }
 
 // Formatter normalises the named paths and returns the edits that would
 // do it, touching nothing outside them.
 type Formatter interface {
-	Format(ctx context.Context, paths []source.Path) (Answer[edit.Change], error)
+	Format(ctx context.Context, paths []source.Path) (Result[edit.Change], error)
 }
 
 // Verifier reports what a compiler or linter says about a scope, in this
 // process rather than through a subprocess.
 type Verifier interface {
-	Verify(ctx context.Context, req Request) (Answer[diag.Diagnostic], error)
+	Verify(ctx context.Context, req Request) (Result[diag.Diagnostic], error)
 }
 
 // Indexer produces the facts an index stores, and says how far a change
@@ -67,7 +67,7 @@ type Verifier interface {
 // the engine is affordable. Affected is dynamic and precise: given that
 // this file changed, exactly which paths must be indexed again.
 type Indexer interface {
-	Index(ctx context.Context, p source.Path) (Answer[sema.Symbol], error)
+	Index(ctx context.Context, p source.Path) (Result[sema.Symbol], error)
 	Granularity() Invalidation
 	Affected(changed source.Path) []source.Path
 }

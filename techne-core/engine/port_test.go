@@ -23,8 +23,8 @@ func (outlineOnly) Language() source.Language           { return source.Language
 func (outlineOnly) Fidelity(engine.Role) trust.Fidelity { return trust.Syntactic }
 func (outlineOnly) Cost(engine.Role) engine.Cost        { return engine.CostParse }
 
-func (outlineOnly) Outline(context.Context, engine.Request) (engine.Answer[sema.Symbol], error) {
-	return engine.Answer[sema.Symbol]{Status: trust.OK}, nil
+func (outlineOnly) Outline(context.Context, engine.Request) (engine.Result[sema.Symbol], error) {
+	return engine.Result[sema.Symbol]{Completeness: trust.ScopeTotal}, nil
 }
 
 func TestPort(t *testing.T) {

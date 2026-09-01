@@ -20,17 +20,21 @@ func TestKind(t *testing.T) {
 			// These strings are embedded in identities an index stores,
 			// so the test pins them rather than deriving them.
 			for kind, want := range map[sema.Kind]string{
-				sema.KindUnknown:   "unknown",
-				sema.KindModule:    "module",
-				sema.KindPackage:   "package",
-				sema.KindFile:      "file",
-				sema.KindType:      "type",
-				sema.KindInterface: "interface",
-				sema.KindFunction:  "function",
-				sema.KindMethod:    "method",
-				sema.KindField:     "field",
-				sema.KindVariable:  "variable",
-				sema.KindConstant:  "constant",
+				sema.KindUnknown:     "unknown",
+				sema.KindModule:      "module",
+				sema.KindPackage:     "package",
+				sema.KindFile:        "file",
+				sema.KindType:        "type",
+				sema.KindStruct:      "struct",
+				sema.KindEnum:        "enum",
+				sema.KindEnumMember:  "enum-member",
+				sema.KindConstructor: "constructor",
+				sema.KindInterface:   "interface",
+				sema.KindFunction:    "function",
+				sema.KindMethod:      "method",
+				sema.KindField:       "field",
+				sema.KindVariable:    "variable",
+				sema.KindConstant:    "constant",
 			} {
 				if got := kind.String(); got != want {
 					t.Errorf("Kind(%d).String() = %q, want %q", kind, got, want)
@@ -53,8 +57,10 @@ func TestKind(t *testing.T) {
 			seen := map[string]sema.Kind{}
 			for _, k := range []sema.Kind{
 				sema.KindModule, sema.KindPackage, sema.KindFile, sema.KindType,
+				sema.KindStruct, sema.KindEnum, sema.KindEnumMember,
 				sema.KindInterface, sema.KindFunction, sema.KindMethod,
-				sema.KindField, sema.KindVariable, sema.KindConstant,
+				sema.KindConstructor, sema.KindField, sema.KindVariable,
+				sema.KindConstant,
 			} {
 				if prior, ok := seen[k.String()]; ok {
 					t.Errorf("kinds %d and %d share the wire form %q", prior, k, k.String())

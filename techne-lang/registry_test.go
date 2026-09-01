@@ -38,8 +38,8 @@ func (s stub) Language() source.Language         { return s.lang }
 func (stub) Fidelity(engine.Role) trust.Fidelity { return trust.Syntactic }
 func (stub) Cost(engine.Role) engine.Cost        { return engine.CostParse }
 
-func (stub) Outline(context.Context, engine.Request) (engine.Answer[sema.Symbol], error) {
-	return engine.Answer[sema.Symbol]{Status: trust.OK}, nil
+func (stub) Outline(context.Context, engine.Request) (engine.Result[sema.Symbol], error) {
+	return engine.Result[sema.Symbol]{Completeness: trust.ScopeTotal}, nil
 }
 
 func TestRegistry(t *testing.T) {
