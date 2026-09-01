@@ -1,4 +1,6 @@
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
 github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX3N/iU=
+github.com/google/jsonschema-go v0.4.3 h1:/DBOLZTfDow7pe2GmaJNhltueGTtDKICi8V8p+DQPd0=
+github.com/google/jsonschema-go v0.4.3/go.mod h1:r5quNTdLOYEz95Ru18zA0ydNbBuYoo9tgaYcxEYhJVE=
 go.dokimi.dev/assert v0.0.0-20260901105745-9c4b8bd0fc5f h1:fdTFW41uyhmsEFg4uDvZtNme/KhIwhp4ajHHuQk7FBs=
 go.dokimi.dev/assert v0.0.0-20260901105745-9c4b8bd0fc5f/go.mod h1:BsuINBkmhOK/EVx3iFJLyE+8JXZYzI81zhK4VF4XXjk=

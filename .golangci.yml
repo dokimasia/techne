@@ -84,6 +84,9 @@ linters:
             - $gostd
             - go.dokimi.dev/assert
             - go.dokimi.dev/techne/core
+            # Schema derivation for the tool surface. Standalone rather
+            # than the MCP SDK's own, so core carries no transport.
+            - github.com/google/jsonschema-go
 
         lang:
           files: ["**/techne-lang/**"]
