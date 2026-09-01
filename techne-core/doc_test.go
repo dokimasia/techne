@@ -6,6 +6,7 @@ package core_test
 import (
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
@@ -42,12 +43,9 @@ func TestDoc(t *testing.T) {
 				},
 			}
 
-			if !answered.Status.Answered() {
-				t.Error("an answer that ran must report a payload")
-			}
-			if !answered.Provenance.SupportsNegativeClaim() {
-				t.Error("resolved binding over total coverage must license a negative claim")
-			}
+			assert.True(t, answered.Status.Answered(), "an engine ran and returned what it found")
+			assert.True(t, answered.Provenance.SupportsNegativeClaim(),
+				"a type checker that saw the whole scope proves an empty answer means there are none")
 		})
 
 		t.Run("into an empty answer nobody may read as proof", func(t *testing.T) {
@@ -64,15 +62,10 @@ func TestDoc(t *testing.T) {
 				},
 			}
 
-			if !warming.Status.Answered() {
-				t.Error("a partial answer still ran and carries a payload worth reading")
-			}
-			if warming.Provenance.SupportsNegativeClaim() {
-				t.Error("a warming index must not license a negative claim")
-			}
-			if len(warming.Items) != 0 {
-				t.Error("this case is about an empty item list")
-			}
+			assert.True(t, warming.Status.Answered(), "a partial answer still ran and is worth reading")
+			assert.False(t, warming.Provenance.SupportsNegativeClaim(),
+				"a server still building its index has not seen everything it would need to prove absence")
+			assert.Empty(t, warming.Items, "this case is about what an empty item list is worth")
 		})
 	})
 }

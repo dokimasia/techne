@@ -6,6 +6,7 @@ package lang_test
 import (
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/lang"
 )
 
@@ -18,12 +19,10 @@ func TestDeclaration(t *testing.T) {
 		t.Run("declares nothing and is refused", func(t *testing.T) {
 			t.Parallel()
 			var unset lang.Declaration
-			if unset.Language != "" {
-				t.Errorf("zero Declaration.Language = %q, want the empty string", unset.Language)
-			}
-			if unset.IsTest != nil || unset.Namespace != nil || unset.Exported != nil {
-				t.Error("zero Declaration carries conventions it never stated")
-			}
+			assert.Empty(t, string(unset.Language), "an unset declaration names no language")
+			assert.Nil(t, unset.IsTest, "an unset declaration states no convention")
+			assert.Nil(t, unset.Namespace, "an unset declaration states no convention")
+			assert.Nil(t, unset.Exported, "an unset declaration states no convention")
 		})
 	})
 
@@ -36,9 +35,8 @@ func TestDeclaration(t *testing.T) {
 			// "// text" rather than "//text" says so here rather than in
 			// whatever writes the comment.
 			style := lang.CommentStyle{Line: "// ", Above: true}
-			if style.Line != "// " {
-				t.Errorf("Line = %q, want the prefix including its space", style.Line)
-			}
+			assert.Equal(t, style.Line, "// ",
+				"the prefix is written verbatim, so a language states its own spacing here")
 		})
 
 		t.Run("says whether the comment sits above the declaration", func(t *testing.T) {
@@ -46,9 +44,7 @@ func TestDeclaration(t *testing.T) {
 			// Python's convention puts it inside; Go's puts it above.
 			// One boolean covers both, and the zero value is inside.
 			var inside lang.CommentStyle
-			if inside.Above {
-				t.Error("the zero CommentStyle must not claim the comment sits above")
-			}
+			assert.False(t, inside.Above, "one boolean covers both conventions, and the zero value is inside")
 		})
 	})
 }

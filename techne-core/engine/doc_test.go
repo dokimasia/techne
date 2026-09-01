@@ -6,6 +6,7 @@ package engine_test
 import (
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/trust"
 )
@@ -25,9 +26,8 @@ func TestDoc(t *testing.T) {
 			// One tier per engine would force it to claim the weaker of
 			// the two for both.
 			var e engine.Engine = graded{}
-			if e.Fidelity(engine.RoleRelate) <= e.Fidelity(engine.RoleOutline) {
-				t.Error("an engine must be able to claim different tiers per role")
-			}
+			assert.True(t, e.Fidelity(engine.RoleRelate) > e.Fidelity(engine.RoleOutline),
+				"one tier per engine would force a server to claim the weaker of what it does for both")
 		})
 	})
 }

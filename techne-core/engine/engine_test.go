@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 )
 
@@ -24,16 +25,14 @@ func TestEngine(t *testing.T) {
 			// to move to the next engine or stop. An adapter that adds
 			// context must not break that.
 			wrapped := fmt.Errorf("gotypes: %w", engine.ErrDecline)
-			if !errors.Is(wrapped, engine.ErrDecline) {
-				t.Error("a wrapped ErrDecline is no longer recognisable")
-			}
+			assert.ErrorIs(t, wrapped, engine.ErrDecline,
+				"a service tells declining from failing, so context added by an adapter must not hide it")
 		})
 
 		t.Run("is not any other error", func(t *testing.T) {
 			t.Parallel()
-			if errors.Is(errors.New("gopls: exit status 1"), engine.ErrDecline) {
-				t.Error("an unrelated error matched ErrDecline")
-			}
+			assert.ErrorIsNot(t, errors.New("gopls: exit status 1"), engine.ErrDecline,
+				"a real failure stops selection rather than falling through to a weaker engine")
 		})
 	})
 
@@ -46,17 +45,16 @@ func TestEngine(t *testing.T) {
 			// Requiring the method would make every adapter carry one
 			// that always returns nil.
 			var e engine.Engine = outlineOnly{}
-			if _, declared := e.(engine.Available); declared {
-				t.Error("outlineOnly declares Available; this case needs an engine without it")
-			}
+			_, declared := e.(engine.Available)
+			assert.False(t, declared,
+				"an engine with nothing outside the process to check carries no Available method")
 		})
 
 		t.Run("reports why an engine cannot run", func(t *testing.T) {
 			t.Parallel()
 			var a engine.Available = unavailable{}
-			if err := a.Available(context.Background()); err == nil {
-				t.Error("an engine that cannot run must say so")
-			}
+			assert.HasError(t, a.Available(t.Context()),
+				"an engine that cannot run says why rather than being silently skipped")
 		})
 	})
 }

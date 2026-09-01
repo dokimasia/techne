@@ -6,6 +6,7 @@ package diag_test
 import (
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/diag"
 	"go.dokimi.dev/techne/core/source"
 )
@@ -27,15 +28,11 @@ func TestDoc(t *testing.T) {
 				Span:     source.Span{Path: "core/trust/status.go", Start: source.Position{Line: 12}},
 				Source:   "staticcheck",
 			}
-			if reported.Severity < diag.SeverityWarning {
-				t.Error("severity must let a caller decide whether to stop")
-			}
-			if reported.Code == "" || reported.Source == "" {
-				t.Error("code and source must let a caller suppress without matching prose")
-			}
-			if reported.Span.Path == "" {
-				t.Error("a diagnostic must say which file it is about")
-			}
+			assert.True(t, reported.Severity >= diag.SeverityWarning,
+				"severity alone decides whether a caller stops")
+			assert.NotEmpty(t, reported.Code, "a caller suppresses by rule rather than by matching prose")
+			assert.NotEmpty(t, reported.Source, "a caller tells a broken build from a linter's objection")
+			assert.NotEmpty(t, string(reported.Span.Path), "a diagnostic says which file it is about")
 		})
 	})
 }

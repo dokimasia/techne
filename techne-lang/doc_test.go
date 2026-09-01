@@ -4,9 +4,9 @@
 package lang_test
 
 import (
-	"context"
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/lang"
 )
@@ -26,23 +26,17 @@ func TestDoc(t *testing.T) {
 			// language; a smaller binary ships a subset of the same
 			// calls.
 			full, cat := lang.NewRegistry(), engine.NewCatalog()
-			if err := full.Register(cat, declared(), stub{fixture}); err != nil {
-				t.Fatalf("Register: %v", err)
-			}
+			assert.NoError(t, full.Register(cat, declared(), stub{fixture}), "one language registers")
 
 			empty := lang.NewRegistry()
-			if got := len(empty.Languages()); got != 0 {
-				t.Errorf("a second registry holds %d languages, want 0", got)
-			}
-			if got := len(full.Languages()); got != 1 {
-				t.Errorf("the first registry holds %d languages, want 1", got)
-			}
-			if _, routed := empty.LanguageOf("a.fx"); routed {
-				t.Error("a registry nobody registered into routed a path")
-			}
-			if got := cat.For(context.Background(), fixture, engine.RoleOutline); len(got) != 1 {
-				t.Errorf("the catalogue holds %d engines, want 1", len(got))
-			}
+			assert.Empty(t, empty.Languages(), "a registry nobody registered into holds nothing")
+			assert.Length(t, full.Languages(), 1,
+				"registration is a call, so each registry holds exactly what it was given")
+
+			_, routed := empty.LanguageOf("a.fx")
+			assert.False(t, routed, "a registry holding no language routes no path")
+			assert.Length(t, cat.For(t.Context(), fixture, engine.RoleOutline), 1,
+				"the engines went to the catalogue the caller supplied")
 		})
 	})
 }

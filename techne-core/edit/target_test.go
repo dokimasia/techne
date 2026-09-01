@@ -6,6 +6,7 @@ package edit_test
 import (
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/edit"
 )
 
@@ -17,15 +18,11 @@ func TestTarget(t *testing.T) {
 
 		t.Run("points at nothing", func(t *testing.T) {
 			t.Parallel()
-			// A request that named no target must be refused, not served
-			// against whatever the zero fields happen to mean.
 			var unset edit.Target
-			if unset.Kind != edit.TargetUnset {
-				t.Errorf("zero Target.Kind = %d, want TargetUnset", unset.Kind)
-			}
-			if unset.Symbol != "" || unset.Path != "" {
-				t.Errorf("zero Target names something: %+v", unset)
-			}
+			assert.Equal(t, unset.Kind, edit.TargetUnset,
+				"a request naming no target is refused rather than served against zero fields")
+			assert.Empty(t, string(unset.Symbol), "an unset target names no symbol")
+			assert.Empty(t, string(unset.Path), "an unset target names no file")
 		})
 
 		t.Run("is not a kind any operation accepts", func(t *testing.T) {
@@ -33,9 +30,8 @@ func TestTarget(t *testing.T) {
 			for _, op := range edit.Operations() {
 				spec, _ := edit.SpecFor(op)
 				for _, k := range spec.Accepts {
-					if k == edit.TargetUnset {
-						t.Errorf("operation %q accepts TargetUnset, so an unset target would be admitted", op)
-					}
+					assert.NotEqual(t, k, edit.TargetUnset,
+						"an operation accepting the unset kind would admit a request that named nothing")
 				}
 			}
 		})

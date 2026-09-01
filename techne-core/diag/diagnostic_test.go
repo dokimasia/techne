@@ -6,6 +6,7 @@ package diag_test
 import (
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/diag"
 )
 
@@ -21,21 +22,16 @@ func TestDiagnostic(t *testing.T) {
 				diag.SeverityUnset, diag.SeverityHint, diag.SeverityInfo,
 				diag.SeverityWarning, diag.SeverityError,
 			}
-			for i := 1; i < len(ordered); i++ {
-				if ordered[i-1] >= ordered[i] {
-					t.Errorf("severity %d is not below %d", ordered[i-1], ordered[i])
-				}
-			}
+			assert.Pairwise(t, ordered, func(earlier, later diag.Severity) bool {
+				return earlier < later
+			}, "the order rises, so a caller filters with one comparison")
 		})
 
 		t.Run("lets a caller filter with one comparison", func(t *testing.T) {
 			t.Parallel()
-			// The ordering exists so that asking for errors alone does
-			// not mean enumerating every other value.
 			for _, s := range []diag.Severity{diag.SeverityHint, diag.SeverityInfo, diag.SeverityWarning} {
-				if s >= diag.SeverityError {
-					t.Errorf("severity %d sorts at or above SeverityError", s)
-				}
+				assert.True(t, s < diag.SeverityError,
+					"asking for errors alone does not mean enumerating every other value")
 			}
 		})
 	})
@@ -46,19 +42,15 @@ func TestDiagnostic(t *testing.T) {
 		t.Run("carries no severity", func(t *testing.T) {
 			t.Parallel()
 			var unset diag.Diagnostic
-			if unset.Severity != diag.SeverityUnset {
-				t.Errorf("zero Diagnostic.Severity = %d, want SeverityUnset", unset.Severity)
-			}
+			assert.Equal(t, unset.Severity, diag.SeverityUnset,
+				"a diagnostic nobody graded claims no severity")
 		})
 
 		t.Run("names no reporting tool", func(t *testing.T) {
 			t.Parallel()
-			// Source distinguishes a broken build from a linter, so an
-			// unattributed diagnostic must not read as either.
 			var unset diag.Diagnostic
-			if unset.Source != "" || unset.Code != "" {
-				t.Errorf("zero Diagnostic attributes itself: %+v", unset)
-			}
+			assert.Empty(t, unset.Source, "an unattributed diagnostic reads as neither a build nor a linter")
+			assert.Empty(t, unset.Code, "an unattributed diagnostic carries no rule to suppress by")
 		})
 	})
 }

@@ -82,6 +82,7 @@ linters:
           list-mode: strict
           allow:
             - $gostd
+            - go.dokimi.dev/assert
             - go.dokimi.dev/techne/core
 
         lang:
@@ -89,18 +90,24 @@ linters:
           list-mode: strict
           allow:
             - $gostd
+            - go.dokimi.dev/assert
             - go.dokimi.dev/techne/core
             - go.dokimi.dev/techne/lang$
             - go.dokimi.dev/techne/lang/treesitter
             - go.dokimi.dev/techne/lang/lsp
             - go.dokimi.dev/techne/lang/command
             - go.dokimi.dev/techne/lang/conformance
+            # The tree-sitter binding. Grammars are not allowed here:
+            # a grammar belongs to one language, so it lives in that
+            # language's module.
+            - github.com/tree-sitter/go-tree-sitter
 
         presenter:
           files: ["**/techne-presenter/**"]
           list-mode: strict
           allow:
             - $gostd
+            - go.dokimi.dev/assert
             - go.dokimi.dev/techne/core
             - go.dokimi.dev/techne/presenter
 
@@ -109,8 +116,15 @@ linters:
           list-mode: strict
           allow:
             - $gostd
+            - go.dokimi.dev/assert
             - go.dokimi.dev/techne/core
             - go.dokimi.dev/techne/lang
+            - github.com/tree-sitter/go-tree-sitter
+            # A grammar belongs to exactly one language module. The
+            # prefix admits every tree-sitter grammar rather than naming
+            # each: which one a module may use is settled by which one it
+            # imports, and no module can import another's.
+            - github.com/tree-sitter/tree-sitter-
 
     gocritic:
       enabled-tags: [diagnostic]
@@ -135,6 +149,13 @@ linters:
 
     govet:
       enable-all: true
+
+    # A test that builds its own background context leaks it past the
+    # test. t.Context() is cancelled when the test finishes, so a
+    # forgotten goroutine dies with the test rather than outliving it.
+    usetesting:
+      context-background: true
+      context-todo: true
 
   exclusions:
     generated: lax

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/edit"
 )
 
@@ -18,23 +19,20 @@ func TestOperation(t *testing.T) {
 
 		t.Run("is the part before the dot", func(t *testing.T) {
 			t.Parallel()
-			if got := edit.RenameSymbol.Family(); got != edit.FamilyRename {
-				t.Errorf("RenameSymbol.Family() = %q, want %q", got, edit.FamilyRename)
-			}
+			assert.Equal(t, edit.RenameSymbol.Family(), edit.FamilyRename,
+				"an operation named family.subject belongs to the family before the dot")
 		})
 
 		t.Run("groups the subjects that share a verb", func(t *testing.T) {
 			t.Parallel()
-			if edit.RenameSymbol.Family() != edit.RenameFile.Family() {
-				t.Error("rename.symbol and rename.file must share a family")
-			}
+			assert.Equal(t, edit.RenameSymbol.Family(), edit.RenameFile.Family(),
+				"a family can be advertised or refused as a unit")
 		})
 
 		t.Run("is the whole name when there is no subject", func(t *testing.T) {
 			t.Parallel()
-			if got := edit.Operation("verify").Family(); got != edit.Family("verify") {
-				t.Errorf("Family() of an undotted name = %q, want %q", got, "verify")
-			}
+			assert.Equal(t, edit.Operation("verify").Family(), edit.Family("verify"),
+				"a verb needing no subject is its own family")
 		})
 	})
 
@@ -45,9 +43,8 @@ func TestOperation(t *testing.T) {
 			t.Parallel()
 			for _, op := range edit.Operations() {
 				family, subject, found := strings.Cut(string(op), ".")
-				if !found || family == "" || subject == "" {
-					t.Errorf("operation %q is not named family.subject", op)
-				}
+				assert.True(t, found && family != "" && subject != "",
+					"every operation is named family.subject, so a family groups its subjects")
 			}
 		})
 
@@ -55,23 +52,17 @@ func TestOperation(t *testing.T) {
 			t.Parallel()
 			seen := map[edit.Operation]bool{}
 			for _, op := range edit.Operations() {
-				if seen[op] {
-					t.Errorf("operation %q is declared twice", op)
-				}
+				assert.False(t, seen[op], "an operation declared twice would be reported twice")
 				seen[op] = true
 			}
 		})
 
 		t.Run("returns a copy a caller cannot corrupt", func(t *testing.T) {
 			t.Parallel()
-			// The catalogue is read by every capability report. A caller
-			// that sorted the result in place would reorder it for
-			// everyone if the slice were shared.
 			first := edit.Operations()
 			first[0] = edit.Operation("mutated")
-			if edit.Operations()[0] == edit.Operation("mutated") {
-				t.Error("Operations returns a shared slice; a caller can corrupt the catalogue")
-			}
+			assert.NotEqual(t, edit.Operations()[0], edit.Operation("mutated"),
+				"every capability report reads the catalogue, so a caller must not be able to reorder it")
 		})
 	})
 }

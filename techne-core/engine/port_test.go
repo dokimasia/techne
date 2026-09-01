@@ -7,6 +7,7 @@ import (
 	"context"
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
@@ -36,9 +37,8 @@ func TestPort(t *testing.T) {
 		t.Run("one role is enough to be an engine", func(t *testing.T) {
 			t.Parallel()
 			var e engine.Engine = outlineOnly{}
-			if _, ok := e.(engine.Outliner); !ok {
-				t.Error("an engine implementing Outline does not satisfy Outliner")
-			}
+			_, serves := e.(engine.Outliner)
+			assert.True(t, serves, "one role is enough: an engine need not implement ports it cannot serve")
 		})
 
 		t.Run("a role not implemented is not claimed", func(t *testing.T) {
@@ -56,9 +56,9 @@ func TestPort(t *testing.T) {
 				"Verifier":  assertVerifier(e),
 				"Indexer":   assertIndexer(e),
 			} {
-				if claimed {
-					t.Errorf("an engine with only Outline claims %s", name)
-				}
+				_ = name
+				assert.False(t, claimed,
+					"selection is by type assertion, so an engine declines a role by lacking the method")
 			}
 		})
 	})

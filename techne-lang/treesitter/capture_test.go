@@ -6,6 +6,7 @@ package treesitter_test
 import (
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/lang/treesitter"
 )
@@ -31,14 +32,9 @@ func TestCapture(t *testing.T) {
 				treesitter.DefinitionModule:    sema.KindModule,
 				treesitter.DefinitionMacro:     sema.KindFunction,
 			} {
-				got, ok := treesitter.KindOf(capture)
-				if !ok {
-					t.Errorf("capture %q declares no kind", capture)
-					continue
-				}
-				if got != want {
-					t.Errorf("KindOf(%q) = %v, want %v", capture, got, want)
-				}
+				got, declares := treesitter.KindOf(capture)
+				assert.True(t, declares, "a capture the grammars' own tags queries use declares a symbol")
+				assert.Equal(t, got, want, "a capture maps to the kind the shared vocabulary carries for it")
 			}
 		})
 
@@ -47,9 +43,8 @@ func TestCapture(t *testing.T) {
 			// @name is the identifier belonging to a definition, not a
 			// definition itself. Treating it as one would emit a symbol
 			// per name.
-			if _, ok := treesitter.KindOf(treesitter.Name); ok {
-				t.Error("the name capture was read as a definition")
-			}
+			_, declares := treesitter.KindOf(treesitter.Name)
+			assert.False(t, declares, "the identifier belongs to a definition rather than being one")
 		})
 
 		t.Run("rejects a capture no grammar declares", func(t *testing.T) {
@@ -61,9 +56,9 @@ func TestCapture(t *testing.T) {
 			for _, unknown := range []treesitter.Capture{
 				"definition.widget", "reference.call", "", "definition",
 			} {
-				if kind, ok := treesitter.KindOf(unknown); ok {
-					t.Errorf("KindOf(%q) = %v, want no kind", unknown, kind)
-				}
+				_, declares := treesitter.KindOf(unknown)
+				assert.False(t, declares,
+					"a mistyped capture mapping to a kind would produce an engine that silently finds nothing")
 			}
 		})
 
@@ -73,9 +68,8 @@ func TestCapture(t *testing.T) {
 			// written. A capture in one and not the other is a silent
 			// gap.
 			for _, c := range treesitter.Definitions() {
-				if _, ok := treesitter.KindOf(c); !ok {
-					t.Errorf("declared capture %q maps to no kind", c)
-				}
+				_, declares := treesitter.KindOf(c)
+				assert.True(t, declares, "the list and the table are one convention written twice")
 			}
 		})
 	})
@@ -86,9 +80,7 @@ func TestCapture(t *testing.T) {
 		t.Run("excludes the name capture", func(t *testing.T) {
 			t.Parallel()
 			for _, c := range treesitter.Definitions() {
-				if c == treesitter.Name {
-					t.Error("Definitions includes the name capture")
-				}
+				assert.NotEqual(t, c, treesitter.Name, "the identifier capture declares no symbol")
 			}
 		})
 	})

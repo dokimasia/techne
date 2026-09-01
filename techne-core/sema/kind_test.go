@@ -6,6 +6,7 @@ package sema_test
 import (
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/sema"
 )
 
@@ -17,8 +18,6 @@ func TestKind(t *testing.T) {
 
 		t.Run("is the wire form of the kind", func(t *testing.T) {
 			t.Parallel()
-			// These strings are embedded in identities an index stores,
-			// so the test pins them rather than deriving them.
 			for kind, want := range map[sema.Kind]string{
 				sema.KindUnknown:     "unknown",
 				sema.KindModule:      "module",
@@ -28,33 +27,28 @@ func TestKind(t *testing.T) {
 				sema.KindStruct:      "struct",
 				sema.KindEnum:        "enum",
 				sema.KindEnumMember:  "enum-member",
-				sema.KindConstructor: "constructor",
 				sema.KindInterface:   "interface",
 				sema.KindFunction:    "function",
 				sema.KindMethod:      "method",
+				sema.KindConstructor: "constructor",
 				sema.KindField:       "field",
 				sema.KindVariable:    "variable",
 				sema.KindConstant:    "constant",
 			} {
-				if got := kind.String(); got != want {
-					t.Errorf("Kind(%d).String() = %q, want %q", kind, got, want)
-				}
+				assert.Equal(t, kind.String(), want,
+					"an identity an index stored embeds this string, so it is pinned rather than derived")
 			}
 		})
 
 		t.Run("falls back to unknown outside the set", func(t *testing.T) {
 			t.Parallel()
-			// An engine that invents a kind must not produce an identity
-			// containing an empty segment, which would collide with
-			// every other malformed one.
-			if got := sema.Kind(200).String(); got != "unknown" {
-				t.Errorf("Kind(200).String() = %q, want %q", got, "unknown")
-			}
+			assert.Equal(t, sema.Kind(200).String(), "unknown",
+				"an invented kind must not produce an identity with an empty segment")
 		})
 
 		t.Run("differs between kinds", func(t *testing.T) {
 			t.Parallel()
-			seen := map[string]sema.Kind{}
+			seen := map[string]bool{}
 			for _, k := range []sema.Kind{
 				sema.KindModule, sema.KindPackage, sema.KindFile, sema.KindType,
 				sema.KindStruct, sema.KindEnum, sema.KindEnumMember,
@@ -62,10 +56,9 @@ func TestKind(t *testing.T) {
 				sema.KindConstructor, sema.KindField, sema.KindVariable,
 				sema.KindConstant,
 			} {
-				if prior, ok := seen[k.String()]; ok {
-					t.Errorf("kinds %d and %d share the wire form %q", prior, k, k.String())
-				}
-				seen[k.String()] = k
+				assert.False(t, seen[k.String()],
+					"two kinds sharing a wire form would make two symbols one identity")
+				seen[k.String()] = true
 			}
 		})
 	})
@@ -76,9 +69,8 @@ func TestKind(t *testing.T) {
 		t.Run("is unknown", func(t *testing.T) {
 			t.Parallel()
 			var unset sema.Kind
-			if unset != sema.KindUnknown {
-				t.Errorf("zero Kind = %d, want KindUnknown", unset)
-			}
+			assert.Equal(t, unset, sema.KindUnknown,
+				"a symbol nobody classified claims no kind")
 		})
 	})
 }

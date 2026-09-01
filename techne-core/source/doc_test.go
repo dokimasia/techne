@@ -6,6 +6,7 @@ package source_test
 import (
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/source"
 )
 
@@ -20,9 +21,8 @@ func TestDoc(t *testing.T) {
 		t.Run("are zero-based, so the first byte is the zero Position", func(t *testing.T) {
 			t.Parallel()
 			var first source.Position
-			if first.Offset != 0 || first.Line != 0 || first.Column != 0 {
-				t.Errorf("zero Position = %+v, want all three zero", first)
-			}
+			assert.Equal(t, first, source.Position{},
+				"the start of a file needs no construction")
 		})
 	})
 }

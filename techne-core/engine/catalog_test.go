@@ -8,6 +8,7 @@ import (
 	"errors"
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
@@ -46,18 +47,6 @@ func names(engines []engine.Engine) []string {
 	return out
 }
 
-func equal(got, want []string) bool {
-	if len(got) != len(want) {
-		return false
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func TestCatalog(t *testing.T) {
 	t.Parallel()
 
@@ -71,12 +60,9 @@ func TestCatalog(t *testing.T) {
 			// Provenance names the engine that answered. Two engines
 			// sharing a name make an answer untraceable.
 			c := engine.NewCatalog()
-			if err := c.Add(fake{name: "parser", lang: lang}); err != nil {
-				t.Fatalf("first Add: %v", err)
-			}
-			if err := c.Add(fake{name: "parser", lang: lang}); err == nil {
-				t.Error("a second engine with the same name was accepted")
-			}
+			assert.NoError(t, c.Add(fake{name: "parser", lang: lang}), "the first engine registers")
+			assert.HasError(t, c.Add(fake{name: "parser", lang: lang}),
+				"a provenance names the engine that answered, so two engines cannot share a name")
 		})
 	})
 
@@ -89,10 +75,9 @@ func TestCatalog(t *testing.T) {
 			mustAdd(t, c, fake{name: "parser", lang: lang, fidelity: trust.Syntactic, cost: engine.CostParse})
 			mustAdd(t, c, fake{name: "checker", lang: lang, fidelity: trust.Resolved, cost: engine.CostAnalyze})
 
-			got := names(c.For(context.Background(), lang, engine.RoleOutline))
-			if want := []string{"checker", "parser"}; !equal(got, want) {
-				t.Errorf("order = %v, want %v", got, want)
-			}
+			assert.Equal(t, names(c.For(t.Context(), lang, engine.RoleOutline)),
+				[]string{"checker", "parser"},
+				"the strongest evidence is tried first")
 		})
 
 		t.Run("puts the cheaper of two equals first", func(t *testing.T) {
@@ -103,20 +88,17 @@ func TestCatalog(t *testing.T) {
 			mustAdd(t, c, fake{name: "parser", lang: lang, fidelity: trust.Syntactic, cost: engine.CostParse})
 			mustAdd(t, c, fake{name: "index", lang: lang, fidelity: trust.Syntactic, cost: engine.CostMemory})
 
-			got := names(c.For(context.Background(), lang, engine.RoleOutline))
-			if want := []string{"index", "parser"}; !equal(got, want) {
-				t.Errorf("order = %v, want %v", got, want)
-			}
+			assert.Equal(t, names(c.For(t.Context(), lang, engine.RoleOutline)),
+				[]string{"index", "parser"},
+				"two engines producing the same facts are separated by price alone")
 		})
 
 		t.Run("skips an engine that does not serve the role", func(t *testing.T) {
 			t.Parallel()
 			c := engine.NewCatalog()
 			mustAdd(t, c, fake{name: "outliner", lang: lang})
-			got := c.For(context.Background(), lang, engine.RoleVerify)
-			if len(got) != 0 {
-				t.Errorf("an engine with no Verify was selected: %v", names(got))
-			}
+			assert.Empty(t, c.For(t.Context(), lang, engine.RoleVerify),
+				"an engine lacking the method does not serve the role")
 		})
 
 		t.Run("skips an engine that cannot run", func(t *testing.T) {
@@ -130,10 +112,9 @@ func TestCatalog(t *testing.T) {
 			}})
 			mustAdd(t, c, fake{name: "parser", lang: lang, fidelity: trust.Syntactic})
 
-			got := names(c.For(context.Background(), lang, engine.RoleOutline))
-			if want := []string{"parser"}; !equal(got, want) {
-				t.Errorf("order = %v, want %v", got, want)
-			}
+			assert.Equal(t, names(c.For(t.Context(), lang, engine.RoleOutline)),
+				[]string{"parser"},
+				"an engine whose server is absent is not advertised")
 		})
 
 		t.Run("keeps an engine that declares no availability", func(t *testing.T) {
@@ -143,18 +124,16 @@ func TestCatalog(t *testing.T) {
 			// method that returns nil.
 			c := engine.NewCatalog()
 			mustAdd(t, c, fake{name: "parser", lang: lang})
-			if got := c.For(context.Background(), lang, engine.RoleOutline); len(got) != 1 {
-				t.Errorf("selected %v, want the one engine", names(got))
-			}
+			assert.Length(t, c.For(t.Context(), lang, engine.RoleOutline), 1,
+				"an in-process engine has nothing outside to check and is always usable")
 		})
 
 		t.Run("skips another language", func(t *testing.T) {
 			t.Parallel()
 			c := engine.NewCatalog()
 			mustAdd(t, c, fake{name: "other", lang: source.Language("elsewhere")})
-			if got := c.For(context.Background(), lang, engine.RoleOutline); len(got) != 0 {
-				t.Errorf("an engine for another language was selected: %v", names(got))
-			}
+			assert.Empty(t, c.For(t.Context(), lang, engine.RoleOutline),
+				"an engine answers about one language and is not offered for another")
 		})
 	})
 
@@ -170,31 +149,25 @@ func TestCatalog(t *testing.T) {
 			}})
 
 			var found bool
-			for _, cap := range c.Capabilities(context.Background()) {
+			for _, cap := range c.Capabilities(t.Context()) {
 				if cap.Engine != "server" || cap.Role != engine.RoleOutline {
 					continue
 				}
 				found = true
-				if cap.Available {
-					t.Error("an engine that cannot run was reported available")
-				}
-				if cap.Unavailable == "" {
-					t.Error("an unavailable engine must say why")
-				}
+				assert.False(t, cap.Available, "an engine whose server is absent cannot run")
+				assert.NotEmpty(t, cap.Unavailable,
+					"a missing server is a different problem from a missing capability, so it says which")
 			}
-			if !found {
-				t.Error("the engine was not reported for the role it serves")
-			}
+			assert.True(t, found, "an engine is reported for every role it serves")
 		})
 
 		t.Run("reports nothing for a role no engine serves", func(t *testing.T) {
 			t.Parallel()
 			c := engine.NewCatalog()
 			mustAdd(t, c, fake{name: "outliner", lang: lang})
-			for _, cap := range c.Capabilities(context.Background()) {
-				if cap.Role == engine.RoleVerify {
-					t.Error("a role nothing serves was reported as a capability")
-				}
+			for _, cap := range c.Capabilities(t.Context()) {
+				assert.NotEqual(t, cap.Role, engine.RoleVerify,
+					"a role no engine serves is not reported as a capability")
 			}
 		})
 	})
@@ -202,7 +175,5 @@ func TestCatalog(t *testing.T) {
 
 func mustAdd(t *testing.T, c *engine.Catalog, e engine.Engine) {
 	t.Helper()
-	if err := c.Add(e); err != nil {
-		t.Fatalf("Add(%s): %v", e.Name(), err)
-	}
+	assert.NoError(t, c.Add(e), "the case needs this engine registered")
 }

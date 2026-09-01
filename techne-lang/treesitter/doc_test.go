@@ -6,6 +6,7 @@ package treesitter_test
 import (
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/lang/treesitter"
 )
@@ -26,9 +27,8 @@ func TestDoc(t *testing.T) {
 			// shared.
 			for _, c := range treesitter.Definitions() {
 				for _, named := range []string{"go", "python", "java", "rust", "typescript"} {
-					if string(c) == "definition."+named {
-						t.Errorf("capture %q names a language", c)
-					}
+					assert.NotEqual(t, string(c), "definition."+named,
+						"a capture naming one grammar would belong to that grammar's module")
 				}
 			}
 		})
@@ -40,12 +40,9 @@ func TestDoc(t *testing.T) {
 			// per-language variants.
 			class, _ := treesitter.KindOf(treesitter.DefinitionClass)
 			named, _ := treesitter.KindOf(treesitter.DefinitionType)
-			if class != named {
-				t.Errorf("class maps to %v and type to %v; a caller would read two sets", class, named)
-			}
-			if class != sema.KindType {
-				t.Errorf("both map to %v, want KindType", class)
-			}
+			assert.Equal(t, class, named,
+				"a caller reads one vocabulary rather than a variant per grammar")
+			assert.Equal(t, class, sema.KindType, "both are named product types the shared set calls a type")
 		})
 	})
 }

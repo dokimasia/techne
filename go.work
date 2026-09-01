@@ -4,7 +4,6 @@ go 1.27.0
 // the composition root. Every other module is listed here so local
 // development resolves across them without replace directives.
 use (
-	./
 	./techne-core
 	./techne-lang
 	./techne-lang-go

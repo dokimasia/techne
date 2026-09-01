@@ -6,6 +6,7 @@ package engine_test
 import (
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/trust"
@@ -22,12 +23,10 @@ func TestAnswer(t *testing.T) {
 			// An answer a service forgot to fill must not read as a
 			// successful empty result.
 			var unset engine.Answer[sema.Symbol]
-			if unset.Status.Answered() {
-				t.Error("the zero Answer must not report a payload")
-			}
-			if unset.Provenance.SupportsNegativeClaim() {
-				t.Error("the zero Answer must not license a negative claim")
-			}
+			assert.False(t, unset.Status.Answered(),
+				"an answer a service forgot to fill must not read as a successful empty result")
+			assert.False(t, unset.Provenance.SupportsNegativeClaim(),
+				"an answer a service forgot to fill must not prove absence")
 		})
 	})
 
@@ -46,15 +45,11 @@ func TestAnswer(t *testing.T) {
 				Status:     trust.OK,
 				Provenance: trust.Provenance{Fidelity: trust.Syntactic, Completeness: trust.ScopeTotal},
 			}
-			if len(proven.Items) != len(guessed.Items) {
-				t.Fatal("this case needs both answers empty")
-			}
-			if !proven.Provenance.SupportsNegativeClaim() {
-				t.Error("a resolved answer over a total scope proves absence")
-			}
-			if guessed.Provenance.SupportsNegativeClaim() {
-				t.Error("a parser's answer must not prove absence")
-			}
+			assert.Equal(t, len(proven.Items), len(guessed.Items), "this case compares two empty answers")
+			assert.True(t, proven.Provenance.SupportsNegativeClaim(),
+				"one empty list proves there are none")
+			assert.False(t, guessed.Provenance.SupportsNegativeClaim(),
+				"the same empty list from a parser proves only that none were found")
 		})
 	})
 
@@ -67,9 +62,8 @@ func TestAnswer(t *testing.T) {
 			// below it answers and is marked degraded rather than
 			// refused.
 			req := engine.Request{Preferred: trust.Resolved}
-			if req.Preferred != trust.Resolved {
-				t.Errorf("Request.Preferred = %d, want Resolved", req.Preferred)
-			}
+			assert.Equal(t, req.Preferred, trust.Resolved,
+				"Preferred is a floor for reporting, so an engine below it answers and is marked degraded")
 		})
 	})
 
@@ -79,12 +73,8 @@ func TestAnswer(t *testing.T) {
 		t.Run("matches any kind when none is named", func(t *testing.T) {
 			t.Parallel()
 			var q engine.Query
-			if q.Kind != sema.KindUnknown {
-				t.Errorf("zero Query.Kind = %d, want KindUnknown so it matches any", q.Kind)
-			}
-			if q.Limit != 0 {
-				t.Errorf("zero Query.Limit = %d, want 0 so the engine picks", q.Limit)
-			}
+			assert.Equal(t, q.Kind, sema.KindUnknown, "a query naming no kind matches any")
+			assert.Equal(t, q.Limit, 0, "a query naming no limit lets the engine choose")
 		})
 	})
 }

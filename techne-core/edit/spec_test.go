@@ -6,6 +6,7 @@ package edit_test
 import (
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/trust"
 )
@@ -18,31 +19,25 @@ func TestSpec(t *testing.T) {
 
 		t.Run("answers for every declared operation", func(t *testing.T) {
 			t.Parallel()
-			// An operation declared without a spec fails open: the
-			// service validates against nothing and admits whatever a
-			// planner produced. This is what keeps the two lists
-			// together.
 			for _, op := range edit.Operations() {
-				if _, ok := edit.SpecFor(op); !ok {
-					t.Errorf("operation %q has no spec", op)
-				}
+				_, declared := edit.SpecFor(op)
+				assert.True(t, declared,
+					"an operation without a spec is validated against nothing, "+
+						"and admitted on whatever a planner produced")
 			}
 		})
 
 		t.Run("reports an operation nobody declared", func(t *testing.T) {
 			t.Parallel()
-			if _, ok := edit.SpecFor(edit.Operation("rename.everything")); ok {
-				t.Error("SpecFor accepted an operation that is not in the catalogue")
-			}
+			_, declared := edit.SpecFor(edit.Operation("rename.everything"))
+			assert.False(t, declared, "an operation outside the catalogue is not silently accepted")
 		})
 
 		t.Run("returns the spec of the operation asked for", func(t *testing.T) {
 			t.Parallel()
 			for _, op := range edit.Operations() {
 				spec, _ := edit.SpecFor(op)
-				if spec.Operation != op {
-					t.Errorf("SpecFor(%q) returned the spec of %q", op, spec.Operation)
-				}
+				assert.Equal(t, spec.Operation, op, "a spec describes the operation it was asked about")
 			}
 		})
 	})
@@ -54,9 +49,7 @@ func TestSpec(t *testing.T) {
 			t.Parallel()
 			for _, op := range edit.Operations() {
 				spec, _ := edit.SpecFor(op)
-				if len(spec.Accepts) == 0 {
-					t.Errorf("operation %q accepts no target kind, so nothing can invoke it", op)
-				}
+				assert.NotEmpty(t, spec.Accepts, "an operation nothing can be pointed at cannot be invoked")
 			}
 		})
 	})
@@ -68,22 +61,20 @@ func TestSpec(t *testing.T) {
 			t.Parallel()
 			for _, op := range edit.Operations() {
 				spec, _ := edit.SpecFor(op)
-				if spec.MinFidelity == trust.None {
-					t.Errorf("operation %q declares no minimum fidelity", op)
-				}
+				assert.NotEqual(t, spec.MinFidelity, trust.None,
+					"an operation declaring no minimum could never be admitted")
 			}
 		})
 
-		t.Run("is syntactic only where nothing is rewritten but the target", func(t *testing.T) {
+		t.Run("is syntactic only where nothing but the target is rewritten", func(t *testing.T) {
 			t.Parallel()
-			// document.symbol writes a comment above a declaration and
-			// touches nothing else, which is why a parser can serve it.
-			// Any other operation at that tier would be guessing.
 			for _, op := range edit.Operations() {
 				spec, _ := edit.SpecFor(op)
-				if spec.MinFidelity == trust.Syntactic && spec.RewritesReferences {
-					t.Errorf("operation %q rewrites references from a parser's evidence", op)
+				if spec.MinFidelity != trust.Syntactic {
+					continue
 				}
+				assert.False(t, spec.RewritesReferences,
+					"a parser matches text, so it cannot find every reference to rewrite")
 			}
 		})
 	})
@@ -93,15 +84,13 @@ func TestSpec(t *testing.T) {
 
 		t.Run("demands resolved binding", func(t *testing.T) {
 			t.Parallel()
-			// Admission also demands total coverage, which is a property
-			// of the plan rather than the spec. The spec rules out the
-			// tiers that can never be enough.
 			for _, op := range edit.Operations() {
 				spec, _ := edit.SpecFor(op)
-				if spec.RewritesReferences && spec.MinFidelity != trust.Resolved {
-					t.Errorf("operation %q rewrites references at fidelity %d; that needs resolved binding",
-						op, spec.MinFidelity)
+				if !spec.RewritesReferences {
+					continue
 				}
+				assert.Equal(t, spec.MinFidelity, trust.Resolved,
+					"finding every reference is a claim no others exist, which needs a type checker")
 			}
 		})
 	})

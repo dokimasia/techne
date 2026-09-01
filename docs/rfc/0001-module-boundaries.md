@@ -349,8 +349,23 @@ go.mod                   module go.dokimi.dev/techne
                          require go.dokimi.dev/techne/lang/python
 ```
 
-`go.work` lists every directory, so local development resolves across the
-modules without `replace` directives and without consulting the network.
+`go.work` lists every directory, so builds and tests resolve across the
+modules without consulting the network.
+
+`go mod tidy` does not read the workspace. It resolves each module's own
+requires, and a path this repository's directories do not match cannot be
+resolved until the vanity host serves it. Until then every module that
+imports a sibling carries a `replace` pointing at that sibling's
+directory, which `go.work` ignores and a standalone build uses:
+
+```
+require go.dokimi.dev/techne/core v0.0.0
+
+replace go.dokimi.dev/techne/core => ../techne-core
+```
+
+Without it a module builds inside the workspace and fails outside it,
+which is the same trap the dependency rules needed a linter for.
 
 The Go module `go.dokimi.dev/techne/lang/go` cannot declare
 `package go`, because `go` is a keyword. Its root package is
@@ -475,7 +490,9 @@ ports are not settled. One repository keeps that change to one commit.
   tool interface they consume, so a change to `tool.Tool` is a two-module
   edit even though only one thing changed.
 - Directory names and module paths differ, so a reader cannot derive one
-  from the other and `go get` depends on the vanity host being correct.
+  from the other, and `go get` depends on the vanity host being correct.
+  Until that host serves these paths, every module importing a sibling
+  carries a `replace` for it, and each one is a line to delete later.
 - A language module's path sits under `lang`'s, so a prefix test cannot
   separate the two. The depguard rules need the `$` exact-match suffix
   for that reason, and so will anything else that tests the boundary by

@@ -6,6 +6,7 @@ package trust_test
 import (
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/trust"
 )
 
@@ -17,20 +18,16 @@ func TestStatus(t *testing.T) {
 
 		t.Run("is not OK", func(t *testing.T) {
 			t.Parallel()
-			// A service that forgets to set a status must not produce an
-			// answer that reads as successful.
 			var unset trust.Status
-			if unset == trust.OK {
-				t.Error("the zero Status must not be OK")
-			}
+			assert.NotEqual(t, unset, trust.OK,
+				"an answer whose status nobody assigned must not read as a success")
 		})
 
 		t.Run("reports that nothing answered", func(t *testing.T) {
 			t.Parallel()
 			var unset trust.Status
-			if unset.Answered() {
-				t.Error("the zero Status must not report a payload")
-			}
+			assert.False(t, unset.Answered(),
+				"an unset status carries no payload, so its empty item list proves nothing")
 		})
 	})
 
@@ -40,18 +37,16 @@ func TestStatus(t *testing.T) {
 		t.Run("is true where a payload was produced", func(t *testing.T) {
 			t.Parallel()
 			for _, s := range []trust.Status{trust.OK, trust.Degraded, trust.Partial} {
-				if !s.Answered() {
-					t.Errorf("status %d must report a payload", s)
-				}
+				assert.True(t, s.Answered(),
+					"an engine ran and returned items worth reading, however qualified")
 			}
 		})
 
 		t.Run("is false where nothing ran", func(t *testing.T) {
 			t.Parallel()
 			for _, s := range []trust.Status{trust.Unset, trust.Unsupported, trust.Refused} {
-				if s.Answered() {
-					t.Errorf("status %d must not report a payload", s)
-				}
+				assert.False(t, s.Answered(),
+					"nothing ran, so an empty item list is not evidence of absence")
 			}
 		})
 	})
@@ -61,11 +56,8 @@ func TestStatus(t *testing.T) {
 
 		t.Run("unsupported differs from refused", func(t *testing.T) {
 			t.Parallel()
-			// They license opposite next actions: route around a
-			// capability gap, or correct the request.
-			if trust.Unsupported == trust.Refused {
-				t.Error("unsupported and refused must be distinct")
-			}
+			assert.NotEqual(t, trust.Unsupported, trust.Refused,
+				"one is a capability gap to route around, the other a request to correct")
 		})
 	})
 }

@@ -6,6 +6,7 @@ package sema_test
 import (
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 )
@@ -21,49 +22,37 @@ func TestID(t *testing.T) {
 			// The language is an example value. A language module owns
 			// its own, and core declares none.
 			got := sema.NewID(source.Language("go"), "./internal/fsx", "Digest", sema.KindFunction)
-			const want sema.ID = "go:./internal/fsx#Digest:function"
-			if got != want {
-				t.Errorf("NewID = %q, want %q", got, want)
-			}
+			assert.Equal(t, got, sema.ID("go:./internal/fsx#Digest:function"),
+				"an identity states which language, which unit, which name and which kind")
 		})
 
 		t.Run("does not change when the declaration moves", func(t *testing.T) {
 			t.Parallel()
-			// An index stores identities and a later process resolves
-			// them. Derived from a byte offset, editing a line above a
-			// declaration would invalidate every entry below it.
 			first := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindType)
 			second := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindType)
-			if first != second {
-				t.Errorf("one declaration produced %q then %q", first, second)
-			}
+			assert.Equal(t, first, second,
+				"an index stores an identity, so editing a line above a declaration must not invalidate it")
 		})
 
 		t.Run("separates a type from a function of the same name", func(t *testing.T) {
 			t.Parallel()
 			asType := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindType)
 			asFunc := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindFunction)
-			if asType == asFunc {
-				t.Errorf("a type and a function both produced %q", asType)
-			}
+			assert.NotEqual(t, asType, asFunc, "two declarations are two symbols, however alike their names")
 		})
 
 		t.Run("separates one name in two units", func(t *testing.T) {
 			t.Parallel()
 			inTrust := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindType)
 			inGate := sema.NewID(source.Language("go"), "./core/gate", "Status", sema.KindType)
-			if inTrust == inGate {
-				t.Errorf("two units both produced %q", inTrust)
-			}
+			assert.NotEqual(t, inTrust, inGate, "a name is only unique inside its unit")
 		})
 
 		t.Run("separates one name in two languages", func(t *testing.T) {
 			t.Parallel()
 			inGo := sema.NewID(source.Language("go"), "./app", "Handler", sema.KindType)
 			inRust := sema.NewID(source.Language("rust"), "./app", "Handler", sema.KindType)
-			if inGo == inRust {
-				t.Errorf("two languages both produced %q", inGo)
-			}
+			assert.NotEqual(t, inGo, inRust, "two languages in one tree declare two symbols")
 		})
 	})
 
@@ -73,9 +62,7 @@ func TestID(t *testing.T) {
 		t.Run("names nothing", func(t *testing.T) {
 			t.Parallel()
 			var unset sema.ID
-			if unset != "" {
-				t.Errorf("zero ID = %q, want the empty string", unset)
-			}
+			assert.Empty(t, string(unset), "an unset identity names no declaration")
 		})
 	})
 }

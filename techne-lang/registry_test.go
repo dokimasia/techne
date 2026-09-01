@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
@@ -51,21 +52,17 @@ func TestRegistry(t *testing.T) {
 		t.Run("adds every engine to the catalogue", func(t *testing.T) {
 			t.Parallel()
 			r, cat := lang.NewRegistry(), engine.NewCatalog()
-			if err := r.Register(cat, declared(), stub{fixture}); err != nil {
-				t.Fatalf("Register: %v", err)
-			}
-			if got := cat.For(context.Background(), fixture, engine.RoleOutline); len(got) != 1 {
-				t.Errorf("catalogue holds %d engines for the language, want 1", len(got))
-			}
+			assert.NoError(t, r.Register(cat, declared(), stub{fixture}), "a complete declaration registers")
+			assert.Length(t, cat.For(t.Context(), fixture, engine.RoleOutline), 1,
+				"registering a language puts its engines where the catalogue can select them")
 		})
 
 		t.Run("refuses a declaration naming no language", func(t *testing.T) {
 			t.Parallel()
 			d := declared()
 			d.Language = ""
-			if err := lang.NewRegistry().Register(engine.NewCatalog(), d); err == nil {
-				t.Error("a declaration with no language was accepted")
-			}
+			assert.HasError(t, lang.NewRegistry().Register(engine.NewCatalog(), d),
+				"a declaration naming no language claims nothing to route to")
 		})
 
 		t.Run("refuses a declaration no file can route to", func(t *testing.T) {
@@ -74,9 +71,8 @@ func TestRegistry(t *testing.T) {
 			// module would register and never answer.
 			d := declared()
 			d.Extensions = nil
-			if err := lang.NewRegistry().Register(engine.NewCatalog(), d); err == nil {
-				t.Error("a declaration with no extension was accepted")
-			}
+			assert.HasError(t, lang.NewRegistry().Register(engine.NewCatalog(), d),
+				"without an extension nothing selects the language, so it would register and never answer")
 		})
 
 		t.Run("refuses a declaration missing a convention", func(t *testing.T) {
@@ -90,21 +86,18 @@ func TestRegistry(t *testing.T) {
 			} {
 				d := declared()
 				spoil(&d)
-				if err := lang.NewRegistry().Register(engine.NewCatalog(), d); err == nil {
-					t.Errorf("a declaration with no %s was accepted", name)
-				}
+				_ = name
+				assert.HasError(t, lang.NewRegistry().Register(engine.NewCatalog(), d),
+					"a nil convention panics on the first call, so startup is where it must surface")
 			}
 		})
 
 		t.Run("refuses a second claim on one language", func(t *testing.T) {
 			t.Parallel()
 			r, cat := lang.NewRegistry(), engine.NewCatalog()
-			if err := r.Register(cat, declared()); err != nil {
-				t.Fatalf("first Register: %v", err)
-			}
-			if err := r.Register(cat, declared()); err == nil {
-				t.Error("a second declaration for one language was accepted")
-			}
+			assert.NoError(t, r.Register(cat, declared()), "the first module claims the language")
+			assert.HasError(t, r.Register(cat, declared()),
+				"two modules claiming one language would make routing depend on registration order")
 		})
 
 		t.Run("refuses a second claim on one extension", func(t *testing.T) {
@@ -112,14 +105,11 @@ func TestRegistry(t *testing.T) {
 			// Two languages claiming one suffix makes routing depend on
 			// registration order, which nothing states.
 			r, cat := lang.NewRegistry(), engine.NewCatalog()
-			if err := r.Register(cat, declared()); err != nil {
-				t.Fatalf("first Register: %v", err)
-			}
+			assert.NoError(t, r.Register(cat, declared()), "the first module claims the extension")
 			other := declared()
 			other.Language = source.Language("other")
-			if err := r.Register(cat, other); err == nil {
-				t.Error("a second language claiming the same extension was accepted")
-			}
+			assert.HasError(t, r.Register(cat, other),
+				"two languages claiming one suffix would make routing depend on registration order")
 		})
 
 		t.Run("refuses an engine for a different language", func(t *testing.T) {
@@ -127,9 +117,8 @@ func TestRegistry(t *testing.T) {
 			// The declaration and its engines have to agree, or the
 			// catalogue holds an engine no path routes to.
 			err := lang.NewRegistry().Register(engine.NewCatalog(), declared(), stub{source.Language("elsewhere")})
-			if err == nil {
-				t.Error("an engine for another language was accepted")
-			}
+			assert.HasError(t, err,
+				"a declaration and its engines must agree, or the catalogue holds an engine no path routes to")
 		})
 
 		t.Run("leaves the catalogue untouched when it refuses", func(t *testing.T) {
@@ -140,9 +129,8 @@ func TestRegistry(t *testing.T) {
 			d := declared()
 			d.Extensions = nil
 			_ = lang.NewRegistry().Register(cat, d, stub{fixture})
-			if got := cat.For(context.Background(), fixture, engine.RoleOutline); len(got) != 0 {
-				t.Errorf("a refused registration left %d engines behind", len(got))
-			}
+			assert.Empty(t, cat.For(t.Context(), fixture, engine.RoleOutline),
+				"a rejected module leaves no engines behind for a language nothing can route to")
 		})
 	})
 
@@ -152,13 +140,10 @@ func TestRegistry(t *testing.T) {
 		t.Run("routes a path by its extension", func(t *testing.T) {
 			t.Parallel()
 			r := lang.NewRegistry()
-			if err := r.Register(engine.NewCatalog(), declared()); err != nil {
-				t.Fatalf("Register: %v", err)
-			}
-			got, ok := r.LanguageOf("a/b/c.fx")
-			if !ok || got != fixture {
-				t.Errorf("LanguageOf = %q, %v; want %q, true", got, ok, fixture)
-			}
+			assert.NoError(t, r.Register(engine.NewCatalog(), declared()), "the case needs the language registered")
+			got, routed := r.LanguageOf("a/b/c.fx")
+			assert.True(t, routed, "a path whose suffix a language claims routes to it")
+			assert.Equal(t, got, fixture, "a path whose suffix a language claims routes to it")
 		})
 
 		t.Run("reports nothing for an unclaimed extension", func(t *testing.T) {
@@ -166,23 +151,17 @@ func TestRegistry(t *testing.T) {
 			// Guessing here would answer about a language nothing
 			// declared, at a fidelity nothing earned.
 			r := lang.NewRegistry()
-			if err := r.Register(engine.NewCatalog(), declared()); err != nil {
-				t.Fatalf("Register: %v", err)
-			}
-			if got, ok := r.LanguageOf("a/b/c.unclaimed"); ok {
-				t.Errorf("LanguageOf on an unclaimed suffix = %q, want no language", got)
-			}
+			assert.NoError(t, r.Register(engine.NewCatalog(), declared()), "the case needs the language registered")
+			_, routed := r.LanguageOf("a/b/c.unclaimed")
+			assert.False(t, routed, "guessing would answer about a language nothing declared")
 		})
 
 		t.Run("reports nothing for a path with no extension", func(t *testing.T) {
 			t.Parallel()
 			r := lang.NewRegistry()
-			if err := r.Register(engine.NewCatalog(), declared()); err != nil {
-				t.Fatalf("Register: %v", err)
-			}
-			if _, ok := r.LanguageOf("Makefile"); ok {
-				t.Error("a path with no extension routed to a language")
-			}
+			assert.NoError(t, r.Register(engine.NewCatalog(), declared()), "the case needs the language registered")
+			_, routed := r.LanguageOf("Makefile")
+			assert.False(t, routed, "a path carrying no suffix names no language")
 		})
 	})
 }

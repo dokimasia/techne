@@ -6,6 +6,7 @@ package trust_test
 import (
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/trust"
 )
 
@@ -20,19 +21,15 @@ func TestEvidence(t *testing.T) {
 			ordered := []trust.Fidelity{
 				trust.None, trust.Syntactic, trust.Indexed, trust.Resolved,
 			}
-			for i := 1; i < len(ordered); i++ {
-				if ordered[i-1] >= ordered[i] {
-					t.Errorf("fidelity %d is not below %d", ordered[i-1], ordered[i])
-				}
-			}
+			assert.Pairwise(t, ordered, func(earlier, later trust.Fidelity) bool {
+				return earlier < later
+			}, "each tier sorts below the next, because the catalogue orders engines by this")
 		})
 
 		t.Run("zero value is none", func(t *testing.T) {
 			t.Parallel()
 			var unset trust.Fidelity
-			if unset != trust.None {
-				t.Errorf("zero Fidelity = %d, want None", unset)
-			}
+			assert.Equal(t, unset, trust.None, "an unset fidelity claims nothing")
 		})
 	})
 
@@ -42,9 +39,8 @@ func TestEvidence(t *testing.T) {
 		t.Run("zero value claims nothing", func(t *testing.T) {
 			t.Parallel()
 			var unset trust.Completeness
-			if unset != trust.ScopeUnknown {
-				t.Errorf("zero Completeness = %d, want ScopeUnknown", unset)
-			}
+			assert.Equal(t, unset, trust.ScopeUnknown,
+				"an engine that says nothing about its coverage has claimed nothing")
 		})
 	})
 
@@ -53,28 +49,20 @@ func TestEvidence(t *testing.T) {
 
 		t.Run("resolved binding over total coverage licenses it", func(t *testing.T) {
 			t.Parallel()
-			if !trust.SupportsNegativeClaim(trust.Resolved, trust.ScopeTotal) {
-				t.Error("resolved and total must license a negative claim")
-			}
+			assert.True(t, trust.SupportsNegativeClaim(trust.Resolved, trust.ScopeTotal),
+				"a type checker that saw the whole scope proves an empty answer means there are none")
 		})
 
 		t.Run("resolved binding over partial coverage does not", func(t *testing.T) {
 			t.Parallel()
-			// A language server that binds through types while still
-			// building its index. Reading its empty answer as
-			// authoritative is the failure the second axis prevents.
-			if trust.SupportsNegativeClaim(trust.Resolved, trust.ScopePartial) {
-				t.Error("resolved but partial must not license a negative claim")
-			}
+			assert.False(t, trust.SupportsNegativeClaim(trust.Resolved, trust.ScopePartial),
+				"a server still building its index found some references, not all of them")
 		})
 
 		t.Run("total coverage below resolved binding does not", func(t *testing.T) {
 			t.Parallel()
-			// A parser reads every file in scope and still matches on
-			// name coincidence across files.
-			if trust.SupportsNegativeClaim(trust.Syntactic, trust.ScopeTotal) {
-				t.Error("syntactic and total must not license a negative claim")
-			}
+			assert.False(t, trust.SupportsNegativeClaim(trust.Syntactic, trust.ScopeTotal),
+				"a parser reading every file still matches on name coincidence across files")
 		})
 
 		t.Run("no other pair licenses it", func(t *testing.T) {
@@ -82,9 +70,8 @@ func TestEvidence(t *testing.T) {
 			for _, f := range []trust.Fidelity{trust.None, trust.Syntactic, trust.Indexed, trust.Resolved} {
 				for _, c := range []trust.Completeness{trust.ScopeUnknown, trust.ScopePartial, trust.ScopeTotal} {
 					want := f == trust.Resolved && c == trust.ScopeTotal
-					if got := trust.SupportsNegativeClaim(f, c); got != want {
-						t.Errorf("SupportsNegativeClaim(%d, %d) = %v, want %v", f, c, got, want)
-					}
+					assert.Equal(t, trust.SupportsNegativeClaim(f, c), want,
+						"only resolved binding together with total coverage licenses a negative claim")
 				}
 			}
 		})

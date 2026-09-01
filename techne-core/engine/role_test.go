@@ -6,6 +6,7 @@ package engine_test
 import (
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 )
 
@@ -30,17 +31,15 @@ func TestRole(t *testing.T) {
 				engine.RoleVerify:  "verify",
 				engine.RoleIndex:   "index",
 			} {
-				if got := role.String(); got != want {
-					t.Errorf("Role(%d).String() = %q, want %q", role, got, want)
-				}
+				assert.Equal(t, role.String(), want,
+					"a capability report names roles, so these strings reach a caller")
 			}
 		})
 
 		t.Run("falls back to unset outside the set", func(t *testing.T) {
 			t.Parallel()
-			if got := engine.Role(200).String(); got != "unset" {
-				t.Errorf("Role(200).String() = %q, want %q", got, "unset")
-			}
+			assert.Equal(t, engine.Role(200).String(), "unset",
+				"a role outside the set reads as unset rather than as an empty name")
 		})
 	})
 
@@ -52,17 +51,14 @@ func TestRole(t *testing.T) {
 			// Eight ports, eight roles. A port added without a role
 			// cannot be selected for, and a role without a port can be
 			// asked for and never served.
-			if got := len(engine.Roles()); got != 8 {
-				t.Errorf("Roles() has %d entries, want one per port", got)
-			}
+			assert.Length(t, engine.Roles(), 8,
+				"a port with no role cannot be selected for, and a role with no port can be asked for and never served")
 		})
 
 		t.Run("excludes the unset role", func(t *testing.T) {
 			t.Parallel()
 			for _, r := range engine.Roles() {
-				if r == engine.RoleUnset {
-					t.Error("Roles() includes RoleUnset, which no port serves")
-				}
+				assert.NotEqual(t, r, engine.RoleUnset, "no port serves the unset role")
 			}
 		})
 
@@ -70,9 +66,7 @@ func TestRole(t *testing.T) {
 			t.Parallel()
 			seen := map[engine.Role]bool{}
 			for _, r := range engine.Roles() {
-				if seen[r] {
-					t.Errorf("role %q is listed twice", r)
-				}
+				assert.False(t, seen[r], "a role listed twice would be reported twice")
 				seen[r] = true
 			}
 		})
@@ -87,11 +81,9 @@ func TestRole(t *testing.T) {
 				engine.CostMemory, engine.CostParse, engine.CostAnalyze,
 				engine.CostSession, engine.CostProcess,
 			}
-			for i := 1; i < len(ordered); i++ {
-				if ordered[i-1] >= ordered[i] {
-					t.Errorf("cost %d is not below %d", ordered[i-1], ordered[i])
-				}
-			}
+			assert.Pairwise(t, ordered, func(earlier, later engine.Cost) bool {
+				return earlier < later
+			}, "the order rises, so a catalogue takes the cheapest of two equals first")
 		})
 
 		t.Run("prices a session below a subprocess", func(t *testing.T) {
@@ -99,9 +91,8 @@ func TestRole(t *testing.T) {
 			// A language server is expensive once and cheap afterwards.
 			// Sorted above a per-call subprocess, a caller would avoid
 			// the fastest engine it has.
-			if engine.CostSession >= engine.CostProcess {
-				t.Error("CostSession must sort below CostProcess")
-			}
+			assert.True(t, engine.CostSession < engine.CostProcess,
+				"a server is expensive once and cheap after, so pricing it per call would hide the fastest engine")
 		})
 	})
 }
