@@ -37,6 +37,11 @@ type Request struct {
 	// refused, because a weaker answer with its tier stated is worth
 	// more than nothing.
 	Preferred trust.Fidelity
+	// Tests includes the files a language calls tests. It is false by
+	// default because a caller asking what a package offers is asking
+	// about what it ships, and only the language module knows which
+	// paths those are.
+	Tests bool
 }
 
 // Query is what to search for.

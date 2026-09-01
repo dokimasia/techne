@@ -53,7 +53,11 @@ export function helper(a, b) {
 		},
 		Declares: []conformance.Declared{
 			{Name: "LIMIT", Kind: sema.KindConstant},
-			{Name: "Store", Kind: sema.KindStruct, Doc: "Store holds items by name."},
+			{
+				Name: "Store", Kind: sema.KindStruct,
+				Signature: "export class Store",
+				Doc:       "Store holds items by name.",
+			},
 			{Name: "a", Kind: sema.KindParameter},
 			{Name: "b", Kind: sema.KindParameter},
 			{Name: "constructor", Kind: sema.KindConstructor},

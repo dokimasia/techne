@@ -25,46 +25,13 @@ import (
 // left empty. Preferred is the weakest evidence worth having, and an
 // engine below it still answers with a degraded status.
 type OutlineInput struct {
-	Scope     string `json:"scope"                        jsonschema:"file or directory, workspace-relative"`
-	Language  string `json:"language,omitempty"           jsonschema:"language to assume"`
-	Detail    string `json:"detail,omitempty"             jsonschema:"summary|standard|full"`
-	MaxTokens int    `json:"max_tokens,omitempty"         jsonschema:"estimated answer ceiling"`
-	Preferred string `json:"preferred_fidelity,omitempty" jsonschema:"syntactic|indexed|resolved"`
-}
-
-// Answer is the shape every read tool returns.
-type Answer struct {
-	Items      []sema.Symbol `json:"items"`
-	Status     string        `json:"status"`
-	Provenance Provenance    `json:"provenance"`
-}
-
-// Failed reports whether a caller should read this answer as a failure.
-//
-// A language nothing serves and a request that was declined are both
-// things a model can correct, so they reach it as failures rather than
-// as an empty success.
-func (a Answer) Failed() bool {
-	return a.Status == trust.Unsupported.String() || a.Status == trust.Refused.String()
-}
-
-// Provenance is what stands behind an answer, in the form a caller
-// reads.
-type Provenance struct {
-	Engine       string `json:"engine,omitempty"`
-	Fidelity     string `json:"fidelity"`
-	Completeness string `json:"completeness"`
-	// SupportsNegativeClaim saves a caller knowing that this means
-	// resolved binding together with total coverage.
-	SupportsNegativeClaim bool     `json:"supportsNegativeClaim"`
-	Caveats               []Caveat `json:"caveats,omitempty"`
-}
-
-// Caveat is a limit on an answer that its tier does not express.
-type Caveat struct {
-	Code  string        `json:"code"`
-	Note  string        `json:"note,omitempty"`
-	Paths []source.Path `json:"paths,omitempty"`
+	Scope     string   `json:"scope"                        jsonschema:"file or directory, workspace-relative"`
+	Language  string   `json:"language,omitempty"           jsonschema:"language to assume"`
+	Detail    string   `json:"detail,omitempty"             jsonschema:"names|signatures|docs|source"`
+	Include   []string `json:"include,omitempty"            jsonschema:"import|parameter|local|all"`
+	Tests     bool     `json:"tests,omitempty"              jsonschema:"include the files this language calls tests"`
+	MaxTokens int      `json:"max_tokens,omitempty"         jsonschema:"estimated answer ceiling"`
+	Preferred string   `json:"preferred_fidelity,omitempty" jsonschema:"syntactic|indexed|resolved"`
 }
 
 // Outline builds the tool that reports what a scope declares.
@@ -80,15 +47,15 @@ func Outline(s *query.Service) (Tool, error) {
 				Scope:     scope,
 				Language:  source.Language(in.Language),
 				Preferred: fidelity(in.Preferred),
+				Tests:     in.Tests,
 			})
 			if err != nil {
 				return Answer{}, err
 			}
 
-			return render(Fit(answered, Budget{
-				MaxTokens: in.MaxTokens,
-				Detail:    Detail(in.Detail),
-			})), nil
+			detail := level(in.Detail, scope)
+			return Fit(published(answered, about(scope, in.Language, answered), detail, in.Include),
+				Budget{MaxTokens: in.MaxTokens}), nil
 		})
 }
 
@@ -96,24 +63,34 @@ const outlineDescription = "PREFER OVER read for finding what a file or director
 	"Returns the declarations alone rather than the whole file, and states the evidence behind " +
 	"them: an empty answer says whether it means there are none or only that none were found."
 
-// render turns an answer into the form a caller reads, where every tier
-// is a word rather than a number.
-func render(a engine.Answer[sema.Symbol]) Answer {
-	caveats := make([]Caveat, 0, len(a.Provenance.Caveats))
-	for _, c := range a.Provenance.Caveats {
-		caveats = append(caveats, Caveat{Code: string(c.Code), Note: c.Note, Paths: c.Paths})
+// about names what an answer is about, so no item has to.
+//
+// The language is what the engine answered as, which is what a caller
+// asked about only when it said so. A scope naming a file states the
+// file; a directory leaves it to the items, which come from several.
+func about(scope source.Path, asked string, a engine.Answer[sema.Symbol]) Scope {
+	held := Scope{Language: asked}
+	if len(a.Items) > 0 {
+		held.Language = string(a.Items[0].Language)
 	}
-	return Answer{
-		Items:  a.Items,
-		Status: a.Status.String(),
-		Provenance: Provenance{
-			Engine:                a.Provenance.Engine,
-			Fidelity:              a.Provenance.Fidelity.String(),
-			Completeness:          a.Provenance.Completeness.String(),
-			SupportsNegativeClaim: a.Provenance.SupportsNegativeClaim(),
-			Caveats:               caveats,
-		},
+	if path.Ext(string(scope)) != "" {
+		held.Path = string(scope)
+		held.Unit = path.Dir(string(scope))
+		return held
 	}
+	held.Unit = string(scope)
+	return held
+}
+
+// level reads the detail a caller asked for, and falls back to what the
+// scope implies rather than to one answer for every scope.
+func level(named string, scope source.Path) Detail {
+	for _, d := range Levels() {
+		if string(d) == named {
+			return d
+		}
+	}
+	return DefaultDetail(scope)
 }
 
 // relative refuses a path that would leave the workspace.

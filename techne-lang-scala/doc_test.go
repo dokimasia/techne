@@ -49,7 +49,7 @@ object Store {
 `,
 		},
 		Declares: []conformance.Declared{
-			{Name: "Readable", Kind: sema.KindInterface},
+			{Name: "Readable", Kind: sema.KindInterface, Signature: "trait Readable"},
 			{
 				Name: "Store", Kind: sema.KindStruct,
 				Doc:       "Store holds items by name.",

@@ -59,6 +59,10 @@ type Symbol struct {
 	Modifiers []string `json:"modifiers,omitempty"`
 	// Annotations are the metadata attached to this declaration.
 	Annotations []Annotation `json:"annotations,omitempty"`
+	// Signature is the declaration without its body: what a caller needs
+	// to call it, implement it or match it, and nothing of how it works.
+	// A declaration that has no body is its own signature.
+	Signature string `json:"signature,omitempty"`
 	// Doc is the documentation comment. The output budget drops this
 	// before it drops anything else, so a caller must not depend on it.
 	Doc string `json:"doc,omitempty"`

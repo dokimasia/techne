@@ -114,17 +114,23 @@ func TestOutline(t *testing.T) {
 				"a parser's empty answer means none were found, never that there are none")
 		})
 
-		t.Run("reports a status a caller can branch on", func(t *testing.T) {
+		t.Run("carries no error when an engine answered", func(t *testing.T) {
 			t.Parallel()
+			// An answer that ran states its evidence in the provenance.
+			// A status beside it would restate one of those fields.
 			got := call(t, outlineTool(t, declared), `{"scope":"a.fx"}`)
-			assert.Equal(t, got["status"], "ok", "a status reaches a caller as a word, not a number")
+			_, failed := got["error"]
+			assert.False(t, failed, "an answer that ran says what it found and how, and no more")
 		})
 
 		t.Run("tells a caller the language is not served", func(t *testing.T) {
 			t.Parallel()
 			got := call(t, outlineTool(t, declared), `{"scope":"notes.md"}`)
-			assert.Equal(t, got["status"], "unsupported",
+			failure := got["error"].(map[string]any)
+			assert.Equal(t, failure["code"], "unsupported",
 				"a capability gap is something a caller routes around")
+			assert.NotEmpty(t, failure["reason"],
+				"a caller told only no cannot tell a gap from a mistake it could correct")
 		})
 
 		t.Run("marks an unsupported language as a failure without the transport reading it", func(t *testing.T) {
@@ -147,7 +153,7 @@ func TestOutline(t *testing.T) {
 
 		t.Run("drops documentation before it drops a declaration", func(t *testing.T) {
 			t.Parallel()
-			got := call(t, outlineTool(t, declared), `{"scope":"a.fx","detail":"full","max_tokens":1}`)
+			got := call(t, outlineTool(t, declared), `{"scope":"a.fx","detail":"source","max_tokens":1}`)
 			items := got["items"].([]any)
 			assert.Length(t, items, 1, "an answer that found something returns something")
 			first := items[0].(map[string]any)
@@ -157,9 +163,9 @@ func TestOutline(t *testing.T) {
 
 		t.Run("carries documentation when asked and affordable", func(t *testing.T) {
 			t.Parallel()
-			got := call(t, outlineTool(t, declared), `{"scope":"a.fx","detail":"full"}`)
+			got := call(t, outlineTool(t, declared), `{"scope":"a.fx","detail":"docs"}`)
 			first := got["items"].([]any)[0].(map[string]any)
-			assert.Equal(t, first["doc"], "F does a thing.", "full is the level that carries documentation")
+			assert.Equal(t, first["doc"], "F does a thing.", "docs is the level that carries documentation")
 		})
 
 		t.Run("refuses an absolute path", func(t *testing.T) {

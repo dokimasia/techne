@@ -89,7 +89,8 @@ func TestSearch(t *testing.T) {
 				declaration("Digest", "one"), declaration("DigestAll", "two")),
 				`{"text":"Digest","scope":"a.fx"}`)
 
-			assert.Equal(t, got["status"], "ok", "several matches is an answer, not a refusal")
+			_, failed := got["error"]
+			assert.False(t, failed, "several matches is an answer, not a refusal")
 			assert.Equal(t, got["ambiguous"], true, "the caller is told it has a choice to make")
 			assert.Length(t, got["items"].([]any), 2, "every candidate comes back")
 		})
@@ -102,7 +103,7 @@ func TestSearch(t *testing.T) {
 			first := got["items"].([]any)[0].(map[string]any)
 			assert.NotEmpty(t, first["name"], "a candidate carries the name to pick by")
 			assert.NotEmpty(t, first["kind"], "a candidate says what sort of declaration it is")
-			assert.NotEmpty(t, first["span"], "a candidate says where it lives")
+			assert.NotNil(t, first["line"], "a candidate says where it lives")
 		})
 
 		t.Run("keeps the order the engine chose", func(t *testing.T) {
@@ -120,7 +121,7 @@ func TestSearch(t *testing.T) {
 		t.Run("says nothing was found rather than proving absence", func(t *testing.T) {
 			t.Parallel()
 			got := matches(t, searchTool(t), `{"text":"Nothing","scope":"a.fx"}`)
-			assert.Empty(t, got["items"], "the engine matched nothing")
+			assert.Length(t, got["items"].([]any), 0, "the engine matched nothing")
 			provenance := got["provenance"].(map[string]any)
 			assert.Equal(t, provenance["supportsNegativeClaim"], false,
 				"a parser's empty search means none were found, never that there are none")

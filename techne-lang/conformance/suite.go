@@ -63,6 +63,12 @@ type Declared struct {
 	// language spelling visibility as a modifier expects
 	// [sema.VisibilityUnknown], because a name carries nothing of it.
 	Visibility sema.Visibility
+	// Signature is the declaration without its body, checked where a
+	// module states one. Stating it pins the shapes that are hard: a
+	// declaration whose grammar names no body field, a member that must
+	// not take its container's text, and one written under an
+	// annotation that must not take it.
+	Signature string
 	// Doc is the documentation the fixture writes on this declaration,
 	// in whichever form the language's own documentation tool reads.
 	Doc string
@@ -190,7 +196,7 @@ func Run(t *testing.T, s Suite) {
 		t.Run("carries the metadata the module names", func(t *testing.T) {
 			t.Parallel()
 			for _, want := range s.Declares {
-				if len(want.Annotations) == 0 && len(want.Modifiers) == 0 {
+				if len(want.Annotations) == 0 && len(want.Modifiers) == 0 && want.Signature == "" {
 					continue
 				}
 				// A name and kind can repeat: an interface and the class
@@ -205,6 +211,11 @@ func Run(t *testing.T, s Suite) {
 					assert.True(t, anyAnnotated(matching, annotation),
 						"metadata decides what a tool rewriting the declaration must reproduce, "+
 							"so it is read whole rather than dropped or trimmed")
+				}
+				if want.Signature != "" {
+					assert.True(t, anySigned(matching, want.Signature),
+						"a signature is what a caller needs to call a declaration or "+
+							"implement it, and holds nothing of how it works")
 				}
 				for _, keyword := range want.Modifiers {
 					assert.True(t, anyModified(matching, keyword),
@@ -382,6 +393,15 @@ func anyAnnotated(in []sema.Symbol, want Annotated) bool {
 			if want.Text == "" || a.Text == want.Text {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+func anySigned(in []sema.Symbol, signature string) bool {
+	for _, sym := range in {
+		if sym.Signature == signature {
+			return true
 		}
 	}
 	return false

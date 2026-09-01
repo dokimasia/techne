@@ -98,12 +98,15 @@ func TestApp(t *testing.T) {
 				"src/service.ts":   "typescript",
 			} {
 				got := run(t, "outline", `{"scope":"`+path+`"}`)
-				assert.Equal(t, got["status"], "ok", "a file of a registered language is answered")
+				_, failed := got["error"]
+				assert.False(t, failed, "a file of a registered language is answered")
 				items, ok := got["items"].([]any)
 				assert.True(t, ok, "an answer carries its items")
 				assert.NotEmpty(t, items, "a file declaring something outlines to something")
-				first := items[0].(map[string]any)
-				assert.Equal(t, first["language"].(string), want,
+				// The language is a fact about the whole answer, so it is
+				// stated once rather than on each of its items.
+				scope := got["scope"].(map[string]any)
+				assert.Equal(t, scope["language"].(string), want,
 					"the answer names the language that served it")
 			}
 		})
@@ -112,7 +115,8 @@ func TestApp(t *testing.T) {
 			t.Parallel()
 			// A capability gap is something a caller routes around.
 			got := run(t, "outline", `{"scope":"README.md"}`)
-			assert.Equal(t, got["status"], "unsupported", "no language claims a markdown file")
+			assert.Equal(t, got["error"].(map[string]any)["code"], "unsupported",
+				"no language claims a markdown file")
 		})
 
 		t.Run("never claims a parser proves absence", func(t *testing.T) {
@@ -131,7 +135,8 @@ func TestApp(t *testing.T) {
 		t.Run("finds a declaration across the workspace", func(t *testing.T) {
 			t.Parallel()
 			got := run(t, "search", `{"text":"new","scope":"src","language":"go"}`)
-			assert.Equal(t, got["status"], "ok", "a search over a registered language is answered")
+			_, failed := got["error"]
+			assert.False(t, failed, "a search over a registered language is answered")
 			assert.NotEmpty(t, got["items"], "the workspace declares something by that name")
 		})
 
@@ -142,7 +147,8 @@ func TestApp(t *testing.T) {
 			assert.Length(t, items, 1, "one declaration matched")
 			first := items[0].(map[string]any)
 			assert.Equal(t, first["name"].(string), "New", "the declaration searched for comes back")
-			assert.NotEmpty(t, first["span"], "a single match carries where it lives")
+			assert.NotNil(t, first["line"], "a single match carries where it lives")
+			assert.NotEmpty(t, first["signature"], "a single match carries how to call it")
 		})
 	})
 

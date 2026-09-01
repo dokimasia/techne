@@ -83,7 +83,10 @@ var _ = fmt.Sprint
 					{Name: "doc", Text: `doc:"the display name"`},
 				},
 			},
-			{Name: "Read", Kind: sema.KindMethod, Visibility: sema.Exported},
+			{
+				Name: "Read", Kind: sema.KindMethod, Visibility: sema.Exported,
+				Signature: "Read() int",
+			},
 			{Name: "Reader", Kind: sema.KindInterface, Visibility: sema.Exported},
 			{
 				Name: "Registry", Kind: sema.KindVariable, Visibility: sema.Exported,

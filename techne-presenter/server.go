@@ -63,8 +63,17 @@ func handler(t tool.Tool) mcp.ToolHandler {
 			return nil, fmt.Errorf("presenter: %q produced output that is not JSON: %w", t.Name(), err)
 		}
 
+		// The two halves of a result have different readers. A tool that
+		// renders itself is sent in the form each wants; one that does
+		// not falls back to the payload, which is what the specification
+		// asks for.
+		text := result.Rendered
+		if text == "" {
+			text = string(result.Payload)
+		}
+
 		return &mcp.CallToolResult{
-			Content:           []mcp.Content{&mcp.TextContent{Text: string(result.Payload)}},
+			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
 			StructuredContent: structured,
 			IsError:           result.Failed,
 		}, nil

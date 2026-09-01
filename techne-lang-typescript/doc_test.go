@@ -68,7 +68,7 @@ export function make<T>(value: T): T {
 			{Name: "Id", Kind: sema.KindType},
 			{Name: "Injectable", Kind: sema.KindImport},
 			{Name: "LIMIT", Kind: sema.KindConstant},
-			{Name: "Readable", Kind: sema.KindInterface},
+			{Name: "Readable", Kind: sema.KindInterface, Signature: "export interface Readable"},
 			{Name: "Red", Kind: sema.KindEnumMember},
 			{
 				Name: "Store", Kind: sema.KindStruct,

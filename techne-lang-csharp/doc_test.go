@@ -68,7 +68,11 @@ namespace Shop
 		},
 		Declares: []conformance.Declared{
 			{Name: "Colour", Kind: sema.KindEnum},
-			{Name: "Get", Kind: sema.KindMethod, Doc: "Returns the number of items."},
+			{
+				Name: "Get", Kind: sema.KindMethod,
+				Signature: "public int Get()",
+				Doc:       "Returns the number of items.",
+			},
 			{Name: "Get", Kind: sema.KindMethod},
 			{Name: "Green", Kind: sema.KindEnumMember},
 			{Name: "IReadable", Kind: sema.KindInterface},

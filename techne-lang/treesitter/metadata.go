@@ -335,6 +335,140 @@ func documentation(node *ts.Node, content []byte, style lang.CommentStyle, kind 
 	return above(node, content, style)
 }
 
+// signature returns a declaration without its body.
+//
+// The body is the part a caller reading an outline did not ask for, and
+// every grammar served here names that field body.
+//
+// Not every declaration uses that field. Go builds a struct from a
+// struct_type holding an unnamed field list, so where no body field is
+// found the first line is the signature, which is where a language that
+// opens a block puts the brace.
+//
+// The annotations written onto a declaration sit inside its own span and
+// are dropped, because they reach a caller as annotations and repeating
+// them costs a line each.
+//
+// A declaration with no body is its own signature, which is right for a
+// constant and for an alias.
+func signature(node *ts.Node, content []byte, marks []sema.Annotation) string {
+	from := enclosing(node, content)
+	start, end := int(from.StartByte()), int(from.EndByte())
+	if end > len(content) || start >= end {
+		return ""
+	}
+
+	for _, mark := range marks {
+		if mark.Span.Start.Offset >= start && mark.Span.End.Offset <= end && mark.Span.End.Offset > start {
+			start = mark.Span.End.Offset
+		}
+	}
+
+	if body := bodyOf(from, 0); body != nil && int(body.StartByte()) > start {
+		// A body can begin after something written above it, as Ruby's
+		// does after a comment, so the text is taken back to the line
+		// the declaration closes on rather than to the body's start.
+		return trimmed(balanced(string(content[start:body.StartByte()])))
+	}
+	// A declaration whose body the grammar does not name ends where it
+	// opens the block, and a declaration with neither ends on its line.
+	text := string(content[start:end])
+	if at := strings.IndexByte(text, bodyOpen); at >= 0 {
+		text = text[:at]
+	}
+	if at := strings.IndexByte(text, '\n'); at >= 0 {
+		text = text[:at]
+	}
+	return trimmed(text)
+}
+
+// balanced returns the leading lines of a signature that close every
+// bracket they open, so a signature written across several lines stays
+// whole and one followed by anything else does not take it.
+func balanced(text string) string {
+	depth, taken := 0, 0
+	for _, line := range strings.SplitAfter(text, "\n") {
+		taken += len(line)
+		depth += strings.Count(line, "(") - strings.Count(line, ")")
+		depth += strings.Count(line, "[") - strings.Count(line, "]")
+		// A blank line closes nothing. Breaking on one would end the
+		// signature before it began, where a declaration is written
+		// under the annotations that were stripped from it.
+		if depth <= 0 && strings.TrimSpace(line) != "" {
+			break
+		}
+	}
+	return text[:taken]
+}
+
+func trimmed(text string) string {
+	return strings.TrimRight(strings.TrimSpace(text), signatureTail)
+}
+
+// enclosing returns the node a signature starts at.
+//
+// A grammar often wraps one declaration in a statement carrying its
+// keyword: Go writes `type Store struct{}` as a type_declaration holding
+// a type_spec, and a signature without the keyword reads wrong.
+//
+// The climb stops at a parent holding anything besides this declaration,
+// which is what keeps a method inside an interface from taking the
+// interface's own text and a decorated function from taking its
+// decorator. That is a stricter rule than the one documentation uses,
+// because documentation is written above a whole declaration while a
+// signature is a part of one.
+//
+// It never climbs past an opening brace. A parent whose text reaches the
+// node through one has opened a body, so the node is a member of it
+// rather than the same declaration written wider: a Go interface holding
+// one method would otherwise give that method the interface's own text.
+func enclosing(node *ts.Node, content []byte) *ts.Node {
+	out := node
+	for {
+		parent := out.Parent()
+		if parent == nil || parent.NamedChildCount() != 1 {
+			return out
+		}
+		if parent.StartPosition().Row != out.StartPosition().Row {
+			return out
+		}
+		if first := parent.NamedChild(0); first == nil || !first.Equals(*out) {
+			return out
+		}
+		gap := content[parent.StartByte():out.StartByte()]
+		if strings.ContainsAny(string(gap), blockOpen) {
+			return out
+		}
+		out = parent
+	}
+}
+
+// bodyOf finds the field holding a declaration's body.
+//
+// It is not always a child of the declaring node: Go writes a struct's
+// fields under the type child rather than the spec, so the search
+// descends. It stops at bodyDepth, because past that it would find the
+// body of something nested inside this declaration rather than this
+// declaration's own.
+func bodyOf(node *ts.Node, depth int) *ts.Node {
+	if depth > bodyDepth {
+		return nil
+	}
+	if body := node.ChildByFieldName(string(FieldNameBody)); body != nil {
+		return body
+	}
+	for i := range node.NamedChildCount() {
+		child := node.NamedChild(i)
+		if child == nil {
+			continue
+		}
+		if body := bodyOf(child, depth+1); body != nil {
+			return body
+		}
+	}
+	return nil
+}
+
 // documents reports whether a kind is one a documentation tool attaches
 // a comment to.
 //

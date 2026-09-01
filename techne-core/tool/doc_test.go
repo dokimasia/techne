@@ -22,7 +22,7 @@ func TestDoc(t *testing.T) {
 			t.Parallel()
 			// A presenter that fits an answer a service already fitted
 			// must not thin it further or claim a second truncation.
-			budget := tool.Budget{MaxTokens: 300, Detail: tool.Full}
+			budget := tool.Budget{MaxTokens: 300}
 			once := tool.Fit(many(400), budget)
 			twice := tool.Fit(once, budget)
 
@@ -38,12 +38,13 @@ func TestDoc(t *testing.T) {
 		t.Run("never changes what a caller may conclude", func(t *testing.T) {
 			t.Parallel()
 			full := many(400)
-			got := tool.Fit(full, tool.Budget{MaxTokens: 300, Detail: tool.Full})
+			got := tool.Fit(full, tool.Budget{MaxTokens: 300})
 
-			assert.Equal(t, got.Status, full.Status, "dropping items does not change whether an engine ran")
+			assert.Equal(t, got.Failed(), full.Failed(),
+				"dropping items does not change whether an engine ran")
 			assert.Equal(t, got.Provenance.Completeness, full.Provenance.Completeness,
 				"what the engine covered is a fact about the engine, not about what fitted")
-			assert.Equal(t, got.Provenance.SupportsNegativeClaim(), full.Provenance.SupportsNegativeClaim(),
+			assert.Equal(t, got.Provenance.SupportsNegativeClaim, full.Provenance.SupportsNegativeClaim,
 				"thinning an answer says nothing about the evidence behind it")
 		})
 	})

@@ -69,7 +69,8 @@ def helper(a, b=1, *rest, **named):
 			},
 			{
 				Name: "helper", Kind: sema.KindFunction, Visibility: sema.Exported,
-				Doc: "Return the first argument.",
+				Signature: "def helper(a, b=1, *rest, **named)",
+				Doc:       "Return the first argument.",
 			},
 			{Name: "key", Kind: sema.KindParameter, Visibility: sema.Exported},
 			{Name: "local", Kind: sema.KindVariable, Visibility: sema.Exported},

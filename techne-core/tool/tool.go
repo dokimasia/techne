@@ -52,6 +52,12 @@ type Result struct {
 	// success.
 	Payload json.RawMessage
 
+	// Rendered is the answer written for a reader rather than a parser,
+	// and is what a transport puts in the unstructured half of a result.
+	// It is empty for an output that renders itself no better than its
+	// JSON does, and a transport then sends the payload.
+	Rendered string
+
 	// Failed reports that the operation did not do what was asked. It
 	// covers a language nothing serves and a request that was declined,
 	// both of which a model can correct.
@@ -64,6 +70,17 @@ type Result struct {
 // not have to read the payload to find out.
 func Failing(payload json.RawMessage) Result {
 	return Result{Payload: payload, Failed: true}
+}
+
+// Renderer is implemented by an output that reads better as text than
+// as JSON.
+//
+// A tool result carries an unstructured block and a structured one, with
+// different readers: a model reads the first and a program reads the
+// second. An output implementing this is sent as both, each in the form
+// its reader wants, rather than as the same JSON twice.
+type Renderer interface {
+	Render() string
 }
 
 // New builds a tool from a typed handler.
@@ -99,6 +116,25 @@ func New[In, Out any](
 var marshalled = map[reflect.Type]*jsonschema.Schema{
 	reflect.TypeFor[sema.Kind]():       enumOf(sema.Kinds()),
 	reflect.TypeFor[sema.Visibility](): enumOf(sema.Visibilities()),
+	reflect.TypeFor[Members]():         nestedDeclarations(),
+}
+
+// itemSchema points at where a read tool's answer describes one
+// declaration. Answer states its items at the root, and a tool
+// embedding Answer flattens into the same place.
+const itemSchema = "#/properties/items/items"
+
+// nestedDeclarations describes the members a declaration holds.
+//
+// A declaration holds declarations, and deriving a schema from a type
+// that contains itself does not terminate. The members are described by
+// pointing at the description the answer already carries, which is what
+// a reference is for and what keeps the two from drifting apart.
+func nestedDeclarations() *jsonschema.Schema {
+	return &jsonschema.Schema{
+		Type:  "array",
+		Items: &jsonschema.Schema{Ref: itemSchema},
+	}
 }
 
 // enumOf builds the schema for a type that marshals as one of a closed
@@ -125,6 +161,15 @@ func (t *typed[In, Out]) Description() string              { return t.descriptio
 func (t *typed[In, Out]) InputSchema() *jsonschema.Schema  { return t.in }
 func (t *typed[In, Out]) OutputSchema() *jsonschema.Schema { return t.out }
 
+// rendered returns the reading form of an output, or nothing when the
+// output has none.
+func rendered(out any) string {
+	if r, ok := out.(Renderer); ok {
+		return r.Render()
+	}
+	return ""
+}
+
 func (t *typed[In, Out]) Execute(ctx context.Context, input json.RawMessage) (Result, error) {
 	var decoded In
 	if len(input) > 0 {
@@ -142,8 +187,11 @@ func (t *typed[In, Out]) Execute(ctx context.Context, input json.RawMessage) (Re
 	if err != nil {
 		return Result{}, fmt.Errorf("tool: %q output: %w", t.name, err)
 	}
+	text := rendered(out)
 	if failer, marks := any(out).(interface{ Failed() bool }); marks && failer.Failed() {
-		return Failing(encoded), nil
+		failed := Failing(encoded)
+		failed.Rendered = text
+		return failed, nil
 	}
-	return Result{Payload: encoded}, nil
+	return Result{Payload: encoded, Rendered: text}, nil
 }

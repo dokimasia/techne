@@ -56,7 +56,7 @@ static int helper(int a) {
 			{Name: "GREEN", Kind: sema.KindEnumMember},
 			{Name: "LIMIT", Kind: sema.KindConstant},
 			{Name: "RED", Kind: sema.KindEnumMember},
-			{Name: "SQUARE", Kind: sema.KindMacro},
+			{Name: "SQUARE", Kind: sema.KindMacro, Signature: "#define SQUARE(x) ((x) * (x))"},
 			{Name: "Store", Kind: sema.KindStruct, Doc: "Store holds a count."},
 			{Name: "Store", Kind: sema.KindType, Doc: "Store holds a count."},
 			{Name: "a", Kind: sema.KindParameter},

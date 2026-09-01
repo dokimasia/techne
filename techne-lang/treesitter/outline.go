@@ -46,6 +46,9 @@ func (e *Engine) symbols(ctx context.Context, req engine.Request) ([]sema.Symbol
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		if !req.Tests && e.declared.IsTest(string(p)) {
+			continue
+		}
 		content, readErr := fs.ReadFile(e.fsys, string(p))
 		if readErr != nil {
 			return nil, fmt.Errorf("treesitter: read %s: %w", p, readErr)
@@ -128,6 +131,7 @@ func (e *Engine) declarations(p source.Path, content []byte) ([]sema.Symbol, err
 			}
 
 			marks := annotations(node, content, p)
+			signed := signature(node, content, marks)
 			if kind == sema.KindField {
 				marks = append(marks, tags(node, content, p)...)
 			}
@@ -142,6 +146,7 @@ func (e *Engine) declarations(p source.Path, content []byte) ([]sema.Symbol, err
 				Visibility:  e.declared.Visibility(one.text),
 				Modifiers:   modifiers(node, content),
 				Annotations: marks,
+				Signature:   signed,
 				Doc:         documentation(node, content, e.declared.Comment, kind),
 				Snippet:     snippetOf(content, span),
 			})

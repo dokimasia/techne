@@ -211,6 +211,20 @@ const (
 	annotationBreak = "( \t\n{"
 	// annotationQualifier separates the segments of a qualified name.
 	annotationQualifier = ".:"
+	// blockOpen is the punctuation a language groups with. A signature
+	// never climbs across one, because a parent reaching this node
+	// through one has opened something this node is inside.
+	blockOpen = "{(["
+	// bodyOpen is the brace a language opens a body with, and is where
+	// a declaration whose body the grammar does not name ends.
+	bodyOpen = '{'
+	// bodyDepth bounds how far below a declaring node its body may sit.
+	// Go puts a struct's fields two levels down; past that the search
+	// would find the body of something nested inside the declaration.
+	bodyDepth = 2
+	// signatureTail is the punctuation a declaration opens its body
+	// with, left behind when the body is removed.
+	signatureTail = " \t\n\r{(=:->"
 	// tagSeparator ends a Go struct tag's key.
 	tagSeparator = ":"
 	// tagQuote opens and closes a struct tag value, and tagEscape is

@@ -74,7 +74,7 @@ public class Store implements Readable {
 				Annotations: []conformance.Annotated{{Name: "FunctionalInterface", Text: "@FunctionalInterface"}},
 				Doc:         "Readable is anything with a size.",
 			},
-			{Name: "get", Kind: sema.KindMethod},
+			{Name: "get", Kind: sema.KindMethod, Signature: "int get();"},
 
 			{Name: "Colour", Kind: sema.KindEnum},
 			{Name: "RED", Kind: sema.KindEnumMember},

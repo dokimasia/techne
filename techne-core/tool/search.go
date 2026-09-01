@@ -18,15 +18,17 @@ import (
 // declaration and Private includes what a language keeps inside its
 // unit. The rest matches the outline tool.
 type SearchInput struct {
-	Text      string `json:"text"                         jsonschema:"a name, or part of one"`
-	Scope     string `json:"scope,omitempty"              jsonschema:"where to look, workspace-relative"`
-	Language  string `json:"language,omitempty"           jsonschema:"language to assume"`
-	Kind      string `json:"kind,omitempty"               jsonschema:"function|method|type|interface|constant"`
-	Private   bool   `json:"private,omitempty"            jsonschema:"include unexported declarations"`
-	Limit     int    `json:"limit,omitempty"              jsonschema:"cap on matches"`
-	Detail    string `json:"detail,omitempty"             jsonschema:"summary|standard|full"`
-	MaxTokens int    `json:"max_tokens,omitempty"         jsonschema:"estimated answer ceiling"`
-	Preferred string `json:"preferred_fidelity,omitempty" jsonschema:"syntactic|indexed|resolved"`
+	Text      string   `json:"text"                         jsonschema:"a name, or part of one"`
+	Scope     string   `json:"scope,omitempty"              jsonschema:"where to look, workspace-relative"`
+	Language  string   `json:"language,omitempty"           jsonschema:"language to assume"`
+	Kind      string   `json:"kind,omitempty"               jsonschema:"function|method|type|interface|constant"`
+	Private   bool     `json:"private,omitempty"            jsonschema:"include unexported declarations"`
+	Limit     int      `json:"limit,omitempty"              jsonschema:"cap on matches"`
+	Detail    string   `json:"detail,omitempty"             jsonschema:"names|signatures|docs|source"`
+	Include   []string `json:"include,omitempty"            jsonschema:"import|parameter|local|all"`
+	Tests     bool     `json:"tests,omitempty"              jsonschema:"include the files this language calls tests"`
+	MaxTokens int      `json:"max_tokens,omitempty"         jsonschema:"estimated answer ceiling"`
+	Preferred string   `json:"preferred_fidelity,omitempty" jsonschema:"syntactic|indexed|resolved"`
 }
 
 // Matches is what the search tool returns.
@@ -53,6 +55,7 @@ func Search(s *query.Service) (Tool, error) {
 					Scope:     scope,
 					Language:  source.Language(in.Language),
 					Preferred: fidelity(in.Preferred),
+					Tests:     in.Tests,
 				},
 				engine.Query{
 					Text:    in.Text,
@@ -64,19 +67,17 @@ func Search(s *query.Service) (Tool, error) {
 				return Matches{}, err
 			}
 
-			// One match is what the caller was looking for, so the
-			// declaration comes back whole. Making them ask again is a
-			// round trip spent confirming what the search already knew.
-			detail := Detail(in.Detail)
+			// One match is what the caller was looking for, so it comes
+			// back documented. Making them ask again is a round trip
+			// spent confirming what the search already knew.
+			detail := level(in.Detail, scope)
 			if len(answered.Items) == 1 && in.Detail == "" {
-				detail = Full
+				detail = Docs
 			}
 
-			fitted := Fit(answered, Budget{MaxTokens: in.MaxTokens, Detail: detail})
-			return Matches{
-				Answer:    render(fitted),
-				Ambiguous: len(fitted.Items) > 1,
-			}, nil
+			fitted := Fit(published(answered, about(scope, in.Language, answered), detail, in.Include),
+				Budget{MaxTokens: in.MaxTokens})
+			return Matches{Answer: fitted, Ambiguous: len(fitted.Items) > 1}, nil
 		})
 }
 

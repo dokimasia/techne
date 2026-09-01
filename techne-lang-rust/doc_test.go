@@ -71,7 +71,7 @@ pub mod inner {
 `,
 		},
 		Declares: []conformance.Declared{
-			{Name: "Bits", Kind: sema.KindUnion},
+			{Name: "Bits", Kind: sema.KindUnion, Signature: "pub union Bits"},
 			{Name: "Colour", Kind: sema.KindEnum},
 			{Name: "Green", Kind: sema.KindEnumMember},
 			{Name: "Id", Kind: sema.KindType},

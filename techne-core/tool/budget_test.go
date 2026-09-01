@@ -8,57 +8,74 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
-	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/tool"
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// many builds an answer holding n documented symbols, each carrying the
-// source text of its declaration.
-func many(n int) engine.Answer[sema.Symbol] {
-	items := make([]sema.Symbol, 0, n)
+// many builds an answer holding n documented declarations, each
+// carrying the source text of its declaration.
+func many(n int) tool.Answer {
+	items := make([]tool.Declaration, 0, n)
 	for i := range n {
-		items = append(items, sema.Symbol{
-			ID:         sema.ID("fixture:./pkg#Sym:function"),
-			Name:       "Symbol" + string(rune('A'+i%26)),
-			Kind:       sema.KindFunction,
-			Language:   source.Language("fixture"),
-			Span:       source.Span{Path: "pkg/a.fx"},
-			Visibility: sema.Exported,
-			Doc:        strings.Repeat("documentation that costs a caller context. ", 8),
-			Snippet:    strings.Repeat("func SymbolA() { return }\n", 6),
+		items = append(items, tool.Declaration{
+			Name:      "Symbol" + string(rune('A'+i%26)),
+			Kind:      sema.KindFunction,
+			Line:      i + 1,
+			Signature: "func Symbol" + string(rune('A'+i%26)) + "() int",
+			Doc:       strings.Repeat("documentation that costs a caller context. ", 8),
+			Snippet:   strings.Repeat("func SymbolA() { return }\n", 6),
 		})
 	}
-	return engine.Answer[sema.Symbol]{
+	return tool.Answer{
+		Scope:      tool.Scope{Language: "fixture", Unit: "pkg", Path: "pkg/a.fx"},
 		Items:      items,
-		Status:     trust.OK,
-		Provenance: trust.Provenance{Engine: "parser", Fidelity: trust.Syntactic, Completeness: trust.ScopeTotal},
+		Provenance: tool.Provenance{Engine: "parser", Fidelity: "syntactic", Completeness: "total"},
 	}
 }
 
-func truncated(a engine.Answer[sema.Symbol]) bool {
+// nested builds one declaration holding n members, so the drop order
+// can be watched taking leaves before branches.
+func nested(n int) tool.Answer {
+	members := make([]tool.Declaration, 0, n)
+	for i := range n {
+		members = append(members, tool.Declaration{
+			Name: "field" + string(rune('a'+i%26)), Kind: sema.KindField, Line: i + 2,
+			Signature: "field" + string(rune('a'+i%26)) + " string",
+			Doc:       strings.Repeat("what this field is for. ", 6),
+		})
+	}
+	return tool.Answer{
+		Scope: tool.Scope{Language: "fixture", Unit: "pkg", Path: "pkg/a.fx"},
+		Items: []tool.Declaration{{
+			Name: "Store", Kind: sema.KindStruct, Line: 1,
+			Signature: "type Store struct", Members: members,
+		}},
+		Provenance: tool.Provenance{Engine: "parser", Fidelity: "syntactic", Completeness: "total"},
+	}
+}
+
+func truncated(a tool.Answer) bool {
 	for _, c := range a.Provenance.Caveats {
-		if c.Code == trust.CaveatTruncated {
+		if c.Code == string(trust.CaveatTruncated) {
 			return true
 		}
 	}
 	return false
 }
 
-func documented(a engine.Answer[sema.Symbol]) bool {
-	for _, s := range a.Items {
-		if s.Doc != "" {
+func documented(a tool.Answer) bool {
+	for _, d := range a.Items {
+		if d.Doc != "" {
 			return true
 		}
 	}
 	return false
 }
 
-func snippeted(a engine.Answer[sema.Symbol]) bool {
-	for _, s := range a.Items {
-		if s.Snippet != "" {
+func snippeted(a tool.Answer) bool {
+	for _, d := range a.Items {
+		if d.Snippet != "" {
 			return true
 		}
 	}
@@ -74,7 +91,7 @@ func TestBudget(t *testing.T) {
 		t.Run("leaves an answer that fits alone", func(t *testing.T) {
 			t.Parallel()
 			full := many(2)
-			got := tool.Fit(full, tool.Budget{MaxTokens: 100000, Detail: tool.Full})
+			got := tool.Fit(full, tool.Budget{MaxTokens: 100000})
 			assert.Length(t, got.Items, 2, "an answer inside the budget is returned whole")
 			assert.False(t, truncated(got), "nothing was dropped, so nothing is claimed to be")
 		})
@@ -83,7 +100,7 @@ func TestBudget(t *testing.T) {
 			t.Parallel()
 			// Fifty names with no documentation answers what is there.
 			// Eight complete entries answer a different question.
-			got := tool.Fit(many(40), tool.Budget{MaxTokens: 900, Detail: tool.Full})
+			got := tool.Fit(many(40), tool.Budget{MaxTokens: 900})
 			assert.False(t, documented(got), "documentation goes before any item does")
 			assert.True(t, len(got.Items) > 8, "thinning bought room for names that would have been dropped")
 		})
@@ -94,7 +111,7 @@ func TestBudget(t *testing.T) {
 			// Sweeping the ceiling checks the order holds at every width
 			// rather than at one hand-picked number.
 			for ceiling := 50; ceiling <= 4000; ceiling += 50 {
-				got := tool.Fit(many(8), tool.Budget{MaxTokens: ceiling, Detail: tool.Full})
+				got := tool.Fit(many(8), tool.Budget{MaxTokens: ceiling})
 				if !snippeted(got) {
 					assert.False(t, documented(got),
 						"source text is the later rung, so nothing keeps a doc after losing it")
@@ -108,7 +125,7 @@ func TestBudget(t *testing.T) {
 			// ceiling would ever drop the documentation and keep the code.
 			var found bool
 			for ceiling := 50; ceiling <= 4000 && !found; ceiling += 25 {
-				got := tool.Fit(many(8), tool.Budget{MaxTokens: ceiling, Detail: tool.Full})
+				got := tool.Fit(many(8), tool.Budget{MaxTokens: ceiling})
 				found = !documented(got) && snippeted(got) && len(got.Items) == 8
 			}
 			assert.True(t, found,
@@ -120,7 +137,7 @@ func TestBudget(t *testing.T) {
 			// A name a caller can act on outlives the text of a
 			// declaration it was not going to read in full.
 			for ceiling := 50; ceiling <= 4000; ceiling += 50 {
-				got := tool.Fit(many(8), tool.Budget{MaxTokens: ceiling, Detail: tool.Full})
+				got := tool.Fit(many(8), tool.Budget{MaxTokens: ceiling})
 				if len(got.Items) < 8 {
 					assert.False(t, snippeted(got),
 						"items go last, so nothing is dropped while source text remains")
@@ -130,17 +147,17 @@ func TestBudget(t *testing.T) {
 
 		t.Run("drops items only once thinning is not enough", func(t *testing.T) {
 			t.Parallel()
-			got := tool.Fit(many(400), tool.Budget{MaxTokens: 300, Detail: tool.Full})
+			got := tool.Fit(many(400), tool.Budget{MaxTokens: 300})
 			assert.True(t, len(got.Items) < 400, "an answer that cannot fit loses items")
 			assert.True(t, truncated(got), "a caller is told items were dropped")
 		})
 
 		t.Run("says how many matched against how many came back", func(t *testing.T) {
 			t.Parallel()
-			got := tool.Fit(many(400), tool.Budget{MaxTokens: 300, Detail: tool.Full})
+			got := tool.Fit(many(400), tool.Budget{MaxTokens: 300})
 			var note string
 			for _, c := range got.Provenance.Caveats {
-				if c.Code == trust.CaveatTruncated {
+				if c.Code == string(trust.CaveatTruncated) {
 					note = c.Note
 				}
 			}
@@ -152,71 +169,52 @@ func TestBudget(t *testing.T) {
 			t.Parallel()
 			// Zero items with a count reads like an answer nothing
 			// served. One item plus a count does not.
-			got := tool.Fit(many(50), tool.Budget{MaxTokens: 1, Detail: tool.Full})
+			got := tool.Fit(many(50), tool.Budget{MaxTokens: 1})
 			assert.NotEmpty(t, got.Items, "an answer that found something returns something")
 			assert.True(t, truncated(got), "the rest is accounted for in a caveat")
 		})
 
 		t.Run("keeps an empty answer empty", func(t *testing.T) {
 			t.Parallel()
-			got := tool.Fit(many(0), tool.Budget{MaxTokens: 1, Detail: tool.Full})
+			got := tool.Fit(many(0), tool.Budget{MaxTokens: 1})
 			assert.Empty(t, got.Items, "nothing matched, so nothing is invented to return")
 			assert.False(t, truncated(got), "nothing was dropped from an answer holding nothing")
 		})
 
 		t.Run("leaves the provenance the engine earned", func(t *testing.T) {
 			t.Parallel()
-			got := tool.Fit(many(400), tool.Budget{MaxTokens: 300, Detail: tool.Full})
-			assert.Equal(t, got.Provenance.Fidelity, trust.Syntactic,
+			got := tool.Fit(many(400), tool.Budget{MaxTokens: 300})
+			assert.Equal(t, got.Provenance.Fidelity, "syntactic",
 				"thinning an answer does not change the evidence behind it")
 			assert.Equal(t, got.Provenance.Engine, "parser",
 				"thinning an answer does not change which engine produced it")
 		})
 	})
 
-	t.Run("Detail", func(t *testing.T) {
+	t.Run("nesting", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("summary carries what identifies a declaration and no more", func(t *testing.T) {
+		t.Run("drops what a declaration holds before the declaration", func(t *testing.T) {
 			t.Parallel()
-			got := tool.Fit(many(1), tool.Budget{MaxTokens: 100000, Detail: tool.Summary})
-			assert.NotEmpty(t, string(got.Items[0].ID), "a summary still identifies the declaration")
-			assert.NotEmpty(t, got.Items[0].Name, "a summary still names the declaration")
-			assert.Empty(t, got.Items[0].Doc, "a summary carries no documentation")
-			assert.Empty(t, got.Items[0].Snippet, "a summary carries no source text")
-			assert.NotEmpty(t, string(got.Items[0].Span.Path), "a summary still says which file holds it")
-			assert.Equal(t, got.Items[0].Span.Start, source.Position{},
-				"the offsets are what standard adds, so a summary carries none")
-			assert.Equal(t, got.Items[0].Visibility, sema.VisibilityUnknown,
-				"visibility is what standard adds, so a summary claims none")
+			// A branch is worth more than its leaves: a caller told a
+			// struct exists can ask for its fields, and one told nothing
+			// cannot ask at all.
+			got := tool.Fit(nested(60), tool.Budget{MaxTokens: 60})
+			assert.Length(t, got.Items, 1, "the declaration outlives its members")
+			assert.True(t, len(got.Items[0].Members) < 60, "the members are what paid for it")
 		})
 
-		t.Run("standard adds where it is without adding what it says", func(t *testing.T) {
+		t.Run("counts members in what matched", func(t *testing.T) {
 			t.Parallel()
-			got := tool.Fit(many(1), tool.Budget{MaxTokens: 100000, Detail: tool.Standard})
-			assert.NotEmpty(t, string(got.Items[0].Span.Path), "standard says which file declares it")
-			assert.Equal(t, got.Items[0].Visibility, sema.Exported, "standard carries the visibility")
-			assert.Empty(t, got.Items[0].Doc, "standard carries no documentation")
-			assert.Empty(t, got.Items[0].Snippet,
-				"standard says where the declaration is rather than repeating it")
-		})
-
-		t.Run("full carries the documentation and the source text", func(t *testing.T) {
-			t.Parallel()
-			got := tool.Fit(many(1), tool.Budget{MaxTokens: 100000, Detail: tool.Full})
-			assert.NotEmpty(t, got.Items[0].Doc, "full is the level that carries documentation")
-			assert.NotEmpty(t, got.Items[0].Snippet,
-				"full is what a caller asks for to read the declaration without a second call")
-		})
-
-		t.Run("an unset detail is standard", func(t *testing.T) {
-			t.Parallel()
-			// An agent that says nothing gets the level that answers
-			// most questions without paying for prose.
-			got := tool.Fit(many(1), tool.Budget{MaxTokens: 100000})
-			assert.NotEmpty(t, string(got.Items[0].Span.Path), "the default says where the declaration is")
-			assert.Empty(t, got.Items[0].Doc, "the default carries no documentation")
-			assert.Empty(t, got.Items[0].Snippet, "the default carries no source text")
+			got := tool.Fit(nested(200), tool.Budget{MaxTokens: 40})
+			var note string
+			for _, c := range got.Provenance.Caveats {
+				if c.Code == string(trust.CaveatTruncated) {
+					note = c.Note
+				}
+			}
+			assert.Contains(t, note, "201 matched",
+				"a caller reads how much of the answer it is holding, members included")
 		})
 	})
 }

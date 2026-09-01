@@ -50,7 +50,7 @@ end
 			{Name: ":name", Kind: sema.KindProperty},
 			{Name: "@size", Kind: sema.KindField},
 			{Name: "LIMIT", Kind: sema.KindConstant},
-			{Name: "Shop", Kind: sema.KindModule},
+			{Name: "Shop", Kind: sema.KindModule, Signature: "module Shop"},
 			{Name: "Store", Kind: sema.KindStruct, Doc: "Store holds items by name."},
 			{Name: "get", Kind: sema.KindMethod},
 			{Name: "initialize", Kind: sema.KindMethod},
