@@ -23,7 +23,7 @@ func TestMain(t *testing.T) {
 			t.Parallel()
 			// A client logs what it connected to. An empty string reads
 			// as a missing field.
-			assert.NotEmpty(t, version.String(), "a server names the build a client connected to")
+			assert.NotEmpty(t, version.Full(), "a server names the build a client connected to")
 		})
 	})
 

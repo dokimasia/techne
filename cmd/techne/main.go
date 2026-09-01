@@ -34,7 +34,7 @@ func run() int {
 
 	// A cancelled context is how a client disconnects or an operator
 	// interrupts, neither of which is a failure.
-	if err := app.Run(ctx, root, version.String()); err != nil && ctx.Err() == nil {
+	if err := app.Run(ctx, root, version.Full()); err != nil && ctx.Err() == nil {
 		fmt.Fprintln(os.Stderr, "techne:", err)
 		return 1
 	}

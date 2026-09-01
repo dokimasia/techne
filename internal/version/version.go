@@ -1,31 +1,43 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: MIT
 
+// Package version exposes the build metadata ldflags inject at
+// link time. Callers (typically a cobra root command) read [Full]
+// to populate `techne --version`; the release pipeline
+// (goreleaser) sets the three build-time variables via
+// `-X go.dokimi.dev/techne/internal/version.buildVersion=<value>`
+// (and similarly for buildCommit / buildDate).
 package version
 
-// Stamped at link time with -X. Unexported so nothing can set them at
-// run time and claim a build this is not.
-var (
-	tag    = ""
-	commit = ""
-)
+// buildVersion is the semver tag goreleaser stamps at link time.
+// Empty for unstamped local builds; [Full] then returns "dev".
+var buildVersion = ""
 
-// Dev is what an unstamped build reports.
-const Dev = "dev"
+// buildCommit is the git SHA goreleaser stamps at link time.
+// Empty for unstamped local builds.
+var buildCommit = ""
 
-// String reports the version this binary was built from.
+// buildDate is the commit date goreleaser stamps at link time.
+// Empty for unstamped local builds.
+var buildDate = ""
+
+// Full returns the human-facing version string for `--version`.
+// Output shape varies with how many fields the linker populated:
 //
-// An unstamped build reports [Dev] rather than an empty string, so a
-// client logging the version records something a reader can act on.
-func String() string {
-	switch {
-	case tag == "" && commit == "":
-		return Dev
-	case tag == "":
-		return Dev + "+" + commit
-	case commit == "":
-		return tag
-	default:
-		return tag + "+" + commit
+//   - all empty                   → "dev"
+//   - buildVersion only           → "vX.Y.Z"
+//   - buildVersion + buildCommit  → "vX.Y.Z (sha)"
+//   - all three                   → "vX.Y.Z (sha, built date)"
+func Full() string {
+	if buildVersion == "" {
+		return "dev"
 	}
+	if buildCommit == "" {
+		return buildVersion
+	}
+	suffix := buildCommit
+	if buildDate != "" {
+		suffix += ", built " + buildDate
+	}
+	return buildVersion + " (" + suffix + ")"
 }
