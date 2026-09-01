@@ -78,10 +78,14 @@ namespace Shop
 			{Name: "Size", Kind: sema.KindProperty},
 			{Name: "Store", Kind: sema.KindConstructor},
 			{
-				Name: "Store", Kind: sema.KindStruct,
-				Doc:         "<summary>Store holds items by name.</summary>",
-				Annotations: []string{"Serializable", "Obsolete"},
-				Modifiers:   []string{"public"},
+				Name: "Store",
+				Kind: sema.KindStruct,
+				Doc:  "<summary>Store holds items by name.</summary>",
+				Annotations: []conformance.Annotated{
+					{Name: "Serializable", Text: "Serializable"},
+					{Name: "Obsolete", Text: "Obsolete"},
+				},
+				Modifiers: []string{"public"},
 			},
 			{Name: "System", Kind: sema.KindImport},
 			{Name: "local", Kind: sema.KindVariable},

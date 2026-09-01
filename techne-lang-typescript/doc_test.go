@@ -73,7 +73,7 @@ export function make<T>(value: T): T {
 			{
 				Name: "Store", Kind: sema.KindStruct,
 				Doc:         "Store holds items by name.",
-				Annotations: []string{"Injectable"},
+				Annotations: []conformance.Annotated{{Name: "Injectable", Text: "@Injectable()"}},
 				Modifiers:   []string{"export"},
 			},
 			{Name: "T", Kind: sema.KindTypeParameter},

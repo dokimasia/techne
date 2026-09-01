@@ -32,7 +32,7 @@ import "fmt"
 type Store struct {
 	n int
 	// Name is what a caller looks it up by.
-	Name string ` + "`json:\"name\"`" + `
+	Name string ` + "`json:\"name\" doc:\"the display name\"`" + `
 }
 
 type Reader interface{ Read() int }
@@ -49,6 +49,7 @@ Registry is the process-wide index.
 */
 var Registry = map[string]int{}
 
+// Get returns the count.
 func (s *Store) Get() int { return s.n }
 
 func helper() int {
@@ -65,7 +66,10 @@ var _ = fmt.Sprint
 		},
 		Declares: []conformance.Declared{
 			{Name: "First", Kind: sema.KindConstant, Visibility: sema.Exported},
-			{Name: "Get", Kind: sema.KindMethod, Visibility: sema.Exported},
+			{
+				Name: "Get", Kind: sema.KindMethod, Visibility: sema.Exported,
+				Doc: "Get returns the count.",
+			},
 			{Name: "ID", Kind: sema.KindType, Visibility: sema.Exported},
 			{
 				Name: "Identity", Kind: sema.KindFunction, Visibility: sema.Exported,
@@ -73,8 +77,11 @@ var _ = fmt.Sprint
 			},
 			{
 				Name: "Name", Kind: sema.KindField, Visibility: sema.Exported,
-				Doc:         "Name is what a caller looks it up by.",
-				Annotations: []string{"json"},
+				Doc: "Name is what a caller looks it up by.",
+				Annotations: []conformance.Annotated{
+					{Name: "json", Text: `json:"name"`},
+					{Name: "doc", Text: `doc:"the display name"`},
+				},
 			},
 			{Name: "Read", Kind: sema.KindMethod, Visibility: sema.Exported},
 			{Name: "Reader", Kind: sema.KindInterface, Visibility: sema.Exported},

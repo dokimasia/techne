@@ -221,19 +221,51 @@ func tags(node *ts.Node, content []byte, p source.Path) []sema.Annotation {
 	if tag == nil {
 		return nil
 	}
-	unquoted := strings.Trim(tag.Utf8Text(content), tagQuotes)
 
 	var out []sema.Annotation
-	for part := range strings.FieldsSeq(unquoted) {
-		at := strings.Index(part, tagSeparator)
-		if at <= 0 {
-			continue
-		}
+	for _, one := range pairs(unquote(tag.Utf8Text(content))) {
 		out = append(out, sema.Annotation{
-			Name: part[:at],
-			Text: part,
+			Name: one.key,
+			Text: one.text,
 			Span: spanOf(p, *tag),
 		})
+	}
+	return out
+}
+
+// pair is one key and the whole key:"value" it was written as.
+type pair struct{ key, text string }
+
+// pairs splits a struct tag into its key and value pairs.
+//
+// The grammar is the one reflect.StructTag documents: optionally
+// space-separated key:"value" pairs, where a key holds no space, quote
+// or colon, and a value is a quoted Go string. Splitting on whitespace
+// would cut a value containing a space in half, and trimming quotes off
+// both ends would take the last value's closing quote with them.
+func pairs(tag string) []pair {
+	var out []pair
+	for len(tag) > 0 {
+		tag = strings.TrimLeft(tag, " ")
+		colon := strings.Index(tag, tagSeparator)
+		if colon <= 0 || colon+1 >= len(tag) || tag[colon+1] != tagQuote {
+			return out
+		}
+
+		// The value is a Go string literal, so a quote inside it is
+		// escaped and does not end it.
+		end := colon + 2
+		for end < len(tag) && tag[end] != tagQuote {
+			if tag[end] == tagEscape {
+				end++
+			}
+			end++
+		}
+		if end >= len(tag) {
+			return out
+		}
+		out = append(out, pair{key: tag[:colon], text: tag[:end+1]})
+		tag = tag[end+1:]
 	}
 	return out
 }
@@ -293,11 +325,31 @@ func contains(outer, inner sema.Symbol) bool {
 // A declaration with no documentation yields the empty string. So does
 // one whose only comment is an ordinary comment, because a language that
 // distinguishes the two means the distinction.
-func documentation(node *ts.Node, content []byte, style lang.CommentStyle) string {
+func documentation(node *ts.Node, content []byte, style lang.CommentStyle, kind sema.Kind) string {
+	if !documents(kind) {
+		return ""
+	}
 	if style.Documents().Inside {
 		return inside(node, content, style)
 	}
 	return above(node, content, style)
+}
+
+// documents reports whether a kind is one a documentation tool attaches
+// a comment to.
+//
+// No language documents a parameter or a label as an entity of its own:
+// a parameter is described inside the enclosing declaration's comment,
+// which is what @param and its equivalents are for. Without this a
+// receiver written at the start of a method's line would take the
+// method's own documentation, because the comment does sit above it.
+func documents(kind sema.Kind) bool {
+	switch kind {
+	case sema.KindParameter, sema.KindTypeParameter, sema.KindLabel:
+		return false
+	default:
+		return true
+	}
 }
 
 // above reads the documentation written before a declaration.
@@ -358,6 +410,7 @@ func above(node *ts.Node, content []byte, style lang.CommentStyle) string {
 // A wrapper node is climbed whichever line it starts on, because it
 // exists to hold the declaration together with what is written before
 // it, as Python's decorated_definition does.
+
 func outermost(node *ts.Node) *ts.Node {
 	out := node
 	for {

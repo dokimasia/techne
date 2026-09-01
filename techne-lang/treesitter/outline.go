@@ -142,7 +142,7 @@ func (e *Engine) declarations(p source.Path, content []byte) ([]sema.Symbol, err
 				Visibility:  e.declared.Visibility(one.text),
 				Modifiers:   modifiers(node, content),
 				Annotations: marks,
-				Doc:         documentation(node, content, e.declared.Comment),
+				Doc:         documentation(node, content, e.declared.Comment, kind),
 				Snippet:     snippetOf(content, span),
 			})
 		}

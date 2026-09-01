@@ -213,6 +213,8 @@ const (
 	annotationQualifier = ".:"
 	// tagSeparator ends a Go struct tag's key.
 	tagSeparator = ":"
-	// tagQuotes are what a Go struct tag is written inside.
-	tagQuotes = "`\""
+	// tagQuote opens and closes a struct tag value, and tagEscape is
+	// what stops one inside a value from closing it.
+	tagQuote  = '"'
+	tagEscape = '\\'
 )

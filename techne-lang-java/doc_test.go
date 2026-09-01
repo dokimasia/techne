@@ -71,7 +71,7 @@ public class Store implements Readable {
 
 			{
 				Name: "Readable", Kind: sema.KindInterface,
-				Annotations: []string{"FunctionalInterface"},
+				Annotations: []conformance.Annotated{{Name: "FunctionalInterface", Text: "@FunctionalInterface"}},
 				Doc:         "Readable is anything with a size.",
 			},
 			{Name: "get", Kind: sema.KindMethod},
@@ -80,7 +80,11 @@ public class Store implements Readable {
 			{Name: "RED", Kind: sema.KindEnumMember},
 			{Name: "GREEN", Kind: sema.KindEnumMember},
 
-			{Name: "Store", Kind: sema.KindStruct, Annotations: []string{"Component"}},
+			{
+				Name:        "Store",
+				Kind:        sema.KindStruct,
+				Annotations: []conformance.Annotated{{Name: "Component", Text: "@Component"}},
+			},
 			{Name: "LIMIT", Kind: sema.KindConstant, Modifiers: []string{"static", "final"}},
 			{Name: "size", Kind: sema.KindField, Modifiers: []string{"private"}},
 
@@ -89,7 +93,7 @@ public class Store implements Readable {
 
 			{
 				Name: "get", Kind: sema.KindMethod,
-				Annotations: []string{"Override"},
+				Annotations: []conformance.Annotated{{Name: "Override", Text: "@Override"}},
 				Doc:         "Returns the number of items.",
 			},
 

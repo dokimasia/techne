@@ -66,10 +66,19 @@ type Declared struct {
 	// Doc is the documentation the fixture writes on this declaration,
 	// in whichever form the language's own documentation tool reads.
 	Doc string
-	// Annotations are the annotation names the declaration carries.
-	Annotations []string
+	// Annotations are the annotations the declaration carries.
+	Annotations []Annotated
 	// Modifiers are the keywords the declaration carries.
 	Modifiers []string
+}
+
+// Annotated is one annotation a module says a declaration carries.
+type Annotated struct {
+	Name string
+	// Text is the whole annotation as written, punctuation and arguments
+	// included. It is checked only where a module states it, and stating
+	// it is what pins the bytes a tool reproducing the annotation needs.
+	Text string
 }
 
 // Run applies every check to one language module.
@@ -192,10 +201,10 @@ func Run(t *testing.T, s Suite) {
 				if len(matching) == 0 {
 					continue // the exact-set check already reports this
 				}
-				for _, name := range want.Annotations {
-					assert.True(t, anyAnnotated(matching, name),
+				for _, annotation := range want.Annotations {
+					assert.True(t, anyAnnotated(matching, annotation),
 						"metadata decides what a tool rewriting the declaration must reproduce, "+
-							"so it is read rather than dropped")
+							"so it is read whole rather than dropped or trimmed")
 				}
 				for _, keyword := range want.Modifiers {
 					assert.True(t, anyModified(matching, keyword),
@@ -364,10 +373,15 @@ func every(in []sema.Symbol, want Declared) []sema.Symbol {
 	return out
 }
 
-func anyAnnotated(in []sema.Symbol, name string) bool {
+func anyAnnotated(in []sema.Symbol, want Annotated) bool {
 	for _, sym := range in {
-		if sym.Annotated(name) {
-			return true
+		for _, a := range sym.Annotations {
+			if a.Name != want.Name {
+				continue
+			}
+			if want.Text == "" || a.Text == want.Text {
+				return true
+			}
 		}
 	}
 	return false

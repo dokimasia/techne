@@ -75,7 +75,7 @@ def helper(a, b=1, *rest, **named):
 			{Name: "local", Kind: sema.KindVariable, Visibility: sema.Exported},
 			{
 				Name: "name", Kind: sema.KindMethod, Visibility: sema.Exported,
-				Annotations: []string{"property"},
+				Annotations: []conformance.Annotated{{Name: "property", Text: "@property"}},
 			},
 			{Name: "named", Kind: sema.KindParameter, Visibility: sema.Exported},
 			{Name: "os", Kind: sema.KindImport, Visibility: sema.Exported},

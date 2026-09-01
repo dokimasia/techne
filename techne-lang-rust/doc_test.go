@@ -84,7 +84,7 @@ pub mod inner {
 			{
 				Name: "Store", Kind: sema.KindStruct,
 				Doc:         "Store holds items by name.",
-				Annotations: []string{"derive"},
+				Annotations: []conformance.Annotated{{Name: "derive", Text: "#[derive(Debug)]"}},
 				Modifiers:   []string{"pub"},
 			},
 			{Name: "T", Kind: sema.KindTypeParameter},
