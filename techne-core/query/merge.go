@@ -10,6 +10,28 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
+// keep adds the caveats a caller has not already been given.
+//
+// Every language answering a directory carries the limits of its own
+// tier, and five parsers say the same thing about it. Repeating one
+// caveat per language spends a caller's context on no extra fact.
+//
+// A caveat naming paths is kept as it stands, because the paths are what
+// it is about and two of them differing is two facts.
+func keep(into, from []trust.Caveat) []trust.Caveat {
+	for _, add := range from {
+		seen := false
+		for _, held := range into {
+			seen = seen || (len(add.Paths) == 0 && len(held.Paths) == 0 &&
+				held.Code == add.Code && held.Note == add.Note)
+		}
+		if !seen {
+			into = append(into, add)
+		}
+	}
+	return into
+}
+
 // merge combines what several languages answered about one scope.
 //
 // A merged answer claims only the weakest evidence behind it. Half an
@@ -37,7 +59,7 @@ func merge[T any](parts []engine.Answer[T], want trust.Fidelity) engine.Answer[T
 	for _, part := range parts {
 		merged.Items = append(merged.Items, part.Items...)
 		names = append(names, part.Provenance.Engine)
-		merged.Provenance.Caveats = append(merged.Provenance.Caveats, part.Provenance.Caveats...)
+		merged.Provenance.Caveats = keep(merged.Provenance.Caveats, part.Provenance.Caveats)
 		merged.Provenance.Fidelity = min(merged.Provenance.Fidelity, part.Provenance.Fidelity)
 		merged.Provenance.Completeness = min(merged.Provenance.Completeness, part.Provenance.Completeness)
 	}

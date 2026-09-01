@@ -22,6 +22,7 @@ type tongue struct {
 	engine   outliner
 	language source.Language
 	coverage trust.Completeness
+	caveats  []trust.Caveat
 }
 
 func (g tongue) Name() string                          { return g.engine.name }
@@ -30,7 +31,17 @@ func (g tongue) Fidelity(r engine.Role) trust.Fidelity { return g.engine.Fidelit
 func (g tongue) Cost(r engine.Role) engine.Cost        { return g.engine.Cost(r) }
 
 func (g tongue) Outline(ctx context.Context, req engine.Request) (engine.Result[sema.Symbol], error) {
-	return engine.Result[sema.Symbol]{Items: g.engine.found, Completeness: g.coverage}, nil
+	return engine.Result[sema.Symbol]{
+		Items:        g.engine.found,
+		Completeness: g.coverage,
+		Caveats:      g.caveats,
+	}, nil
+}
+
+// carrying returns the engine with a caveat attached to its answer.
+func carrying(g tongue, c ...trust.Caveat) tongue {
+	g.caveats = c
+	return g
 }
 
 // speaking builds an engine for one language at one tier.
@@ -94,6 +105,40 @@ func TestMerge(t *testing.T) {
 			assert.NoError(t, err, "a directory is a scope, not a fault")
 			assert.Contains(t, got.Provenance.Engine, "fx", "a merged answer names each engine behind it")
 			assert.Contains(t, got.Provenance.Engine, "ot", "a merged answer names each engine behind it")
+		})
+
+		t.Run("states a shared caveat once, however many languages carried it", func(t *testing.T) {
+			t.Parallel()
+			// Every parser says the same thing about a name it matched.
+			// Five copies of that sentence spend a caller's context on
+			// one fact, which is what the budget exists to prevent.
+			shared := trust.Caveat{
+				Code: trust.CaveatDynamic,
+				Note: "a parser matched text: a name resolved across files is coincidence",
+			}
+			got, err := both(t,
+				carrying(speaking("fx", fixture, trust.Syntactic, trust.ScopeTotal, "A"), shared),
+				carrying(speaking("ot", other, trust.Syntactic, trust.ScopeTotal, "B"), shared),
+			).Outline(t.Context(), engine.Request{Scope: "src"})
+			assert.NoError(t, err, "a directory is a scope, not a fault")
+			assert.Length(t, got.Provenance.Caveats, 1,
+				"one fact about the answer is stated once")
+		})
+
+		t.Run("keeps two caveats that name different files", func(t *testing.T) {
+			t.Parallel()
+			// The paths are what the caveat is about, so two of them are
+			// two facts rather than one repeated.
+			code := trust.CaveatDynamic
+			got, err := both(t,
+				carrying(speaking("fx", fixture, trust.Syntactic, trust.ScopeTotal, "A"),
+					trust.Caveat{Code: code, Note: "unparsed", Paths: []source.Path{"a.fx"}}),
+				carrying(speaking("ot", other, trust.Syntactic, trust.ScopeTotal, "B"),
+					trust.Caveat{Code: code, Note: "unparsed", Paths: []source.Path{"b.ot"}}),
+			).Outline(t.Context(), engine.Request{Scope: "src"})
+			assert.NoError(t, err, "a directory is a scope, not a fault")
+			assert.Length(t, got.Provenance.Caveats, 2,
+				"a caveat naming a file is about that file, and dropping one loses it")
 		})
 
 		t.Run("claims only the weakest evidence behind it", func(t *testing.T) {
