@@ -99,17 +99,16 @@ presenter module's job.
 |---|---|---|
 | `presenter` | `Transport`, and the loop that drives a tool call | `core/tool` |
 | `presenter/mcp` | JSON-RPC over stdio | `presenter`, `core/tool` |
-| `presenter/cli` | argv and flags derived from the input schema | `presenter`, `core/tool` |
 
-A presenter carries no domain knowledge. It translates between one
-transport and `tool.Tool.Execute`, and nothing else. A presenter that
-knew about individual tools would be N×M pieces of code for N tools and M
-transports, and the two would drift.
+MCP is the only transport. A presenter carries no domain knowledge: it
+translates between one transport and `tool.Tool.Execute`, and nothing
+else. A presenter that knew about individual tools would be N×M pieces of
+code for N tools and M transports, and the two would drift.
 
-The module exists so that `core` does not carry the MCP SDK or cobra.
-Embedding `query` and `change` as Go APIs then costs neither, and a new
-transport is a package here rather than a change to the module holding
-the services.
+The module exists so that `core` does not carry the MCP SDK. Embedding
+`query` and `change` as Go APIs then costs nothing extra, and a second
+transport, if one is ever wanted, is a package here rather than a change
+to the module holding the services.
 
 ## techne-lang
 

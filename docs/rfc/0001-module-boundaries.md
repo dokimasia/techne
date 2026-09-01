@@ -18,7 +18,7 @@ produces-adr: tbd
 Split techne into five Go modules in one repository: `core` holds
 everything that does not know a language, `lang` holds machinery more
 than one language uses, `lang/<x>` holds one language each, `presenter`
-holds one adapter per transport, and the root module holds the binary.
+holds the MCP transport, and the root module holds the binary.
 Dependencies run one way: `lang` and `presenter` import `core`, a
 language module imports `lang` and `core`, `core` imports none of them,
 and only the root module imports a language module or a presenter.
@@ -68,7 +68,7 @@ control what `go get` downloads or what the linker includes.
 | `techne-lang/` | `go.dokimi.dev/techne/lang` | Language declaration, engines more than one language uses, conformance suite | in `lang/treesitter` only |
 | `techne-lang-go/` | `go.dokimi.dev/techne/lang/go` | Go: queries, a `go/types` engine, planners | via `lang/treesitter` |
 | `techne-lang-<x>/` | `go.dokimi.dev/techne/lang/<x>` | One language each | via `lang/treesitter` |
-| `techne-presenter/` | `go.dokimi.dev/techne/presenter` | One adapter per transport: MCP, CLI | no |
+| `techne-presenter/` | `go.dokimi.dev/techne/presenter` | The MCP transport and the loop that drives a tool call | no |
 | `.` | `go.dokimi.dev/techne` | `cmd/techne`, composition root, version stamp | inherited |
 
 ```mermaid
@@ -77,7 +77,7 @@ flowchart BT
     lang["lang<br/>declaration, shared engines"]
     langgo["lang/go"]
     langpy["lang/python"]
-    pres["presenter<br/>mcp, cli"]
+    pres["presenter<br/>mcp"]
     root["techne<br/>cmd + composition root"]
 
     lang -->|"ports, vocabulary"| core
@@ -101,10 +101,10 @@ flowchart BT
 5. Only the root module imports a `lang/<x>` or `presenter`.
 
 Rule 1 keeps `core` free of cgo and of every language ecosystem. Rule 3
-keeps the MCP SDK and cobra out of `core`, so embedding the services
-costs neither. Rule 4 makes a language deletable: nothing but the root
-module names it. Rule 5 keeps the graph acyclic, and it is the reason the
-binary lives in its own module rather than in `core`.
+keeps the MCP SDK out of `core`, so embedding the services does not pull
+a transport in with them. Rule 4 makes a language deletable: nothing but
+the root module names it. Rule 5 keeps the graph acyclic, and it is the
+reason the binary lives in its own module rather than in `core`.
 
 Enforce them with depguard, from the root `.golangci.yml`. Each module
 gets a strict allow-list keyed to its directory, and golangci-lint finds
@@ -196,20 +196,23 @@ service.
 techne-presenter/
   doc.go             package presenter: Transport, and the drive loop
   mcp/               JSON-RPC over stdio
-  cli/               argv and flags derived from the input schema
 ```
 
-The module root holds what the transports share: enumerate the registry,
-decode a call, run `tool.Tool.Execute`, encode the result. Each
-subpackage carries one transport and no domain knowledge. A presenter
-that knew about individual tools would be N×M pieces of code for N tools
-and M transports, and the two would drift.
+MCP is the only transport. The module root still holds what a transport
+needs: enumerate the registry, decode a call, run `tool.Tool.Execute`,
+encode the result. `mcp/` holds the wire format and no domain knowledge.
+A presenter that knew about individual tools would be N×M pieces of code
+for N tools and M transports, and the two would drift.
 
 This is a module rather than a package in `core` because a presenter
-needs the MCP SDK and cobra, and `core` is the module people embed to get
-`query` and `change` as Go APIs. Keeping the transports out means
-embedding the services pulls neither. It also means a transport can be
-added or replaced without touching the module that holds the services.
+needs the MCP SDK, and `core` is the module people embed to get `query`
+and `change` as Go APIs. Keeping the transport out means embedding the
+services does not pull the SDK in with it.
+
+Splitting the drive loop from `mcp/` while only one transport exists is a
+guess that a second one arrives. If none does, the two collapse into one
+package and the module still earns its place on the dependency argument
+alone.
 
 ### What lang holds
 
