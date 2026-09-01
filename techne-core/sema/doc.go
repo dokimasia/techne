@@ -19,7 +19,17 @@
 // [Kind] and [RelationKind] are smaller than any one language's grammar.
 // A language that draws a distinction they do not carry maps both sides
 // onto the nearest value rather than adding one, so a caller reads the
-// same set whichever language answered.
+// same set whichever language answered. [Kinds] is the whole set, and
+// [Kind.Declares] separates the kinds naming something other code can
+// refer to from the bindings that never leave their scope.
+//
+// # Metadata is not a declaration
+//
+// A Java annotation, a Python or TypeScript decorator, a Rust attribute
+// and a Go struct tag bind no name, so none of them is a [Symbol]. They
+// travel as [Annotation] values on the declaration they are written
+// onto. Declaring an annotation type is the other case and is a [Symbol]
+// of [KindAnnotation].
 //
 // # Directions
 //
