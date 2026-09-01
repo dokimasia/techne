@@ -15,14 +15,15 @@ produces-adr: tbd
 
 ## Summary
 
-Split techne into four Go modules in one repository: `core` holds
+Split techne into five Go modules in one repository: `core` holds
 everything that does not know a language, `lang` holds machinery more
-than one language uses, `lang/<x>` holds one language each, and the root
-module holds the binary. Dependencies run one way: a language module may
-import `lang` and `core`, `lang` may import `core`, `core` imports none
-of them, and only the root module imports a language module. Adding or
-removing a language is then a directory plus two lines, and `core`
-compiles without a C toolchain.
+than one language uses, `lang/<x>` holds one language each, `presenter`
+holds one adapter per transport, and the root module holds the binary.
+Dependencies run one way: `lang` and `presenter` import `core`, a
+language module imports `lang` and `core`, `core` imports none of them,
+and only the root module imports a language module or a presenter.
+Adding or removing a language is then a directory plus two lines, and
+`core` compiles without a C toolchain.
 
 ## Motivation
 
@@ -63,10 +64,11 @@ control what `go get` downloads or what the linker includes.
 
 | Directory | Module path | Holds | cgo |
 |---|---|---|---|
-| `techne-core/` | `go.dokimi.dev/techne/core` | Vocabulary, engine ports, catalog, read and write services, index, tool interface, presenters | no |
+| `techne-core/` | `go.dokimi.dev/techne/core` | Vocabulary, engine ports, catalog, read and write services, index, tool interface | no |
 | `techne-lang/` | `go.dokimi.dev/techne/lang` | Language declaration, engines more than one language uses, conformance suite | in `lang/treesitter` only |
 | `techne-lang-go/` | `go.dokimi.dev/techne/lang/go` | Go: queries, a `go/types` engine, planners | via `lang/treesitter` |
 | `techne-lang-<x>/` | `go.dokimi.dev/techne/lang/<x>` | One language each | via `lang/treesitter` |
+| `techne-presenter/` | `go.dokimi.dev/techne/presenter` | One adapter per transport: MCP, CLI | no |
 | `.` | `go.dokimi.dev/techne` | `cmd/techne`, composition root, version stamp | inherited |
 
 ```mermaid
@@ -75,14 +77,17 @@ flowchart BT
     lang["lang<br/>declaration, shared engines"]
     langgo["lang/go"]
     langpy["lang/python"]
+    pres["presenter<br/>mcp, cli"]
     root["techne<br/>cmd + composition root"]
 
     lang -->|"ports, vocabulary"| core
+    pres -->|"tool interface"| core
     langgo -->|"Declaration, treesitter, lsp"| lang
     langpy -->|"Declaration, treesitter"| lang
     langgo -.->|"sema, edit, trust"| core
     langpy -.->|"sema, edit, trust"| core
-    root -->|"Catalog, presenters"| core
+    root -->|"Catalog"| core
+    root -->|"Serve"| pres
     root -->|"Register"| langgo
     root -->|"Register"| langpy
 ```
@@ -91,41 +96,72 @@ flowchart BT
 
 1. `core` imports nothing else in this repository.
 2. `lang` imports `core` and nothing else in this repository.
-3. `lang/<x>` imports `core` and `lang`, never another `lang/<x>`.
-4. Only the root module imports a `lang/<x>`.
+3. `presenter` imports `core` and nothing else in this repository.
+4. `lang/<x>` imports `core` and `lang`, never another `lang/<x>`.
+5. Only the root module imports a `lang/<x>` or `presenter`.
 
 Rule 1 keeps `core` free of cgo and of every language ecosystem. Rule 3
-makes a language deletable: nothing but the root module names it. Rule 4
-keeps the graph acyclic, and it is the reason the binary lives in its own
-module rather than in `core`.
+keeps the MCP SDK and cobra out of `core`, so embedding the services
+costs neither. Rule 4 makes a language deletable: nothing but the root
+module names it. Rule 5 keeps the graph acyclic, and it is the reason the
+binary lives in its own module rather than in `core`.
 
-Check them with the go command rather than by reading. Ask for the module
-each dependency belongs to, not for its import path:
+Enforce them with depguard, from the root `.golangci.yml`. Each module
+gets a strict allow-list keyed to its directory, and golangci-lint finds
+this config when it runs with a module directory as its working
+directory:
 
-```bash
-# Run from a module directory with that module's allow-pattern.
-allowed='^go\.dokimi\.dev/techne/core$'                 # techne-core
-allowed='^go\.dokimi\.dev/techne/(core|lang)$'          # techne-lang
-allowed='^go\.dokimi\.dev/techne/(core|lang|lang/go)$'  # techne-lang-go
-
-violations=$(go list -deps -f '{{if .Module}}{{.Module.Path}}{{end}}' ./... \
-  | sort -u | grep '^go\.dokimi\.dev/techne' | grep -Ev "$allowed" || true)
-
-[ -z "$violations" ] || { printf 'forbidden dependency:\n%s\n' "$violations"; exit 1; }
+```yaml
+linters:
+  settings:
+    depguard:
+      rules:
+        core:
+          files: ["**/techne-core/**"]
+          list-mode: strict
+          allow: [$gostd, go.dokimi.dev/techne/core]
+        lang:
+          files: ["**/techne-lang/**"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - go.dokimi.dev/techne/core
+            - go.dokimi.dev/techne/lang$
+            - go.dokimi.dev/techne/lang/treesitter
+            - go.dokimi.dev/techne/lang/lsp
+            - go.dokimi.dev/techne/lang/command
+            - go.dokimi.dev/techne/lang/conformance
+        presenter:
+          files: ["**/techne-presenter/**"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - go.dokimi.dev/techne/core
+            - go.dokimi.dev/techne/presenter
+        language-module:
+          files: ["**/techne-lang-*/**"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - go.dokimi.dev/techne/core
+            - go.dokimi.dev/techne/lang
 ```
 
-The module path matters here rather than the import path, because a
-language module's path sits *underneath* `lang`'s. Testing an import path
-for the prefix `go.dokimi.dev/techne/lang` matches
-`go.dokimi.dev/techne/lang/treesitter`, which rule 2 allows, and
-`go.dokimi.dev/techne/lang/go`, which it forbids. `.Module.Path` reports
-which module a package was resolved from, so the two are distinguishable
-and the anchored patterns above are exact. This runs as a stage in the
-pre-merge gate.
+Two details do the work. `list-mode: strict` denies whatever the list
+does not name, so a language module added later is already covered. A
+deny-list would have to name each language module, and the rule would
+quietly stop covering whichever one somebody forgot to add.
 
-Keep the `|| true`. `grep` exits 1 when it matches nothing, and here that
-is the passing case, so without it the gate fails every clean build under
-`set -e`.
+depguard also matches by prefix, so allowing `go.dokimi.dev/techne/lang`
+would allow `go.dokimi.dev/techne/lang/go` with it. The `$` suffix asks
+for an exact match instead, which is what lets `lang` import its own
+engine packages while rule 2 still stops it importing a language module.
+
+None of this can be left to `go.mod`. Inside the workspace `techne-lang`
+can import `go.dokimi.dev/techne/lang/go` and build clean with no
+`require` line for it, because `go.work` puts every workspace module in
+the build list. Only `GOWORK=off` reports it, and that is not how the
+tree gets built during development.
 
 ### What core holds
 
@@ -146,9 +182,6 @@ techne-core/
     files/           filesystem operations, produced as edit.Plan
     project/         which workspace a path belongs to
   tool/              the tool interface: name, summary, derived schemas
-  presenter/
-    mcp/
-    cli/
 ```
 
 The five vocabulary packages sit at the top level rather than under a
@@ -157,15 +190,26 @@ group of their own, because the module name already says what they are.
 `query` and `change` and has to work out that one of the three is not a
 service.
 
-Presenters live here rather than in the root module because a presenter
-needs the tool interface and nothing else. In `core` a presenter is
-imported as `go.dokimi.dev/techne/core/presenter/mcp` and requires no
-language module. In the root module it would be
-`go.dokimi.dev/techne/presenter/mcp` and would require all of them.
-Someone embedding techne's MCP server for a language set they choose
-needs presenters without grammars, and `core` is the only module where
-that builds. The cost is that `core` carries the MCP SDK and cobra in its
-`go.mod`; see Drawbacks.
+### What presenter holds
+
+```
+techne-presenter/
+  doc.go             package presenter: Transport, and the drive loop
+  mcp/               JSON-RPC over stdio
+  cli/               argv and flags derived from the input schema
+```
+
+The module root holds what the transports share: enumerate the registry,
+decode a call, run `tool.Tool.Execute`, encode the result. Each
+subpackage carries one transport and no domain knowledge. A presenter
+that knew about individual tools would be N×M pieces of code for N tools
+and M transports, and the two would drift.
+
+This is a module rather than a package in `core` because a presenter
+needs the MCP SDK and cobra, and `core` is the module people embed to get
+`query` and `change` as Go APIs. Keeping the transports out means
+embedding the services pulls neither. It also means a transport can be
+added or replaced without touching the module that holds the services.
 
 ### What lang holds
 
@@ -183,6 +227,15 @@ A package belongs here when more than one language can use it. A
 because no other language can use it, and filing it here would put Go's
 implementation where a reader asking what techne does about Go would not
 look.
+
+`lsp` is built alongside `treesitter` rather than deferred, so the
+`Indexed` tier has an implementation as soon as the ports do. A language
+whose ecosystem ships a server reaches that tier without anyone writing a
+Go engine for it. Three protocol details corrupt silently when they are
+got wrong: positions are UTF-16 code units rather than byte offsets,
+edits arrive in two shapes of which the older carries no file operations,
+and a server answers only about documents it has been told to open.
+Solving them in one package solves them for every language.
 
 Only `lang/treesitter` is cgo. Go compiles just the packages a binary
 reaches, so a binary registering only language-server-backed languages
@@ -263,6 +316,13 @@ imported: it cannot be varied at run time, and a test cannot build a
 catalog holding only Go. Explicit registration makes the language set a
 value the caller chooses.
 
+The shipped binary registers every language module in this repository.
+Someone who wants fewer writes their own composition root and calls
+`Register` for the subset, which costs a `main` of about twenty lines and
+is the thing explicit registration exists to allow. No build tag selects
+languages, because a build tag would put the set back into the source
+rather than into the caller's hands.
+
 ### The go.mod files
 
 ```
@@ -277,8 +337,12 @@ techne-lang-go/go.mod    module go.dokimi.dev/techne/lang/go
                          require go.dokimi.dev/techne/core
                          require go.dokimi.dev/techne/lang
 
+techne-presenter/go.mod  module go.dokimi.dev/techne/presenter
+                         require go.dokimi.dev/techne/core
+
 go.mod                   module go.dokimi.dev/techne
                          require go.dokimi.dev/techne/core
+                         require go.dokimi.dev/techne/presenter
                          require go.dokimi.dev/techne/lang/go
                          require go.dokimi.dev/techne/lang/python
 ```
@@ -300,7 +364,10 @@ derives a nested module's subdirectory from its path suffix, so
 resolution of these paths depends on the vanity host mapping each module
 path to a repository root rather than on the layout of this tree.
 `go.work` makes local development independent of that mapping; `go get`
-and `go install` are not. What tags a release is an open question below.
+and `go install` are not.
+
+Releasing is out of scope here. `ergon release` operates per module over
+the set named in `.ergon.yaml`, and nothing is published yet.
 
 ### Adding a language
 
@@ -341,9 +408,9 @@ names which languages ship. The module count is the same as this
 proposal; the difference is which module holds the services, and this
 placement makes them unembeddable.
 
-### C. Five modules, with a separate contract module
+### C. A separate contract module for the vocabulary and ports
 
-A small module holding the vocabulary and the ports, with `core` and
+A sixth module holding the vocabulary and the ports, with `core` and
 every language module depending on it, so a port change does not force a
 version bump on the service layer.
 
@@ -382,7 +449,7 @@ ports are not settled. One repository keeps that change to one commit.
 
 ## Drawbacks
 
-- Four `go.mod` files, and one more for every language added. Each
+- Five `go.mod` files, and one more for every language added. Each
   needs `go mod tidy` and each pins its own dependency versions. The
   pre-merge gate already iterates the directories `go.work` lists, so
   this is a cost in review attention rather than in tooling.
@@ -398,30 +465,25 @@ ports are not settled. One repository keeps that change to one commit.
   even though only one of its four packages is cgo, because those
   commands cover every package in the module. A contributor changing
   `lang/lsp` still needs a C compiler for `lang/treesitter`.
-- `core` carries the MCP SDK and cobra in `go.mod` so presenters can live
-  there. A library embedder who only wants `query` downloads both and
-  compiles neither.
+- The shipped binary registers every language module, so it is cgo, it
+  links every grammar, and its size grows with each language added.
+  Getting a smaller one means writing a `main`, which is a source change
+  rather than a build flag.
+- Splitting presenters out puts the transports one module away from the
+  tool interface they consume, so a change to `tool.Tool` is a two-module
+  edit even though only one thing changed.
 - Directory names and module paths differ, so a reader cannot derive one
   from the other and `go get` depends on the vanity host being correct.
-- A language module's path sits under `lang`'s, so no prefix test
-  separates the two. The dependency check above works from module paths
-  for that reason, and so must anything else that tests the boundary.
+- A language module's path sits under `lang`'s, so a prefix test cannot
+  separate the two. The depguard rules need the `$` exact-match suffix
+  for that reason, and so will anything else that tests the boundary by
+  import path.
+- A strict allow-list names every third-party dependency a module may
+  have, so adding one is an edit to `.golangci.yml` as well as to
+  `go.mod`. That makes each new dependency a decision somebody signs off,
+  and it makes a legitimate addition take two steps instead of one.
 - Coverage thresholds, commit scopes and the CI matrix all grow a row per
   module, and each new language adds one to each.
-
-## Open questions
-
-1. Do presenters stay in `core`, or does the MCP and cobra dependency
-   justify a fifth module for them?
-2. Does `lang` ship `lsp` from the start, or only `treesitter` and
-   `command`? That shared language-server engine is what serves the
-   `Indexed` tier. The port set is the same either way; the question is
-   whether an unimplemented tier is worth declaring.
-3. What tags a release, given that directory names and module paths
-   differ and the vanity host supplies the mapping. Whether all modules
-   move together or version independently is undecided.
-4. Which languages the root module registers by default, and whether a
-   build tag or a separate binary serves a caller who wants fewer.
 
 ## Unresolved and future work
 

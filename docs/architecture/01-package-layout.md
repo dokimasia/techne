@@ -83,18 +83,33 @@ place that touches disk and no second path around the policy check.
 beside `query` and `change` and has to work out that one of the three is
 not a service.
 
-### Position 3: tools and transports
+### Position 3: the tool interface
 
 | Package | Holds | Imports |
 |---|---|---|
 | `tool` | the tool interface, the registry, and the tool set over the services | positions 0 to 2 |
-| `presenter/mcp` | JSON-RPC over stdio | `tool` |
-| `presenter/cli` | argv and flags derived from the input schema | `tool` |
+
+This is where `core` stops. A tool declares its name, its summary and the
+schemas derived from its Go types; carrying it over a wire is the
+presenter module's job.
+
+## techne-presenter
+
+| Package | Holds | Imports |
+|---|---|---|
+| `presenter` | `Transport`, and the loop that drives a tool call | `core/tool` |
+| `presenter/mcp` | JSON-RPC over stdio | `presenter`, `core/tool` |
+| `presenter/cli` | argv and flags derived from the input schema | `presenter`, `core/tool` |
 
 A presenter carries no domain knowledge. It translates between one
 transport and `tool.Tool.Execute`, and nothing else. A presenter that
 knew about individual tools would be N×M pieces of code for N tools and M
 transports, and the two would drift.
+
+The module exists so that `core` does not carry the MCP SDK or cobra.
+Embedding `query` and `change` as Go APIs then costs neither, and a new
+transport is a package here rather than a change to the module holding
+the services.
 
 ## techne-lang
 
@@ -154,14 +169,15 @@ Deleting the directory and its line in `go.work` removes the language.
 
 | Package | Holds | Imports |
 |---|---|---|
-| `internal/app` | the composition root: build the catalog, register every language, choose a presenter | `core/tool`, `core/presenter/...`, every language module |
+| `internal/app` | the composition root: build the catalog, register every language, choose a presenter | `core/tool`, `presenter/...`, every language module |
 | `internal/version` | build metadata stamped at link time | stdlib |
 | `cmd/techne` | a shim that forwards an exit code | `internal/app` |
 
-This is the only module that names a language. Registration is an
-explicit call, never an `init` with a blank import: the set of languages
-has to be a value the caller chooses, so that a test can build a catalog
-holding one language and a build can ship a subset.
+This is the only module that names a language, and it names all of them.
+Registration is an explicit call, never an `init` with a blank import:
+the set of languages has to be a value the caller chooses, so that a test
+can build a catalog holding one language and someone who wants a smaller
+binary can write their own `main` over the same `Register` calls.
 
 ## File conventions inside a package
 
