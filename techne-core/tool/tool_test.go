@@ -76,7 +76,8 @@ func TestTool(t *testing.T) {
 			t.Parallel()
 			got, err := greeter(t).Execute(t.Context(), json.RawMessage(`{"name":"world"}`))
 			assert.NoError(t, err, "a well-formed call reaches the handler")
-			assert.Contains(t, string(got), "hello world", "the handler's result is what comes back")
+			assert.Contains(t, string(got.Payload), "hello world", "the handler's result is what comes back")
+			assert.False(t, got.Failed, "an operation that did what was asked is not a failure")
 		})
 
 		t.Run("refuses input it cannot decode", func(t *testing.T) {

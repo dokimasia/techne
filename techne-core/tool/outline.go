@@ -39,6 +39,15 @@ type Answer struct {
 	Provenance Provenance    `json:"provenance"`
 }
 
+// Failed reports whether a caller should read this answer as a failure.
+//
+// A language nothing serves and a request that was declined are both
+// things a model can correct, so they reach it as failures rather than
+// as an empty success.
+func (a Answer) Failed() bool {
+	return a.Status == trust.Unsupported.String() || a.Status == trust.Refused.String()
+}
+
 // Provenance is what stands behind an answer, in the form a caller
 // reads.
 type Provenance struct {

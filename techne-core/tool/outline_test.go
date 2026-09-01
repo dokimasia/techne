@@ -50,10 +50,10 @@ func outlineTool(t *testing.T, found ...sema.Symbol) tool.Tool {
 
 func call(t *testing.T, built tool.Tool, input string) map[string]any {
 	t.Helper()
-	raw, err := built.Execute(t.Context(), json.RawMessage(input))
+	got, err := built.Execute(t.Context(), json.RawMessage(input))
 	assert.NoError(t, err, "a well-formed call reaches the service")
 	var decoded map[string]any
-	assert.NoError(t, json.Unmarshal(raw, &decoded), "the result is JSON a caller can read")
+	assert.NoError(t, json.Unmarshal(got.Payload, &decoded), "the result is JSON a caller can read")
 	return decoded
 }
 
@@ -114,6 +114,24 @@ func TestOutline(t *testing.T) {
 			got := call(t, outlineTool(t, declared), `{"scope":"notes.md"}`)
 			assert.Equal(t, got["status"], "unsupported",
 				"a capability gap is something a caller routes around")
+		})
+
+		t.Run("marks an unsupported language as a failure without the transport reading it", func(t *testing.T) {
+			t.Parallel()
+			// A transport that had to parse the payload to learn this
+			// would change every time the payload did.
+			got, err := outlineTool(t, declared).Execute(t.Context(), json.RawMessage(`{"scope":"notes.md"}`))
+			assert.NoError(t, err, "a capability gap is not a fault")
+			assert.True(t, got.Failed, "a model can correct a request for a language nothing serves")
+		})
+
+		t.Run("does not mark a degraded answer as a failure", func(t *testing.T) {
+			t.Parallel()
+			// Weaker evidence than asked for is still worth reading.
+			got, err := outlineTool(t, declared).Execute(t.Context(),
+				json.RawMessage(`{"scope":"a.fx","preferred_fidelity":"resolved"}`))
+			assert.NoError(t, err, "a weaker engine still answered")
+			assert.False(t, got.Failed, "a degraded answer carries items a caller can use")
 		})
 
 		t.Run("drops documentation before it drops a declaration", func(t *testing.T) {

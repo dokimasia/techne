@@ -46,12 +46,12 @@ func capabilitiesTool(t *testing.T, engines ...engine.Engine) tool.Tool {
 
 func reported(t *testing.T, built tool.Tool, input string) []map[string]any {
 	t.Helper()
-	raw, err := built.Execute(t.Context(), json.RawMessage(input))
+	got, err := built.Execute(t.Context(), json.RawMessage(input))
 	assert.NoError(t, err, "a well-formed call reaches the catalogue")
 	var decoded struct {
 		Items []map[string]any `json:"items"`
 	}
-	assert.NoError(t, json.Unmarshal(raw, &decoded), "the result is JSON a caller can read")
+	assert.NoError(t, json.Unmarshal(got.Payload, &decoded), "the result is JSON a caller can read")
 	return decoded.Items
 }
 

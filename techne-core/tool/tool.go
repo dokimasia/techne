@@ -35,7 +35,33 @@ type Tool interface {
 	// result. Input it cannot decode is refused rather than defaulted:
 	// running an operation on arguments nobody sent is worse than
 	// failing.
-	Execute(ctx context.Context, input json.RawMessage) (json.RawMessage, error)
+	Execute(ctx context.Context, input json.RawMessage) (Result, error)
+}
+
+// Result is what a tool produced and whether the caller should read it
+// as a failure.
+//
+// A transport needs to know which without parsing the payload, because a
+// transport that understood a domain shape would have to change every
+// time one did.
+type Result struct {
+	// Payload is the encoded output, and is present either way: a
+	// refusal a caller can act on says why in the same shape as a
+	// success.
+	Payload json.RawMessage
+
+	// Failed reports that the operation did not do what was asked. It
+	// covers a language nothing serves and a request that was declined,
+	// both of which a model can correct.
+	Failed bool
+}
+
+// Failing marks a result as one the caller should read as a failure.
+//
+// A tool whose output carries a status uses this so the transport does
+// not have to read the payload to find out.
+func Failing(payload json.RawMessage) Result {
+	return Result{Payload: payload, Failed: true}
 }
 
 // New builds a tool from a typed handler.
@@ -71,22 +97,25 @@ func (t *typed[In, Out]) Description() string              { return t.descriptio
 func (t *typed[In, Out]) InputSchema() *jsonschema.Schema  { return t.in }
 func (t *typed[In, Out]) OutputSchema() *jsonschema.Schema { return t.out }
 
-func (t *typed[In, Out]) Execute(ctx context.Context, input json.RawMessage) (json.RawMessage, error) {
+func (t *typed[In, Out]) Execute(ctx context.Context, input json.RawMessage) (Result, error) {
 	var decoded In
 	if len(input) > 0 {
 		if err := json.Unmarshal(input, &decoded); err != nil {
-			return nil, fmt.Errorf("tool: %q input: %w", t.name, err)
+			return Result{}, fmt.Errorf("tool: %q input: %w", t.name, err)
 		}
 	}
 
-	result, err := t.run(ctx, decoded)
+	out, err := t.run(ctx, decoded)
 	if err != nil {
-		return nil, err
+		return Result{}, err
 	}
 
-	encoded, err := json.Marshal(result)
+	encoded, err := json.Marshal(out)
 	if err != nil {
-		return nil, fmt.Errorf("tool: %q output: %w", t.name, err)
+		return Result{}, fmt.Errorf("tool: %q output: %w", t.name, err)
 	}
-	return encoded, nil
+	if failer, marks := any(out).(interface{ Failed() bool }); marks && failer.Failed() {
+		return Failing(encoded), nil
+	}
+	return Result{Payload: encoded}, nil
 }

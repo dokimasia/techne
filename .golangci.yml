@@ -113,6 +113,10 @@ linters:
             - go.dokimi.dev/assert
             - go.dokimi.dev/techne/core
             - go.dokimi.dev/techne/presenter
+            # The transport itself. This is the only module allowed it,
+            # which is the reason presenter is a module rather than a
+            # package in core.
+            - github.com/modelcontextprotocol/go-sdk
 
         language-module:
           files: ["**/techne-lang-*/**"]
