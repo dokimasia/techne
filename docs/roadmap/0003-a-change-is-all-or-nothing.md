@@ -7,7 +7,7 @@ ships-in: unscheduled
 deadline: none
 deadline-source: none
 prd: none
-rfc: RFC-0004
+rfc: RFC-0004, RFC-0005
 ---
 
 # Milestone 0003: A change is all or nothing
@@ -33,7 +33,11 @@ workspace still builds, or no file changed.
       the content digest, before anything is written
 - [ ] Two changes touching the same files from different callers do not
       interleave, and neither leaves a partial write
-- [ ] A dry run reports the same edits the real call applies
+- [ ] A dry run reports the same edits the real call applies, and runs the
+      gate against an overlay, so a passing dry run means applying for
+      real compiles
+- [ ] A failed gate carries a ready plan for each diagnostic that has one
+      obvious fix
 - [ ] The gate records which verifier answered, in-process or subprocess
 - [ ] The suite passes under `go test -race`
 

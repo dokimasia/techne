@@ -10,7 +10,10 @@ proposals that are withdrawn.
 | [0002](0002-the-read-contract.md) | The read contract | Draft |
 | [0003](0003-the-tool-surface.md) | The tool surface | Draft |
 | [0004](0004-operations-and-the-write-path.md) | Operations and the write path | Draft |
+| [0005](0005-turn-cost.md) | Turn cost | Draft |
 
-RFC-0001 fixes which module each thing lives in. The other three fix what
+RFC-0001 fixes which module each thing lives in. The next three fix what
 those things are: 0002 the types and ports every engine speaks, 0003 what
-an agent sees, 0004 what changes a file.
+an agent sees, 0004 what changes a file. RFC-0005 cuts across all three
+and treats the number of round trips an agent spends as a cost the design
+has to pay down.

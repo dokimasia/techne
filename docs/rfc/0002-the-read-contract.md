@@ -322,9 +322,25 @@ type Answer[T any] struct {
 
 // Request is the scope of a question.
 type Request struct {
-	Scope     source.Path     // a file or a directory
+	Scope     source.Path     // one file or one directory
 	Language  source.Language
 	Preferred trust.Fidelity  // the caller's minimum; a weaker answer is marked Degraded
+
+	// Since narrows the scope to what changed after this version-control
+	// ref. Empty means the whole scope. It is the narrowing that gets
+	// used in practice: "what did I just break" beats naming paths.
+	Since string
+}
+
+// Query is what to search for. Text matches symbol names fuzzily and
+// doc comments by content, so a caller that knows neither the exact name
+// nor the package can still find something. A caller that knows the name
+// passes the name and gets an exact match first.
+type Query struct {
+	Text    string    // a name, or a description of the thing
+	Kind    sema.Kind // zero means any kind
+	Private bool      // include unexported declarations
+	Limit   int       // zero means the engine's default
 }
 
 // ErrDecline says this engine cannot answer this particular request.
@@ -524,16 +540,14 @@ between adapters.
 
 ## Open questions
 
-1. Does `Search` take a structured `Query` or a string? A string is what
-   an agent produces; a struct is what an engine can use directly. This
-   proposal names the type and does not define it.
-2. Should `Request.Scope` accept more than one path? Asking about two
-   directories at once is common and expressing it as two requests loses
-   the shared provenance.
-3. Is `Unspecified` completeness worth keeping, or should an engine that
-   cannot say be forced to report `Partial`? Forcing it is safer and
-   costs a caller the ability to tell "I did not look" from "I looked and
-   missed things".
+1. `Request.Since` is a version-control ref, so resolving it means `core`
+   knowing about version control, which it otherwise does not. Either
+   `core` gains that dependency, or the caller resolves the ref to a path
+   list and the field becomes `[]source.Path`, which puts the work back
+   on the agent.
+2. `Query.Text` matches names and doc comments with one string. Whether
+   one scorer can serve both without one drowning the other is a question
+   for the first engine that implements it.
 
 ## Unresolved and future work
 

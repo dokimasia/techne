@@ -50,7 +50,7 @@ alone is ambiguous.
 |---|---|
 | `outline` | what does this file or directory declare |
 | `search` | where is the thing called X |
-| `resolve` | what does the name at this position denote |
+| `resolve` | what does this name denote, and is it ambiguous |
 | `relations` | how does this symbol connect to the rest |
 | `capabilities` | what can you answer, per language, and how well |
 | `rename.symbol` | rename this declaration and every reference |
@@ -60,6 +60,31 @@ alone is ambiguous.
 renaming a file are different operations with different preconditions.
 The dot is not a read and write marker; it appears wherever the verb
 needs one.
+
+### Targeting is by name
+
+Every tool that points at a symbol takes `symbol` as a string, scoped by
+`package` or `path`. `file` and `line` are optional, and needed only when
+the name alone matches more than one declaration.
+
+```json
+{ "symbol": "Status", "package": "core/trust" }
+{ "symbol": "kind", "file": "core/query/dispatch.go", "line": 42 }
+```
+
+A position-first interface would make the agent read the file before it
+could point at anything, which is a round trip spent on something it
+already knew. The agent has the name: from an error message, from a
+search result, or from the code it just wrote.
+
+When a name matches several declarations the answer ranks the candidates
+rather than refusing, and each carries what is needed to choose.
+
+The engine ports take a position, because that is how a type checker and
+a language server are both addressed. Converting a name to a position is
+the service's job, and it is the same lookup `search` performs. Pushing
+that conversion onto the agent would move a round trip from the server to
+the conversation.
 
 The protocol permits this. Tool names may hold ASCII letters, digits,
 underscore, hyphen and dot, between 1 and 128 characters, and the
@@ -115,8 +140,14 @@ planner" is something an agent can act on. It is not a malformed request.
 
 ### The output budget
 
-Every read tool takes `max_bytes`, defaulting to 24000, measured on the
-serialised JSON.
+Every read tool takes `max_tokens`, defaulting to 6000, estimated from
+the serialised answer.
+
+Tokens rather than bytes because that is the budget the caller spends. An
+agent deciding whether it can afford a call counts context, and asking it
+to convert from bytes makes it guess at a ratio the server can apply
+itself. The estimate needs no real tokeniser: it only has to be good
+enough to decide what to drop, and the caveat reports what came back.
 
 When an answer exceeds it, thin every item before dropping any item:
 
@@ -138,11 +169,16 @@ outcome and rules out the second.
 
 `detail` selects what an item carries before the budget is applied:
 
-| `detail` | Each item holds |
-|---|---|
-| `summary` | id, name, kind, path |
-| `standard` | adds span, parent, exported (the default) |
-| `full` | adds doc and snippet |
+| `detail` | Each item holds | Estimated per item |
+|---|---|---|
+| `summary` | id, name, kind, path | 20 tokens |
+| `standard` | adds span, parent, exported (the default) | 60 tokens |
+| `full` | adds doc and snippet | 300 tokens |
+
+The per-item figures are estimates nobody has measured, published because
+an agent choosing a `detail` level needs some number to plan against. The
+answer reports what it spent, so real calls correct these rather than
+anyone arguing about them.
 
 An agent that asks for `full` on a large scope gets `standard` back with
 a truncation caveat rather than an error.
@@ -200,14 +236,14 @@ five languages today.
 tool per operation with the fidelity on the answer. Reopening it needs a
 new decision record rather than a section here.
 
-### B. A token budget rather than a byte budget
+### B. A byte budget rather than a token budget
 
-Count what the answer will cost the model, not what it weighs.
+Measure the serialised answer in bytes, which the server knows exactly.
 
-**Why not:** the server cannot count tokens without knowing the model and
-carrying its tokeniser, and the ratio is stable enough that bytes
-predict tokens within a factor a default can absorb. Bytes are also
-checkable by anyone reading the response.
+**Why not:** it is exact about the wrong quantity. The caller spends
+context, so a byte figure makes it convert, and it will convert with a
+worse ratio than the server has. An estimate of the right number beats an
+exact count of the wrong one.
 
 ### C. Drop items first, keep every field
 
@@ -230,9 +266,12 @@ projection language.
 
 ## Drawbacks
 
-- `max_bytes` has a default that nobody has measured against a real
-  agent. 24000 is a guess, and the right number depends on the client's
-  context window and how much of it the caller has already spent.
+- `max_tokens` has a default nobody has measured against a real agent.
+  6000 is a guess, and the right number depends on the client's context
+  window and how much of it the caller has already spent.
+- The token count is estimated, so an answer can exceed the budget it
+  reported staying inside. The estimate has to be conservative, which
+  means dropping items that would have fitted.
 - Computing `supportsNegativeClaim` in the payload duplicates a rule that
   also lives in the trust package. Two implementations can disagree, so
   the presenter has to call the library function rather than reimplement
@@ -248,17 +287,16 @@ projection language.
 
 ## Open questions
 
-1. What should `max_bytes` be? Nobody has measured 24000 against a real
-   agent on a real repository, and the right number depends on the
-   client's context window.
-2. Should `search` take a structured query or a string? The read contract
-   proposal left the same question open, and the answer has to be the
-   same in both.
-3. Does `resolve` take a position or a name? A position is unambiguous
-   and needs the agent to have read the file. A name is what an agent
-   has, and it can match several declarations.
-4. Should the server expose one workspace or several? Relative paths
-   assume one.
+1. What should `max_tokens` be, and what are the per-item costs? Every
+   figure here is an estimate, and the first real agent on a real
+   repository settles all of them.
+2. One server serves one workspace, because relative paths assume one and
+   nothing has asked for more. A caller working across two checkouts runs
+   two servers, and no answer can span them. Whether that is a real
+   limitation depends on whether anyone hits it.
+3. `full` detail carries a snippet, and how much surrounding code a
+   snippet holds is undecided. Too little and the agent asks for the
+   file; too much and the budget drops items that mattered.
 
 ## Unresolved and future work
 

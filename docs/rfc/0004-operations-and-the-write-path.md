@@ -238,11 +238,40 @@ changed, the gate fails. A formatter configured over the whole workspace
 would otherwise fold unrelated reformatting into a rename, and the diff
 would be unreviewable.
 
+A language whose formatter has to touch a sibling, to normalise imports
+across a package, names those paths in the plan. They then get a
+precondition and a lock like every other touched path, rather than being
+an exception to the rule.
+
 **The gate records which verifier answered.** An in-process `Verifier` is
 preferred; a language's declared argv is the fallback. The result names
 which ran, because "the build passed" means different things when it came
 from a type checker in this process and from a subprocess that may not
 have seen the same files.
+
+### A dry run is gated, not just previewed
+
+`dry_run` runs the whole pipeline against an overlay: the plan's changes
+are projected over the real files in memory and the gate runs against
+that projection, without a byte being written.
+
+A preview that only prints a diff answers "what would change". This
+answers "would it still build", which is the question the caller has, and
+it means a dry run that reports the gate passing is a promise that
+applying for real compiles. An agent can then batch a dry run and an
+apply without reading the diff in between.
+
+### A failed gate carries its fixes
+
+When the gate fails, each diagnostic that has a known fix carries it as a
+ready `Plan`. A lint, fix and re-verify cycle costs two round trips
+rather than five, because the caller never has to work the edit out from
+the message.
+
+The limit is the same as anywhere else this is done: carry a fix when
+there is one obvious fix. A diagnostic with three plausible ones carries
+none, because three payloads to save one round trip that may not be taken
+is a bad trade.
 
 ### Batches share one gate
 
@@ -258,6 +287,11 @@ func (s *Service) Batch(ctx context.Context, plans []Plan) (Result, error)
 Plans are merged and checked for overlap before anything is written, and
 the batch is admitted on its weakest member, so a resolved change cannot
 carry a syntactic one past the policy.
+
+Every plan in a batch is for one language. The gate is a language's own
+verifier, so a mixed batch would need a gate per language and a rollback
+rule for the case where one passes and another fails. A caller changing
+two languages sends two batches.
 
 ### What a caller gets back
 
@@ -344,11 +378,10 @@ the other's work. Locks are cheaper than the failure they prevent.
 2. What is the workspace lock for a second process: an advisory lock file
    in the workspace, or something the caller supplies? An abandoned lock
    file after a crash is its own problem.
-3. Does a batch take plans from more than one language? Nothing forbids
-   it, and the gate for a mixed batch is not defined.
-4. What happens when the gate passes but formatting changed a file the
-   plan did not name? Failing the gate is proposed, but a formatter that
-   normalises imports across a package may do this legitimately.
+3. Building the overlay needs every engine to accept one, and only a
+   language whose toolchain has the equivalent of an in-memory file
+   projection can gate a dry run without writing. Where a language cannot,
+   `dry_run` returns the diff with no gate result and says so.
 
 ## Unresolved and future work
 
