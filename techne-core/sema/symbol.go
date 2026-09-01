@@ -15,9 +15,11 @@ type Symbol struct {
 	// Parent is the declaration this one sits inside, empty at the top
 	// level of a unit.
 	Parent ID
-	// Exported reports whether the name is visible outside its unit.
-	// What that means is the language's decision, not this package's.
-	Exported bool
+	// Visibility is whether the declaration can be named outside its
+	// unit, and is [VisibilityUnknown] where the engine could not tell.
+	// What visibility means is the language's decision, not this
+	// package's.
+	Visibility Visibility
 	// Doc is the documentation comment. The output budget drops this
 	// before it drops anything else, so a caller must not depend on it.
 	Doc string

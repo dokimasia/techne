@@ -21,7 +21,8 @@ func TestSymbol(t *testing.T) {
 			var unset sema.Symbol
 			assert.Empty(t, string(unset.Parent), "an unset symbol is not nested inside anything")
 			assert.Equal(t, unset.Kind, sema.KindUnknown, "an unset symbol claims no kind")
-			assert.False(t, unset.Exported, "an unset symbol claims no visibility")
+			assert.Equal(t, unset.Visibility, sema.VisibilityUnknown,
+				"an unset symbol claims no visibility")
 		})
 	})
 

@@ -27,12 +27,12 @@ func TestDoc(t *testing.T) {
 			id := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindType)
 			answered := engine.Answer[sema.Symbol]{
 				Items: []sema.Symbol{{
-					ID:       id,
-					Name:     "Status",
-					Kind:     sema.KindType,
-					Language: source.Language("go"),
-					Span:     source.Span{Path: "core/trust/status.go"},
-					Exported: true,
+					ID:         id,
+					Name:       "Status",
+					Kind:       sema.KindType,
+					Language:   source.Language("go"),
+					Span:       source.Span{Path: "core/trust/status.go"},
+					Visibility: sema.Exported,
 				}},
 				Status: trust.OK,
 				Provenance: trust.Provenance{
