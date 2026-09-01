@@ -86,6 +86,19 @@ func TestRole(t *testing.T) {
 			}, "the order rises, so a catalogue takes the cheapest of two equals first")
 		})
 
+		t.Run("is the wire form of the price", func(t *testing.T) {
+			t.Parallel()
+			for c, want := range map[engine.Cost]string{
+				engine.CostMemory: "memory", engine.CostParse: "parse",
+				engine.CostAnalyze: "analyze", engine.CostSession: "session",
+				engine.CostProcess: "process",
+			} {
+				assert.Equal(t, c.String(), want, "a capability report carries this string to a caller")
+			}
+			assert.Equal(t, engine.Cost(200).String(), "process",
+				"an unknown price reads as the dearest, so a catalogue does not prefer it by accident")
+		})
+
 		t.Run("prices a session below a subprocess", func(t *testing.T) {
 			t.Parallel()
 			// A language server is expensive once and cheap afterwards.

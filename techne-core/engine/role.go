@@ -53,6 +53,27 @@ func Roles() []Role {
 	}
 }
 
+// costNames is the single definition point for the wire form of each
+// price. A capability report names costs, so these strings reach a
+// caller.
+var costNames = map[Cost]string{
+	CostMemory:  "memory",
+	CostParse:   "parse",
+	CostAnalyze: "analyze",
+	CostSession: "session",
+	CostProcess: "process",
+}
+
+// String returns the wire form of the price, or that of [CostProcess]
+// for a value outside the set: an unknown price is treated as the
+// dearest rather than the cheapest.
+func (c Cost) String() string {
+	if name, ok := costNames[c]; ok {
+		return name
+	}
+	return costNames[CostProcess]
+}
+
 // Cost is what producing one answer takes.
 //
 // It is independent of [trust.Fidelity]: the same facts can be had at

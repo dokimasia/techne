@@ -197,17 +197,19 @@ context and make the answer unusable on any other machine.
 {
   "items": [
     { "language": "go", "role": "relate", "engine": "gopls",
-      "fidelity": "resolved", "completeness": "total",
-      "cost": "session", "available": true },
+      "fidelity": "resolved", "cost": "session", "available": true },
     { "language": "python", "role": "relate", "engine": "treesitter",
-      "fidelity": "syntactic", "completeness": "total",
-      "cost": "parse", "available": true },
+      "fidelity": "syntactic", "cost": "parse", "available": true },
     { "language": "python", "role": "plan", "engine": "",
       "available": false,
       "unavailable": "no planner for python: rename.symbol needs resolved evidence" }
   ]
 }
 ```
+
+A capability carries no coverage claim. What an engine will cover
+depends on the scope it is asked about and on how far its index has got,
+so completeness is a property of an answer rather than of an engine.
 
 An agent calls this once and knows what it can rely on. It answers "can
 you rename this Python symbol" without the agent scanning a tool list,
