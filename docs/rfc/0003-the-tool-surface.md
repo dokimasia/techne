@@ -227,7 +227,7 @@ An operation nothing implements anywhere is not a tool. It appears in
 exists and cannot run rather than that no such operation exists.
 
 That rule keeps the list proportional to what works. Eight tools serve
-five languages today.
+ten languages today.
 
 `verify` runs a language's gate without changing anything, so an agent
 can check its own work before asking for a change. It is the same

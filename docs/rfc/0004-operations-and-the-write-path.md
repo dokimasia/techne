@@ -317,7 +317,7 @@ described, or every file is byte-identical to what it was.
 Require `resolved` for anything that writes, and drop `MinFidelity` from
 the spec.
 
-**Why not:** it makes `document.symbol` impossible in four of five
+**Why not:** it makes `document.symbol` impossible in nine of ten
 languages for no reason. Writing a comment above a declaration needs the
 declaration's position and nothing else, and refusing it would push the
 agent back to editing the file by hand, which is the failure mode the
