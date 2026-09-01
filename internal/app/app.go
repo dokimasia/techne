@@ -65,13 +65,17 @@ func Build(fsys fs.FS) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("app: %w", err)
 	}
+	search, err := tool.Search(reads)
+	if err != nil {
+		return nil, fmt.Errorf("app: %w", err)
+	}
 	capabilities, err := tool.Capabilities(catalogue)
 	if err != nil {
 		return nil, fmt.Errorf("app: %w", err)
 	}
 
 	tools := tool.NewRegistry()
-	for _, t := range []tool.Tool{outline, capabilities} {
+	for _, t := range []tool.Tool{outline, search, capabilities} {
 		if err := tools.Add(t); err != nil {
 			return nil, fmt.Errorf("app: %w", err)
 		}

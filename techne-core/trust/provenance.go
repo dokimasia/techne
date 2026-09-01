@@ -53,6 +53,12 @@ const (
 	// CaveatCrossLanguage means an edge leaving this language was not
 	// looked for. No single-language engine sees one.
 	CaveatCrossLanguage CaveatCode = "cross-language"
+	// CaveatUnrouted means no language claimed the scope, so nothing was
+	// asked. A directory carries no extension to route by, and a caller
+	// naming the language gets an answer.
+	CaveatUnrouted CaveatCode = "unrouted"
+	// CaveatUnsupported means nothing serves this language and role.
+	CaveatUnsupported CaveatCode = "unsupported"
 )
 
 // Caveat is a limit on an answer that its fidelity does not express.

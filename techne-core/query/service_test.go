@@ -6,6 +6,7 @@ package query_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -24,6 +25,16 @@ type router map[string]source.Language
 func (r router) LanguageOf(p source.Path) (source.Language, bool) {
 	l, claimed := r[string(p)]
 	return l, claimed
+}
+
+// Languages is what a directory scope is asked of.
+func (r router) Languages() []source.Language {
+	out := make([]source.Language, 0, len(r))
+	for _, l := range r {
+		out = append(out, l)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // outliner is an engine whose tier, name and answer a case sets.
@@ -115,14 +126,16 @@ func TestService(t *testing.T) {
 			assert.Empty(t, got.Items, "an unsupported answer carries no items")
 		})
 
-		t.Run("reports unsupported when no language claims the path", func(t *testing.T) {
+		t.Run("reports unsupported for a file no language claims", func(t *testing.T) {
 			t.Parallel()
 			// Guessing a language would answer about one nothing
 			// declared, at a tier nothing earned.
 			c := catalogue(t, outliner{name: "parser", fidelity: trust.Syntactic, found: symbol("weak")})
 			got, err := query.New(c, routes).Outline(t.Context(), engine.Request{Scope: "notes.md"})
 			assert.NoError(t, err, "an unclaimed path is an answer, not a fault")
-			assert.Equal(t, got.Status, trust.Unsupported, "no language claims this path")
+			assert.Equal(t, got.Status, trust.Unsupported, "no language claims this suffix")
+			assert.NotEmpty(t, got.Provenance.Caveats,
+				"a caller told only no cannot tell a gap from a mistake it could correct")
 		})
 
 		t.Run("takes the language the caller named over the path", func(t *testing.T) {

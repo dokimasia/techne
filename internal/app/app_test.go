@@ -69,6 +69,7 @@ func TestApp(t *testing.T) {
 				names = append(names, registered.Name())
 			}
 			assert.Contains(t, names, "outline", "an agent can ask what a file declares")
+			assert.Contains(t, names, "search", "an agent can ask where something is declared")
 			assert.Contains(t, names, "capabilities", "an agent can ask what the server can do")
 		})
 
@@ -121,6 +122,27 @@ func TestApp(t *testing.T) {
 			assert.Equal(t, provenance["fidelity"], "syntactic", "only a parser is registered so far")
 			assert.Equal(t, provenance["supportsNegativeClaim"], false,
 				"a name matched across files is coincidence, so an empty answer proves nothing")
+		})
+	})
+
+	t.Run("search", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("finds a declaration across the workspace", func(t *testing.T) {
+			t.Parallel()
+			got := run(t, "search", `{"text":"new","scope":"src","language":"go"}`)
+			assert.Equal(t, got["status"], "ok", "a search over a registered language is answered")
+			assert.NotEmpty(t, got["items"], "the workspace declares something by that name")
+		})
+
+		t.Run("returns one match whole, with no second call", func(t *testing.T) {
+			t.Parallel()
+			got := run(t, "search", `{"text":"New","scope":"src/service.go"}`)
+			items := got["items"].([]any)
+			assert.Length(t, items, 1, "one declaration matched")
+			first := items[0].(map[string]any)
+			assert.Equal(t, first["name"].(string), "New", "the declaration searched for comes back")
+			assert.NotEmpty(t, first["span"], "a single match carries where it lives")
 		})
 	})
 

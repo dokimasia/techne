@@ -6,6 +6,7 @@ package lang
 import (
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 
 	"go.dokimi.dev/techne/core/engine"
@@ -91,13 +92,18 @@ func (r *Registry) Declaration(l source.Language) (Declaration, bool) {
 	return d, declared
 }
 
-// Languages returns every registered language, so a caller can report
-// what is served without knowing what was compiled in.
+// Languages returns every registered language, sorted.
+//
+// A caller reports what is served without knowing what was compiled in,
+// and a service asking every language about a directory gets the same
+// order every time. Map iteration would make a merged answer reorder
+// itself between identical requests.
 func (r *Registry) Languages() []source.Language {
 	out := make([]source.Language, 0, len(r.declared))
 	for l := range r.declared {
 		out = append(out, l)
 	}
+	slices.Sort(out)
 	return out
 }
 

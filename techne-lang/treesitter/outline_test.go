@@ -26,20 +26,16 @@ func TestOutline(t *testing.T) {
 			var e engine.Engine = (*treesitter.Engine)(nil)
 			_, serves := e.(engine.Outliner)
 			assert.True(t, serves, "the engine serves the role its package exists for")
-			for name, claimed := range map[string]bool{
-				"Searcher": assertSearcher(e),
-				"Relator":  assertRelator(e),
-				"Planner":  assertPlanner(e),
-				"Verifier": assertVerifier(e),
+			for _, claimed := range []bool{
+				assertRelator(e), assertPlanner(e), assertVerifier(e),
 			} {
-				_ = name
-				assert.False(t, claimed, "a parser cannot serve a role needing more than text, so it claims none")
+				assert.False(t, claimed,
+					"a parser cannot bind a name across files, so it claims no role that needs it")
 			}
 		})
 	})
 }
 
-func assertSearcher(e engine.Engine) bool { _, ok := e.(engine.Searcher); return ok }
 func assertRelator(e engine.Engine) bool  { _, ok := e.(engine.Relator); return ok }
 func assertPlanner(e engine.Engine) bool  { _, ok := e.(engine.Planner); return ok }
 func assertVerifier(e engine.Engine) bool { _, ok := e.(engine.Verifier); return ok }

@@ -6,6 +6,7 @@ package tool_test
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -25,6 +26,16 @@ type router map[string]source.Language
 func (r router) LanguageOf(p source.Path) (source.Language, bool) {
 	l, claimed := r[string(p)]
 	return l, claimed
+}
+
+// Languages is what a directory scope is asked of.
+func (r router) Languages() []source.Language {
+	out := make([]source.Language, 0, len(r))
+	for _, l := range r {
+		out = append(out, l)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // parser is an engine that answers with what a case gave it.

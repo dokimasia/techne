@@ -134,6 +134,27 @@ func TestRegistry(t *testing.T) {
 		})
 	})
 
+	t.Run("Languages", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("answers in a stable order", func(t *testing.T) {
+			t.Parallel()
+			// A service asking every language about a directory merges
+			// their answers. Map iteration would reorder the result
+			// between two identical requests.
+			r, cat := lang.NewRegistry(), engine.NewCatalog()
+			assert.NoError(t, r.Register(cat, declared()), "the case needs a language registered")
+
+			other := declared()
+			other.Language = source.Language("alpha")
+			other.Extensions = []string{".al"}
+			assert.NoError(t, r.Register(cat, other), "the case needs a second language registered")
+
+			assert.Equal(t, r.Languages(), []source.Language{"alpha", "fixture"},
+				"two identical requests see the same order")
+		})
+	})
+
 	t.Run("LanguageOf", func(t *testing.T) {
 		t.Parallel()
 

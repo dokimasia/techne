@@ -156,6 +156,63 @@ func Run(t *testing.T, s Suite) {
 		})
 	})
 
+	t.Run("search", func(t *testing.T) {
+		t.Parallel()
+		e := build(t, fsys, s)
+
+		t.Run("finds a declaration by its exact name", func(t *testing.T) {
+			t.Parallel()
+			if len(s.Declares) == 0 {
+				t.Skip("the module names no declaration to search for")
+			}
+			wanted := s.Declares[0]
+			got, err := e.Search(t.Context(), engine.Request{Scope: "."}, engine.Query{
+				Text: wanted.Name, Private: true,
+			})
+			assert.NoError(t, err, "searching a scope that exists succeeds")
+			assert.True(t, held(got.Items, wanted),
+				"a name the module says it declares is findable by that name")
+		})
+
+		t.Run("puts an exact match before a longer one containing it", func(t *testing.T) {
+			t.Parallel()
+			if len(s.Declares) == 0 {
+				t.Skip("the module names no declaration to search for")
+			}
+			wanted := s.Declares[0]
+			got, err := e.Search(t.Context(), engine.Request{Scope: "."}, engine.Query{
+				Text: wanted.Name, Private: true,
+			})
+			assert.NoError(t, err, "searching a scope that exists succeeds")
+			assert.NotEmpty(t, got.Items, "the declaration the module named is found")
+			assert.Equal(t, got.Items[0].Name, wanted.Name,
+				"an engine returns its own best order, and an exact match is the best")
+		})
+
+		t.Run("finds nothing for a name nothing declares", func(t *testing.T) {
+			t.Parallel()
+			got, err := e.Search(t.Context(), engine.Request{Scope: "."}, engine.Query{
+				Text: "aNameNoModuleWouldDeclare", Private: true,
+			})
+			assert.NoError(t, err, "finding nothing is an answer, not a fault")
+			assert.Empty(t, got.Items, "a parser reports what it matched and invents nothing")
+			assert.False(t, engine.Publish(got, e, engine.RoleSearch, trust.None).
+				Provenance.SupportsNegativeClaim(),
+				"an empty search at this tier means none were found, never that there are none")
+		})
+
+		t.Run("answers two identical searches identically", func(t *testing.T) {
+			t.Parallel()
+			q := engine.Query{Text: "e", Private: true}
+			first, err := e.Search(t.Context(), engine.Request{Scope: "."}, q)
+			assert.NoError(t, err, "searching a scope that exists succeeds")
+			second, err := e.Search(t.Context(), engine.Request{Scope: "."}, q)
+			assert.NoError(t, err, "searching a scope that exists succeeds")
+			assert.Equal(t, second.Items, first.Items,
+				"identity breaks any remaining tie, so the order does not wander")
+		})
+	})
+
 	t.Run("a file the language does not claim", func(t *testing.T) {
 		t.Parallel()
 		if s.Unclaimed == "" {

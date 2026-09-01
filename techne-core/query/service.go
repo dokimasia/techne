@@ -6,6 +6,8 @@ package query
 import (
 	"context"
 	"errors"
+	"fmt"
+	"path"
 
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
@@ -13,12 +15,19 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// Router reports which language claims a path.
+// Router reports which languages exist and which one claims a path.
 //
 // It is a port because the registry that knows lives in the language
 // module's world, and core names no language. A registry satisfies it.
 type Router interface {
+	// LanguageOf reports which language claims a path, by its
+	// extension. A directory carries none.
 	LanguageOf(p source.Path) (source.Language, bool)
+
+	// Languages are every registered language, in a fixed order. A
+	// scope no single language claims is asked of all of them, and the
+	// order is what keeps a merged answer from wandering.
+	Languages() []source.Language
 }
 
 // Service answers read questions.
@@ -43,6 +52,21 @@ func (s *Service) Outline(ctx context.Context, req engine.Request) (engine.Answe
 		})
 }
 
+// Search reports the declarations in a scope matching a query.
+//
+// The order is the engine's own. A language server ranks with more to go
+// on than a parser has, and re-ranking here would throw that away.
+func (s *Service) Search(
+	ctx context.Context,
+	req engine.Request,
+	q engine.Query,
+) (engine.Answer[sema.Symbol], error) {
+	return ask(ctx, s, req, engine.RoleSearch,
+		func(e engine.Engine) (engine.Result[sema.Symbol], error) {
+			return e.(engine.Searcher).Search(ctx, req, q)
+		})
+}
+
 // ask runs one read role through the shared path.
 //
 // It is generic over the item type so every role takes the same steps.
@@ -54,38 +78,63 @@ func ask[T any](
 	role engine.Role,
 	call func(engine.Engine) (engine.Result[T], error),
 ) (engine.Answer[T], error) {
-	language, known := s.language(req)
-	if !known {
-		return unsupported[T](), nil
+	var answered []engine.Answer[T]
+	for _, language := range s.languages(req) {
+		for _, e := range s.catalog.For(ctx, language, role) {
+			result, err := call(e)
+			switch {
+			case errors.Is(err, engine.ErrDecline):
+				continue
+			case err != nil:
+				return engine.Answer[T]{}, err
+			}
+			answered = append(answered, engine.Publish(result, e, role, req.Preferred))
+			break
+		}
 	}
 
-	for _, e := range s.catalog.For(ctx, language, role) {
-		result, err := call(e)
-		switch {
-		case errors.Is(err, engine.ErrDecline):
-			continue
-		case err != nil:
-			return engine.Answer[T]{}, err
-		}
-		return engine.Publish(result, e, role, req.Preferred), nil
+	if len(answered) == 0 {
+		return unsupported[T](fmt.Sprintf(
+			"no engine serves %q for this role", req.Scope)), nil
 	}
-	return unsupported[T](), nil
+	return merge(answered, req.Preferred), nil
 }
 
-// language resolves which language a request is about.
+// languages resolves which languages a request is about.
 //
 // A caller that named one is believed: it may know about a path the
-// router does not. Otherwise the router decides, and a path no language
-// claims resolves to nothing rather than to a guess.
-func (s *Service) language(req engine.Request) (source.Language, bool) {
+// router does not. A path carrying an extension is a file, and belongs
+// to whichever language claims that extension, or to none. A path
+// carrying no extension is a directory, which holds whatever it holds:
+// a package in Go, mixed sources anywhere else. Every language is asked
+// and the answers merge.
+//
+// A directory named with a dot is read as a file and answers for no
+// language. Nothing here can stat the scope, and the alternative is
+// asking every language about every unclaimed file.
+func (s *Service) languages(req engine.Request) []source.Language {
 	if req.Language != "" {
-		return req.Language, true
+		return []source.Language{req.Language}
 	}
-	return s.router.LanguageOf(req.Scope)
+	if claimed, ok := s.router.LanguageOf(req.Scope); ok {
+		return []source.Language{claimed}
+	}
+	if path.Ext(string(req.Scope)) != "" {
+		return nil
+	}
+	return s.router.Languages()
 }
 
-// unsupported is the answer when nothing can be asked. It carries no
-// payload, so an empty item list is never read as evidence of absence.
-func unsupported[T any]() engine.Answer[T] {
-	return engine.Answer[T]{Status: trust.Unsupported}
+// unsupported is the answer when nothing can be asked.
+//
+// It carries no payload, so an empty item list is never read as evidence
+// of absence, and it says why: a caller that is only told no cannot tell
+// a capability gap from a mistake it could correct.
+func unsupported[T any](reason string) engine.Answer[T] {
+	return engine.Answer[T]{
+		Status: trust.Unsupported,
+		Provenance: trust.Provenance{
+			Caveats: []trust.Caveat{{Code: trust.CaveatUnsupported, Note: reason}},
+		},
+	}
 }

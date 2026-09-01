@@ -1,0 +1,178 @@
+// Copyright ThesmOS B.V. 2026
+// SPDX-License-Identifier: MIT
+
+package query_test
+
+import (
+	"context"
+	"testing"
+
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/techne/core/engine"
+	"go.dokimi.dev/techne/core/query"
+	"go.dokimi.dev/techne/core/sema"
+	"go.dokimi.dev/techne/core/source"
+	"go.dokimi.dev/techne/core/trust"
+)
+
+const other = source.Language("other")
+
+// tongue is an engine for whichever language a case gives it.
+type tongue struct {
+	engine   outliner
+	language source.Language
+	coverage trust.Completeness
+}
+
+func (g tongue) Name() string                          { return g.engine.name }
+func (g tongue) Language() source.Language             { return g.language }
+func (g tongue) Fidelity(r engine.Role) trust.Fidelity { return g.engine.Fidelity(r) }
+func (g tongue) Cost(r engine.Role) engine.Cost        { return g.engine.Cost(r) }
+
+func (g tongue) Outline(ctx context.Context, req engine.Request) (engine.Result[sema.Symbol], error) {
+	return engine.Result[sema.Symbol]{Items: g.engine.found, Completeness: g.coverage}, nil
+}
+
+// speaking builds an engine for one language at one tier.
+func speaking(name string, l source.Language, f trust.Fidelity, c trust.Completeness, found string) tongue {
+	return tongue{
+		engine:   outliner{name: name, fidelity: f, found: symbol(found)},
+		language: l,
+		coverage: c,
+	}
+}
+
+// tongues routes a file suffix per language and knows both.
+type tongues struct{}
+
+func (tongues) LanguageOf(p source.Path) (source.Language, bool) {
+	switch {
+	case len(p) > 3 && p[len(p)-3:] == ".fx":
+		return fixture, true
+	case len(p) > 3 && p[len(p)-3:] == ".ot":
+		return other, true
+	default:
+		return "", false
+	}
+}
+
+func (tongues) Languages() []source.Language { return []source.Language{fixture, other} }
+
+func both(t *testing.T, engines ...engine.Engine) *query.Service {
+	t.Helper()
+	return query.New(catalogue(t, engines...), tongues{})
+}
+
+func TestMerge(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a directory scope", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("asks every language, because a directory holds several", func(t *testing.T) {
+			t.Parallel()
+			// A directory is a package in Go and a folder of mixed
+			// sources anywhere else. Refusing it because it carries no
+			// extension would make the commonest scope unusable.
+			s := both(t,
+				speaking("fx", fixture, trust.Resolved, trust.ScopeTotal, "FromFixture"),
+				speaking("ot", other, trust.Resolved, trust.ScopeTotal, "FromOther"),
+			)
+			got, err := s.Outline(t.Context(), engine.Request{Scope: "src"})
+			assert.NoError(t, err, "a directory is a scope, not a fault")
+			assert.Equal(t, got.Status, trust.OK, "every language answered")
+			assert.Length(t, got.Items, 2, "the answer holds what both languages declared")
+		})
+
+		t.Run("names every engine that answered", func(t *testing.T) {
+			t.Parallel()
+			s := both(t,
+				speaking("fx", fixture, trust.Resolved, trust.ScopeTotal, "A"),
+				speaking("ot", other, trust.Resolved, trust.ScopeTotal, "B"),
+			)
+			got, err := s.Outline(t.Context(), engine.Request{Scope: "src"})
+			assert.NoError(t, err, "a directory is a scope, not a fault")
+			assert.Contains(t, got.Provenance.Engine, "fx", "a merged answer names each engine behind it")
+			assert.Contains(t, got.Provenance.Engine, "ot", "a merged answer names each engine behind it")
+		})
+
+		t.Run("claims only the weakest evidence behind it", func(t *testing.T) {
+			t.Parallel()
+			// Half the answer came from a parser. Claiming resolved
+			// would let a caller trust the whole of it.
+			s := both(t,
+				speaking("fx", fixture, trust.Resolved, trust.ScopeTotal, "A"),
+				speaking("ot", other, trust.Syntactic, trust.ScopeTotal, "B"),
+			)
+			got, err := s.Outline(t.Context(), engine.Request{Scope: "src"})
+			assert.NoError(t, err, "a directory is a scope, not a fault")
+			assert.Equal(t, got.Provenance.Fidelity, trust.Syntactic,
+				"an answer is only as strong as its weakest part")
+			assert.False(t, got.Provenance.SupportsNegativeClaim(),
+				"one parser among the contributors means the whole proves nothing")
+		})
+
+		t.Run("claims only the weakest coverage behind it", func(t *testing.T) {
+			t.Parallel()
+			s := both(t,
+				speaking("fx", fixture, trust.Resolved, trust.ScopeTotal, "A"),
+				speaking("ot", other, trust.Resolved, trust.ScopePartial, "B"),
+			)
+			got, err := s.Outline(t.Context(), engine.Request{Scope: "src"})
+			assert.NoError(t, err, "a directory is a scope, not a fault")
+			assert.Equal(t, got.Provenance.Completeness, trust.ScopePartial,
+				"one language that missed files makes the whole answer partial")
+		})
+
+		t.Run("answers even when only one language has files there", func(t *testing.T) {
+			t.Parallel()
+			// A language serving nothing in this directory is not a
+			// capability gap.
+			s := both(t,
+				speaking("fx", fixture, trust.Syntactic, trust.ScopeTotal, "A"),
+			)
+			got, err := s.Outline(t.Context(), engine.Request{Scope: "src"})
+			assert.NoError(t, err, "a directory is a scope, not a fault")
+			assert.Equal(t, got.Status, trust.OK, "the language that serves this tree answered")
+			assert.Length(t, got.Items, 1, "what it found comes back")
+		})
+
+		t.Run("is unsupported only when nothing serves any language", func(t *testing.T) {
+			t.Parallel()
+			got, err := query.New(engine.NewCatalog(), tongues{}).
+				Outline(t.Context(), engine.Request{Scope: "src"})
+			assert.NoError(t, err, "having nothing to ask is not a fault")
+			assert.Equal(t, got.Status, trust.Unsupported, "no engine serves any registered language")
+		})
+
+		t.Run("answers two identical requests identically", func(t *testing.T) {
+			t.Parallel()
+			s := both(t,
+				speaking("fx", fixture, trust.Resolved, trust.ScopeTotal, "A"),
+				speaking("ot", other, trust.Resolved, trust.ScopeTotal, "B"),
+			)
+			first, err := s.Outline(t.Context(), engine.Request{Scope: "src"})
+			assert.NoError(t, err, "a directory is a scope, not a fault")
+			second, err := s.Outline(t.Context(), engine.Request{Scope: "src"})
+			assert.NoError(t, err, "a directory is a scope, not a fault")
+			assert.Equal(t, second.Items, first.Items,
+				"the languages are asked in a fixed order, so a merged answer does not wander")
+		})
+	})
+
+	t.Run("a file scope", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("still asks only the language claiming it", func(t *testing.T) {
+			t.Parallel()
+			s := both(t,
+				speaking("fx", fixture, trust.Syntactic, trust.ScopeTotal, "A"),
+				speaking("ot", other, trust.Syntactic, trust.ScopeTotal, "B"),
+			)
+			got, err := s.Outline(t.Context(), engine.Request{Scope: "a.fx"})
+			assert.NoError(t, err, "a file that routes is answered")
+			assert.Length(t, got.Items, 1, "a file belongs to one language")
+			assert.Equal(t, got.Provenance.Engine, "fx", "the language claiming the suffix answered")
+		})
+	})
+}

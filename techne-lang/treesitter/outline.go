@@ -26,35 +26,52 @@ import (
 // Coverage is total: the walk reads every file in scope. What the
 // answer is worth is still limited by the tier, and a caveat says so.
 func (e *Engine) Outline(ctx context.Context, req engine.Request) (engine.Result[sema.Symbol], error) {
-	paths, err := lang.FilesIn(e.fsys, req.Scope, e.declared.Extensions)
+	out, err := e.symbols(ctx, req)
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, err
+	}
+	return found(out), nil
+}
+
+// symbols reads every declaration in a scope. Outline returns them as
+// they are; Search filters them.
+func (e *Engine) symbols(ctx context.Context, req engine.Request) ([]sema.Symbol, error) {
+	paths, err := lang.FilesIn(e.fsys, req.Scope, e.declared.Extensions)
+	if err != nil {
+		return nil, err
 	}
 
 	var out []sema.Symbol
 	for _, p := range paths {
 		if err := ctx.Err(); err != nil {
-			return engine.Result[sema.Symbol]{}, err
+			return nil, err
 		}
 		content, readErr := fs.ReadFile(e.fsys, string(p))
 		if readErr != nil {
-			return engine.Result[sema.Symbol]{}, fmt.Errorf("treesitter: read %s: %w", p, readErr)
+			return nil, fmt.Errorf("treesitter: read %s: %w", p, readErr)
 		}
-		found, outlineErr := e.declarations(p, content)
+		declared, outlineErr := e.declarations(p, content)
 		if outlineErr != nil {
-			return engine.Result[sema.Symbol]{}, outlineErr
+			return nil, outlineErr
 		}
-		out = append(out, found...)
+		out = append(out, declared...)
 	}
+	return out, nil
+}
 
+// found wraps symbols in the result every role at this tier returns.
+//
+// Coverage is total: the walk reads every file in scope. What the answer
+// is worth is limited by the tier, and the caveat says so.
+func found(items []sema.Symbol) engine.Result[sema.Symbol] {
 	return engine.Result[sema.Symbol]{
-		Items:        out,
+		Items:        items,
 		Completeness: trust.ScopeTotal,
 		Caveats: []trust.Caveat{{
 			Code: trust.CaveatDynamic,
 			Note: "a parser matched text: a name resolved across files is coincidence",
 		}},
-	}, nil
+	}
 }
 
 // declarations runs the tags query over one file.
