@@ -9,6 +9,7 @@ import (
 	"testing/fstest"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/lang"
 	"go.dokimi.dev/techne/lang/treesitter"
@@ -24,7 +25,7 @@ func complete() lang.Declaration {
 		Comment:    lang.CommentStyle{Line: "// ", Above: true},
 		IsTest:     func(string) bool { return false },
 		Namespace:  func(p string) string { return strings.TrimSuffix(p, ".fx") },
-		Exported:   func(n string) bool { return n != "" && n[0] >= 'A' && n[0] <= 'Z' },
+		Visibility: visibility,
 	}
 }
 
@@ -55,7 +56,7 @@ func TestEngine(t *testing.T) {
 				"language":   func(d *lang.Declaration) { d.Language = "" },
 				"extensions": func(d *lang.Declaration) { d.Extensions = nil },
 				"Namespace":  func(d *lang.Declaration) { d.Namespace = nil },
-				"Exported":   func(d *lang.Declaration) { d.Exported = nil },
+				"Visibility": func(d *lang.Declaration) { d.Visibility = nil },
 			} {
 				d := complete()
 				spoil(&d)
@@ -79,4 +80,13 @@ func TestEngine(t *testing.T) {
 				"an error names the package it came from, so a caller can tell which layer refused")
 		})
 	})
+}
+
+// visibility is the fixture language's rule: a capitalised name is
+// visible outside its unit.
+func visibility(n string) sema.Visibility {
+	if n != "" && n[0] >= 'A' && n[0] <= 'Z' {
+		return sema.Exported
+	}
+	return sema.Unexported
 }

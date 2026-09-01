@@ -22,7 +22,7 @@ func TestDeclaration(t *testing.T) {
 			assert.Empty(t, string(unset.Language), "an unset declaration names no language")
 			assert.Nil(t, unset.IsTest, "an unset declaration states no convention")
 			assert.Nil(t, unset.Namespace, "an unset declaration states no convention")
-			assert.Nil(t, unset.Exported, "an unset declaration states no convention")
+			assert.Nil(t, unset.Visibility, "an unset declaration states no convention")
 		})
 	})
 

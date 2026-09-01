@@ -89,12 +89,12 @@ func (e *Engine) declarations(p source.Path, content []byte) ([]sema.Symbol, err
 			continue
 		}
 		out = append(out, sema.Symbol{
-			ID:       sema.NewID(e.declared.Language, unit, named, kind),
-			Name:     named,
-			Kind:     kind,
-			Language: e.declared.Language,
-			Span:     span,
-			Exported: e.declared.Exported(named),
+			ID:         sema.NewID(e.declared.Language, unit, named, kind),
+			Name:       named,
+			Kind:       kind,
+			Language:   e.declared.Language,
+			Span:       span,
+			Visibility: e.declared.Visibility(named),
 		})
 	}
 	return out, nil

@@ -27,7 +27,7 @@ func declared() lang.Declaration {
 		Comment:    lang.CommentStyle{Line: "// ", Above: true},
 		IsTest:     func(p string) bool { return strings.HasSuffix(p, "_test.fx") },
 		Namespace:  func(p string) string { return strings.TrimSuffix(p, ".fx") },
-		Exported:   func(n string) bool { return n != "" && n[0] >= 'A' && n[0] <= 'Z' },
+		Visibility: visibility,
 	}
 }
 
@@ -80,9 +80,9 @@ func TestRegistry(t *testing.T) {
 			// A nil func panics at the first call. Startup is where a
 			// language module's mistake should surface.
 			for name, spoil := range map[string]func(*lang.Declaration){
-				"IsTest":    func(d *lang.Declaration) { d.IsTest = nil },
-				"Namespace": func(d *lang.Declaration) { d.Namespace = nil },
-				"Exported":  func(d *lang.Declaration) { d.Exported = nil },
+				"IsTest":     func(d *lang.Declaration) { d.IsTest = nil },
+				"Namespace":  func(d *lang.Declaration) { d.Namespace = nil },
+				"Visibility": func(d *lang.Declaration) { d.Visibility = nil },
 			} {
 				d := declared()
 				spoil(&d)
@@ -164,4 +164,13 @@ func TestRegistry(t *testing.T) {
 			assert.False(t, routed, "a path carrying no suffix names no language")
 		})
 	})
+}
+
+// visibility is the fixture language's rule: a capitalised name is
+// visible outside its unit.
+func visibility(n string) sema.Visibility {
+	if n != "" && n[0] >= 'A' && n[0] <= 'Z' {
+		return sema.Exported
+	}
+	return sema.Unexported
 }

@@ -46,7 +46,7 @@ func New(fsys fs.FS, d lang.Declaration, g Grammar) (*Engine, error) {
 		return nil, fmt.Errorf("treesitter: declaration names no language")
 	case len(d.Extensions) == 0:
 		return nil, fmt.Errorf("treesitter: %q declares no extension", d.Language)
-	case d.Namespace == nil || d.Exported == nil:
+	case d.Namespace == nil || d.Visibility == nil:
 		return nil, fmt.Errorf("treesitter: %q declares no conventions", d.Language)
 	case g.Language == nil:
 		return nil, fmt.Errorf("treesitter: %q supplies no grammar", d.Language)

@@ -3,7 +3,10 @@
 
 package lang
 
-import "go.dokimi.dev/techne/core/source"
+import (
+	"go.dokimi.dev/techne/core/sema"
+	"go.dokimi.dev/techne/core/source"
+)
 
 // Declaration states the facts about a language that hold whichever
 // engine serves it. A language module constructs exactly one.
@@ -41,9 +44,15 @@ type Declaration struct {
 	// a/b/c.py becomes a.b.c.
 	Namespace func(path string) string
 
-	// Exported reports whether a declared name is visible outside the
-	// unit that declares it. What that means is the language's decision.
-	Exported func(name string) bool
+	// Visibility reports whether a declared name can be seen outside the
+	// unit that declares it, and returns [sema.VisibilityUnknown] where
+	// the name does not say.
+	//
+	// Go and Python spell visibility in the name, so this answers for
+	// them. Java, Rust and TypeScript spell it as a modifier or a
+	// keyword that a name carries nothing of, so those return unknown
+	// rather than reporting every declaration as public.
+	Visibility func(name string) sema.Visibility
 }
 
 // CommentStyle describes how a documentation comment attaches to a

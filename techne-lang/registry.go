@@ -112,8 +112,8 @@ func validate(d Declaration) error {
 		return fmt.Errorf("lang: %q declares no IsTest", d.Language)
 	case d.Namespace == nil:
 		return fmt.Errorf("lang: %q declares no Namespace", d.Language)
-	case d.Exported == nil:
-		return fmt.Errorf("lang: %q declares no Exported", d.Language)
+	case d.Visibility == nil:
+		return fmt.Errorf("lang: %q declares no Visibility", d.Language)
 	}
 	for _, suffix := range d.Extensions {
 		if !strings.HasPrefix(suffix, ".") {
