@@ -119,11 +119,19 @@ func (s *Service) languages(req engine.Request) []source.Language {
 	if claimed, ok := s.router.LanguageOf(req.Scope); ok {
 		return []source.Language{claimed}
 	}
-	if path.Ext(string(req.Scope)) != "" {
+	// path.Ext(".") is ".", so the workspace root would otherwise read
+	// as a file carrying an extension no language claims. It is the
+	// scope a request that names none is given, which would leave every
+	// such request answered by nothing.
+	if req.Scope != root && path.Ext(string(req.Scope)) != "" {
 		return nil
 	}
 	return s.router.Languages()
 }
+
+// root is the whole workspace, and what a request naming no scope asks
+// about.
+const root source.Path = "."
 
 // unsupported is the answer when nothing can be asked.
 //

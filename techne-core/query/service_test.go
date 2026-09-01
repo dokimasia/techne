@@ -138,6 +138,19 @@ func TestService(t *testing.T) {
 				"a caller told only no cannot tell a gap from a mistake it could correct")
 		})
 
+		t.Run("asks every language about the workspace root", func(t *testing.T) {
+			t.Parallel()
+			// path.Ext(".") is ".", so the root reads as a file with an
+			// extension unless it is handled. It is also the scope a
+			// request naming none is given, so getting this wrong
+			// answers nothing to the commonest call there is.
+			c := catalogue(t, outliner{name: "parser", fidelity: trust.Syntactic, found: symbol("found")})
+			got, err := query.New(c, routes).Outline(t.Context(), engine.Request{Scope: "."})
+			assert.NoError(t, err, "the workspace root is a directory every language may claim part of")
+			assert.Equal(t, got.Status, trust.OK, "the root is a directory, not a file with an extension")
+			assert.NotEmpty(t, got.Items, "an engine serving the only registered language answered")
+		})
+
 		t.Run("takes the language the caller named over the path", func(t *testing.T) {
 			t.Parallel()
 			// A caller that knows the language should not need the
