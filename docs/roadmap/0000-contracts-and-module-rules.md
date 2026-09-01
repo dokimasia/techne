@@ -7,7 +7,7 @@ ships-in: unscheduled
 deadline: none
 deadline-source: none
 prd: none
-rfc: RFC-0001
+rfc: RFC-0001, RFC-0002, RFC-0004
 ---
 
 # Milestone 0000: Contracts and module rules
@@ -24,8 +24,9 @@ them when an import breaks a module boundary.
       naming the rule it broke
 - [ ] `core` builds with `CGO_ENABLED=0`
 - [ ] `trust.Fidelity` orders none below syntactic below indexed below
-      resolved, and only resolved reports true from
-      `SupportsNegativeClaim`
+      resolved
+- [ ] `trust.SupportsNegativeClaim` returns true for resolved binding
+      together with total completeness, and false for every other pair
 - [ ] `trust.Status` tells apart an answer nothing could serve, an answer
       served below the fidelity asked for, and an answer that found
       nothing

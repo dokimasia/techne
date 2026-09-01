@@ -7,7 +7,7 @@ ships-in: unscheduled
 deadline: none
 deadline-source: none
 prd: none
-rfc: RFC-0001
+rfc: RFC-0001, RFC-0002, RFC-0003
 ---
 
 # Milestone 0001: Every language outlines a file over MCP
@@ -26,7 +26,12 @@ and read from the answer how the system knows.
 - [ ] Outlining a file in a language nothing is registered for returns
       `unsupported` with a reason, rather than an empty list
 - [ ] The capability tool reports, per language and per role, what can be
-      answered and at what fidelity
+      answered, at what fidelity, and whether the engine can run
+- [ ] An answer over the byte budget drops documentation, then snippets,
+      then items, and says how many matched against how many were
+      returned
+- [ ] Every path in a request and an answer is relative to the workspace
+      root; an absolute path in a request is refused
 - [ ] Deleting one language directory and its `go.work` line removes that
       language and leaves the other four answering
 - [ ] A query file that fails to compile stops startup, rather than

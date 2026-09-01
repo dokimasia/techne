@@ -7,7 +7,7 @@ ships-in: unscheduled
 deadline: none
 deadline-source: none
 prd: none
-rfc: RFC-0001
+rfc: RFC-0004
 ---
 
 # Milestone 0003: A change is all or nothing
@@ -24,6 +24,9 @@ workspace still builds, or no file changed.
       every language that meets the operation's declared minimum
 - [ ] A language below that minimum is refused with a reason, rather than
       attempted at a weaker tier
+- [ ] An operation that rewrites references is refused unless the plan's
+      evidence supports a negative claim, so a language server that is
+      still indexing cannot rename
 - [ ] A rename that leaves the workspace not building leaves every file
       byte-identical to what it was before the call
 - [ ] A plan computed against a file that has changed since is refused on

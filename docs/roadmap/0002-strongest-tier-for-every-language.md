@@ -7,7 +7,7 @@ ships-in: unscheduled
 deadline: none
 deadline-source: none
 prd: none
-rfc: RFC-0001
+rfc: RFC-0002
 ---
 
 # Milestone 0002: Every language answers at the strongest tier it can reach
@@ -24,8 +24,11 @@ and can tell from the answer which tier produced it.
 - [ ] With the server absent, the same request returns `syntactic` and
       names the server it could not run
 - [ ] Go answers above `syntactic` with no server running
-- [ ] An empty result at a tier that supports a negative claim is marked
-      as such; the same empty result at `syntactic` is not
+- [ ] An empty result is marked as supporting a negative claim only when
+      a type checker bound the name and the engine reports it covered the
+      whole scope
+- [ ] A server still building its index reports partial completeness, so
+      its empty results are never marked as authoritative
 - [ ] With the workspace not compiling, requests return a lower tier and
       a caveat saying the build is broken
 - [ ] Every answer above `syntactic` carries the caveat naming what no

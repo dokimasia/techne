@@ -170,7 +170,7 @@ techne-core/
   doc.go
   source/            Language, Path, Position, Span         where code lives
   sema/              Symbol, ID, Kind, Relation, Unit, Ref   what it means
-  trust/             Fidelity, Status, Caveat, Provenance    how sure we are
+  trust/             Fidelity, Completeness, Status, Caveat, Provenance
   edit/              Operation, Family, Target, Spec, Plan   how it changes
   diag/              Diagnostic, Severity, Fix               what is wrong with it
   engine/            Role, Cost, the port interfaces, Catalog, Capability
@@ -211,8 +211,7 @@ services does not pull the SDK in with it.
 
 Splitting the drive loop from `mcp/` while only one transport exists is a
 guess that a second one arrives. If none does, the two collapse into one
-package and the module still earns its place on the dependency argument
-alone.
+package, and the dependency argument alone still justifies the module.
 
 ### What lang holds
 
@@ -490,12 +489,11 @@ ports are not settled. One repository keeps that change to one commit.
 
 ## Unresolved and future work
 
-The port set itself is not settled here. Which roles exist, what each
-returns, and how the catalog orders engines within a fidelity tier need
-their own proposal. This one fixes only which module they live in.
-
-This proposal does not cover the operation catalog: which operations
-exist, how they are named for an agent, and which are visible by default.
+This proposal fixes which module each thing lives in and nothing about
+what it contains. The vocabulary types, the port set and engine selection
+are settled in RFC-0002. The agent-facing tools, their schemas and the
+size budget are settled in RFC-0003. The operation catalogue and the
+write pipeline are settled in RFC-0004.
 
 Extraction of a contract module, and the move to one repository per
 module, are both noted in Alternatives as things that become worth doing

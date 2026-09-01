@@ -38,7 +38,7 @@ each other only where the table says so.
 |---|---|---|
 | `source` | Where code lives: `Language`, `Path`, `Position`, `Span` | stdlib |
 | `sema` | What it means: `Symbol`, `ID`, `Kind`, `Relation`, `RelationKind`, `Unit`, `Ref` | `source` |
-| `trust` | How sure we are: `Fidelity`, `Status`, `Caveat`, `Provenance` | `source` |
+| `trust` | How sure we are: `Fidelity`, `Completeness`, `Status`, `Caveat`, `Provenance` | `source` |
 | `edit` | How it changes: `Operation`, `Family`, `Target`, `Spec`, `Plan`, `Change` | `source`, `sema` |
 | `diag` | What is wrong with it: `Diagnostic`, `Severity`, `Fix` | `source` |
 
