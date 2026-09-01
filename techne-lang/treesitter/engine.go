@@ -69,8 +69,13 @@ func (e *Engine) Close() {
 	}
 }
 
-// Name identifies this adapter in a provenance and a capability report.
-func (*Engine) Name() string { return "treesitter" }
+// Name identifies this engine in a provenance and a capability report.
+//
+// One adapter serves every grammar, so the name carries the language it
+// was built for. Without it five instances would share one name, the
+// catalogue would refuse all but the first, and a provenance would not
+// say which answered.
+func (e *Engine) Name() string { return "treesitter/" + string(e.declared.Language) }
 
 // Language is the one language this engine answers about.
 func (e *Engine) Language() source.Language { return e.declared.Language }

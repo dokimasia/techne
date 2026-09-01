@@ -83,6 +83,13 @@ func Run(t *testing.T, s Suite) {
 
 		assert.Length(t, catalogue.For(t.Context(), s.Declaration.Language, engine.RoleOutline), 1,
 			"a registered module's engine is selectable for the role it serves")
+
+		// One adapter serves every grammar, so an engine's name carries
+		// the language it was built for. Were it constant, a catalogue
+		// holding two languages would refuse the second and a provenance
+		// would not say which answered.
+		assert.Contains(t, e.Name(), string(s.Declaration.Language),
+			"an engine names the language it serves, so instances of one adapter do not collide")
 	})
 
 	t.Run("outline", func(t *testing.T) {

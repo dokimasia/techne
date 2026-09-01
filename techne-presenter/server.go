@@ -78,3 +78,12 @@ func failure(reason string) *mcp.CallToolResult {
 		IsError: true,
 	}
 }
+
+// Serve runs a server over stdio until the context is cancelled or the
+// client disconnects.
+//
+// The transport lives here so a composition root never imports the SDK:
+// which wire a server speaks is this module's business.
+func Serve(ctx context.Context, s *mcp.Server) error {
+	return s.Run(ctx, &mcp.StdioTransport{})
+}
