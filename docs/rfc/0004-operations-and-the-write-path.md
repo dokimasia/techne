@@ -2,13 +2,13 @@
 rfc: 0004
 title: Operations and the write path
 author: Roy Klopper
-status: Draft
+status: Accepted
 created: 2026-09-01
 updated: 2026-09-01
 discussion: none
 supersedes: none
 superseded-by: none
-produces-adr: tbd
+produces-adr: none
 ---
 
 # RFC-0004: Operations and the write path
@@ -369,21 +369,14 @@ the other's work. Locks are cheaper than the failure they prevent.
   a touched file invalidates a plan that would still have applied
   correctly.
 
-## Open questions
-
-1. Does `extract.variable` need `resolved`? In a language with type
-   inference the extracted declaration needs no written type, and a
-   parser might be enough. It is listed at `resolved` because nobody has
-   shown the parser case is safe.
-2. What is the workspace lock for a second process: an advisory lock file
-   in the workspace, or something the caller supplies? An abandoned lock
-   file after a crash is its own problem.
-3. Building the overlay needs every engine to accept one, and only a
-   language whose toolchain has the equivalent of an in-memory file
-   projection can gate a dry run without writing. Where a language cannot,
-   `dry_run` returns the diff with no gate result and says so.
-
 ## Unresolved and future work
+
+Three questions wait for the write path to exist. Whether
+`extract.variable` can be correct on a parser's evidence in a language
+with type inference; whether the second-process lock is a file in the
+workspace or something the caller supplies; and what a dry run reports
+for a language whose toolchain has no in-memory projection to gate
+against.
 
 Applying the edits a language server proposes through a command is not
 proposed. Those edits arrive outside the pipeline and would be the one

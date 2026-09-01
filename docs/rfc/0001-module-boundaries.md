@@ -2,13 +2,13 @@
 rfc: 0001
 title: Module boundaries
 author: Roy Klopper
-status: Draft
+status: Accepted
 created: 2026-09-01
 updated: 2026-09-01
 discussion: none
 supersedes: none
 superseded-by: none
-produces-adr: tbd
+produces-adr: none
 ---
 
 # RFC-0001: Module boundaries
@@ -92,7 +92,7 @@ flowchart BT
     root -->|"Register"| langpy
 ```
 
-### The four rules
+### The five rules
 
 1. `core` imports nothing else in this repository.
 2. `lang` imports `core` and nothing else in this repository.
@@ -146,6 +146,12 @@ linters:
             - go.dokimi.dev/techne/core
             - go.dokimi.dev/techne/lang
 ```
+
+The allow lists above name only what this repository declares. The live
+config also names each module's third-party dependencies, because a
+strict list denies whatever it does not mention: the schema library in
+`core`, the tree-sitter binding in `lang` and the language modules, and
+the MCP SDK in `presenter` alone.
 
 Two details do the work. `list-mode: strict` denies whatever the list
 does not name, so a language module added later is already covered. A

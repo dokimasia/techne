@@ -2,13 +2,13 @@
 rfc: 0005
 title: Turn cost
 author: Roy Klopper
-status: Draft
+status: Accepted
 created: 2026-09-01
 updated: 2026-09-01
 discussion: none
 supersedes: none
 superseded-by: none
-produces-adr: tbd
+produces-adr: none
 ---
 
 # RFC-0005: Turn cost
@@ -206,18 +206,12 @@ thing I just found".
 - Reporting `Spent` on every answer adds a field nobody reads until
   someone is measuring.
 
-## Open questions
-
-1. Is `expand` right as a default-on flag, or should it trigger on a
-   token estimate, expanding only when the expansion is small?
-2. What ranks candidates? Same-package first is obvious. Whether an
-   exported symbol outranks an unexported one, and whether recently
-   edited files matter, is not obvious.
-3. Does mechanism 4 extend past `verify`? A rename that fails on a
-   precondition could carry the refreshed plan, which is either a large
-   saving or a large payload nobody uses.
-
 ## Unresolved and future work
+
+Three questions wait for measurement. Whether `expand` should be
+default-on or trigger on a token estimate; what ranks candidates beyond
+same-package-first; and whether an answer carrying the next call's input
+extends past `verify` to a plan refused on a stale precondition.
 
 Measuring turn counts against a real agent on a real task is not proposed
 here, and every number in this document is a claim until it happens.

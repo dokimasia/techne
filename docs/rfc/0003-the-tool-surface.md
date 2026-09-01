@@ -2,13 +2,13 @@
 rfc: 0003
 title: The tool surface
 author: Roy Klopper
-status: Draft
+status: Accepted
 created: 2026-09-01
 updated: 2026-09-01
 discussion: none
 supersedes: none
 superseded-by: none
-produces-adr: tbd
+produces-adr: none
 ---
 
 # RFC-0003: The tool surface
@@ -293,20 +293,16 @@ projection language.
 - Relative paths mean the workspace root is a server-level setting, and a
   request that spans two workspaces cannot be expressed.
 
-## Open questions
-
-1. What should `max_tokens` be, and what are the per-item costs? Every
-   figure here is an estimate, and the first real agent on a real
-   repository settles all of them.
-2. One server serves one workspace, because relative paths assume one and
-   nothing has asked for more. A caller working across two checkouts runs
-   two servers, and no answer can span them. Whether that is a real
-   limitation depends on whether anyone hits it.
-3. `full` detail carries a snippet, and how much surrounding code a
-   snippet holds is undecided. Too little and the agent asks for the
-   file; too much and the budget drops items that mattered.
-
 ## Unresolved and future work
+
+Every figure in the budget is an estimate: the default ceiling, the
+per-item costs, and how much surrounding code a snippet should carry.
+The first real agent on a real repository settles all of them, and the
+answer reports what it spent so they can be corrected from calls rather
+than argued about.
+
+One server serves one workspace. A caller working across two checkouts
+runs two servers, and no answer spans them. Nothing has asked for more.
 
 Prompts and resources, the other two things an MCP server can offer, are
 not proposed here. A resource per workspace file is an obvious idea and

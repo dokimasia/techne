@@ -2,13 +2,13 @@
 rfc: 0002
 title: The read contract
 author: Roy Klopper
-status: Draft
+status: Accepted
 created: 2026-09-01
 updated: 2026-09-01
 discussion: none
 supersedes: none
 superseded-by: none
-produces-adr: tbd
+produces-adr: ADR-0003
 ---
 
 # RFC-0002: The read contract
@@ -590,13 +590,11 @@ between adapters.
   ID that mentions it. An index has to reindex the unit rather than
   patching entries.
 
-## Open questions
-
-1. `Query.Text` matches names and doc comments with one string. Whether
-   one scorer can serve both without one drowning the other is a question
-   for the first engine that implements it.
-
 ## Unresolved and future work
+
+Whether one scorer can serve both declaration names and doc comments
+without one drowning the other is a question for the first engine that
+implements `Search`.
 
 Three roles from the prototype are not proposed here: reporting what
 units a project is made of, deriving edges a framework's conventions
