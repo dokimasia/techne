@@ -19,7 +19,7 @@ import (
 type outlineOnly struct{}
 
 func (outlineOnly) Name() string                        { return "outline-only" }
-func (outlineOnly) Language() source.Language           { return source.Go }
+func (outlineOnly) Language() source.Language           { return source.Language("go") }
 func (outlineOnly) Fidelity(engine.Role) trust.Fidelity { return trust.Syntactic }
 func (outlineOnly) Cost(engine.Role) engine.Cost        { return engine.CostParse }
 

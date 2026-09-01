@@ -108,15 +108,13 @@ single ordering. Everything else follows from it.
 package source
 
 // Language identifies a language across every request and answer.
+//
+// The type lives in core because core names languages constantly and
+// knows none of them. The values do not: each language module declares
+// its own, so deleting that module removes every mention of the language
+// from the tree. The set is open, and two modules claiming one value are
+// rejected at registration.
 type Language string
-
-const (
-	Go         Language = "go"
-	Python     Language = "python"
-	Java       Language = "java"
-	Rust       Language = "rust"
-	TypeScript Language = "typescript"
-)
 
 // Path is slash-separated and relative to the workspace root, on every
 // platform. Absolute paths never cross a port.

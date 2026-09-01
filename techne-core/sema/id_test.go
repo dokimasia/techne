@@ -18,7 +18,9 @@ func TestID(t *testing.T) {
 
 		t.Run("is language, unit, qualified name and kind", func(t *testing.T) {
 			t.Parallel()
-			got := sema.NewID(source.Go, "./internal/fsx", "Digest", sema.KindFunction)
+			// The language is an example value. A language module owns
+			// its own, and core declares none.
+			got := sema.NewID(source.Language("go"), "./internal/fsx", "Digest", sema.KindFunction)
 			const want sema.ID = "go:./internal/fsx#Digest:function"
 			if got != want {
 				t.Errorf("NewID = %q, want %q", got, want)
@@ -30,8 +32,8 @@ func TestID(t *testing.T) {
 			// An index stores identities and a later process resolves
 			// them. Derived from a byte offset, editing a line above a
 			// declaration would invalidate every entry below it.
-			first := sema.NewID(source.Go, "./core/trust", "Status", sema.KindType)
-			second := sema.NewID(source.Go, "./core/trust", "Status", sema.KindType)
+			first := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindType)
+			second := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindType)
 			if first != second {
 				t.Errorf("one declaration produced %q then %q", first, second)
 			}
@@ -39,8 +41,8 @@ func TestID(t *testing.T) {
 
 		t.Run("separates a type from a function of the same name", func(t *testing.T) {
 			t.Parallel()
-			asType := sema.NewID(source.Go, "./core/trust", "Status", sema.KindType)
-			asFunc := sema.NewID(source.Go, "./core/trust", "Status", sema.KindFunction)
+			asType := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindType)
+			asFunc := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindFunction)
 			if asType == asFunc {
 				t.Errorf("a type and a function both produced %q", asType)
 			}
@@ -48,8 +50,8 @@ func TestID(t *testing.T) {
 
 		t.Run("separates one name in two units", func(t *testing.T) {
 			t.Parallel()
-			inTrust := sema.NewID(source.Go, "./core/trust", "Status", sema.KindType)
-			inGate := sema.NewID(source.Go, "./core/gate", "Status", sema.KindType)
+			inTrust := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindType)
+			inGate := sema.NewID(source.Language("go"), "./core/gate", "Status", sema.KindType)
 			if inTrust == inGate {
 				t.Errorf("two units both produced %q", inTrust)
 			}
@@ -57,8 +59,8 @@ func TestID(t *testing.T) {
 
 		t.Run("separates one name in two languages", func(t *testing.T) {
 			t.Parallel()
-			inGo := sema.NewID(source.Go, "./app", "Handler", sema.KindType)
-			inRust := sema.NewID(source.Rust, "./app", "Handler", sema.KindType)
+			inGo := sema.NewID(source.Language("go"), "./app", "Handler", sema.KindType)
+			inRust := sema.NewID(source.Language("rust"), "./app", "Handler", sema.KindType)
 			if inGo == inRust {
 				t.Errorf("two languages both produced %q", inGo)
 			}

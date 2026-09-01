@@ -23,7 +23,7 @@ func TestDoc(t *testing.T) {
 			// Two engines reading the same declaration from files whose
 			// unrelated lines differ must agree on its identity, or an
 			// index cannot be shared between them.
-			id := sema.NewID(source.Go, "./core/sema", "Symbol", sema.KindType)
+			id := sema.NewID(source.Language("go"), "./core/sema", "Symbol", sema.KindType)
 			early := sema.Symbol{
 				ID:   id,
 				Span: source.Span{Path: "core/sema/symbol.go", Start: source.Position{Offset: 100, Line: 8}},

@@ -23,13 +23,13 @@ func TestDoc(t *testing.T) {
 
 		t.Run("into an answer that states its own evidence", func(t *testing.T) {
 			t.Parallel()
-			id := sema.NewID(source.Go, "./core/trust", "Status", sema.KindType)
+			id := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindType)
 			answered := engine.Answer[sema.Symbol]{
 				Items: []sema.Symbol{{
 					ID:       id,
 					Name:     "Status",
 					Kind:     sema.KindType,
-					Language: source.Go,
+					Language: source.Language("go"),
 					Span:     source.Span{Path: "core/trust/status.go"},
 					Exported: true,
 				}},

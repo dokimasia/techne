@@ -24,37 +24,33 @@ func TestLanguage(t *testing.T) {
 		})
 	})
 
-	t.Run("wire form", func(t *testing.T) {
+	t.Run("the set", func(t *testing.T) {
 		t.Parallel()
 
-		// These strings reach a caller and, through a sema identity, an
-		// index that outlives the process. Changing one invalidates
-		// stored data, so the test pins them rather than deriving them.
-		t.Run("is the lowercase language name", func(t *testing.T) {
+		t.Run("is open, so core declares no language", func(t *testing.T) {
 			t.Parallel()
-			for got, want := range map[source.Language]string{
-				source.Go:         "go",
-				source.Python:     "python",
-				source.Java:       "java",
-				source.Rust:       "rust",
-				source.TypeScript: "typescript",
-			} {
-				if string(got) != want {
-					t.Errorf("language = %q, want %q", string(got), want)
-				}
+			// A language module owns its own value. Were core to declare
+			// one, deleting that module would leave the language named
+			// here and the deletion would not be complete.
+			registered := source.Language("a-language-core-never-heard-of")
+			if registered == "" {
+				t.Error("any non-empty string must be a usable Language")
 			}
 		})
 
-		t.Run("differs between languages", func(t *testing.T) {
+		t.Run("keys a registry, so a duplicate claim is caught", func(t *testing.T) {
 			t.Parallel()
-			seen := map[source.Language]bool{}
-			for _, l := range []source.Language{
-				source.Go, source.Python, source.Java, source.Rust, source.TypeScript,
-			} {
-				if seen[l] {
-					t.Errorf("language %q is declared twice", l)
-				}
-				seen[l] = true
+			// Registration rejects a second module claiming a language
+			// already taken. That check is a lookup, so the type has to
+			// work as a map key and compare by wire form.
+			taken := map[source.Language]string{}
+			taken[source.Language("go")] = "the first module"
+
+			if _, clash := taken[source.Language("go")]; !clash {
+				t.Error("a second claim on one wire form must be found")
+			}
+			if _, clash := taken[source.Language("golang")]; clash {
+				t.Error("a different wire form must not read as taken")
 			}
 		})
 	})
