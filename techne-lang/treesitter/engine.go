@@ -4,8 +4,10 @@
 package treesitter
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
+	"strings"
 
 	ts "github.com/tree-sitter/go-tree-sitter"
 	"go.dokimi.dev/techne/core/engine"
@@ -29,6 +31,10 @@ type Engine struct {
 	grammar  Grammar
 	tags     *ts.Query
 }
+
+// ErrUnknownCapture reports a query naming a definition capture the
+// vocabulary does not carry.
+var ErrUnknownCapture = errors.New("treesitter: unknown definition capture")
 
 // New compiles a grammar's queries and returns the engine serving them.
 //
@@ -57,6 +63,21 @@ func New(fsys fs.FS, d lang.Declaration, g Grammar) (*Engine, error) {
 	q, qerr := ts.NewQuery(g.Language, g.Tags)
 	if qerr != nil {
 		return nil, fmt.Errorf("treesitter: %q tags query: %w", d.Language, *qerr)
+	}
+	// A query naming a definition capture the vocabulary does not carry
+	// would match and then be dropped, so the pattern would find nothing
+	// and say nothing. That is the hardest failure to notice in a system
+	// whose job includes reporting that it found nothing, so it is
+	// refused here instead.
+	for _, name := range q.CaptureNames() {
+		if !strings.HasPrefix(name, DefinitionPrefix) {
+			continue
+		}
+		if _, known := KindOf(Capture(name)); !known {
+			q.Close()
+			return nil, fmt.Errorf("%w: %q captures @%s, which no kind carries",
+				ErrUnknownCapture, d.Language, name)
+		}
 	}
 	return &Engine{fsys: fsys, declared: d, grammar: g, tags: q}, nil
 }

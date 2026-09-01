@@ -173,6 +173,11 @@ linters:
       # fieldalignment is noise outside hot-path structs.
       - linters: [govet]
         text: "fieldalignment:"
+      # A conformance fixture is another language's source rather than
+      # prose. Ruby closes every nested block with `end`, so `end end` is
+      # the language and not a typo.
+      - linters: [dupword]
+        path: techne-lang-.*/doc_test\.go
 
 formatters:
   enable:

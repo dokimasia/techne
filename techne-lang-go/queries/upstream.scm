@@ -1,7 +1,3 @@
-;; Vendored verbatim from tree-sitter-go v0.25.0.
-;; The engine follows this convention rather than asking a module to
-;; rewrite its query, so this file is upstream's and not ours to edit.
-
 (
   (comment)* @doc
   .

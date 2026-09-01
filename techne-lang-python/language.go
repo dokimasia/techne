@@ -20,8 +20,15 @@ import (
 // changing it invalidates stored data.
 const Language source.Language = "python"
 
-//go:embed queries/tags.scm
-var tagsQuery string
+// Upstream's query is vendored for diffing but not compiled in, which
+// is the exception rather than the rule here. It tags every module-level
+// assignment @definition.constant, and Python has no constant: what it
+// calls one is a variable that nothing reassigns by convention. Keeping
+// it would report `registry = {}` as a constant, which CPython's own
+// symbol table disagrees with.
+
+//go:embed queries/extends.scm
+var extendsQuery string
 
 // Declaration states the facts about python that hold whichever
 // engine serves it.
@@ -30,7 +37,15 @@ func Declaration() lang.Declaration {
 		Language:   Language,
 		Extensions: []string{".py", ".pyi"},
 		Manifests:  []string{"pyproject.toml", "setup.py"},
-		Comment:    lang.CommentStyle{Line: "# ", Above: false},
+		Comment: lang.CommentStyle{
+			Line: "# ",
+			Doc: []lang.DocStyle{
+				{Open: `"""`, Close: `"""`, Inside: true},
+				{Open: `'''`, Close: `'''`, Inside: true},
+				{Open: `r"""`, Close: `"""`, Inside: true},
+				{Open: `r'''`, Close: `'''`, Inside: true},
+			},
+		},
 		IsTest:     IsTest,
 		Namespace:  Namespace,
 		Visibility: Visibility,
@@ -42,7 +57,7 @@ func Declaration() lang.Declaration {
 func Grammar() treesitter.Grammar {
 	return treesitter.Grammar{
 		Language: ts.NewLanguage(binding.Language()),
-		Tags:     tagsQuery,
+		Tags:     extendsQuery,
 	}
 }
 

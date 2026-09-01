@@ -1,10 +1,3 @@
-;; Vendored verbatim from tree-sitter-javascript v0.25.0.
-;;
-;; The TypeScript grammar inherits the JavaScript one, and its own
-;; tags query carries only what TypeScript adds. Without this file a
-;; plain class or function declaration is captured by nothing, and an
-;; outline returns interfaces alone.
-
 (
   (comment)* @doc
   .

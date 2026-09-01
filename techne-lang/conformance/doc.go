@@ -12,21 +12,42 @@
 //
 //   - The declaration registers, and every extension it claims routes
 //     back to it.
-//   - The tags query compiles, so a mistake in a module stops startup
-//     rather than returning no results at run time.
+//   - The tags query compiles, and naming a capture no kind carries is
+//     refused, so a mistake in a module stops startup rather than
+//     returning no results at run time.
 //   - Outlining the supplied source finds what the module says it
 //     declares, and every symbol found is well formed.
+//   - The declarations carry the documentation, annotations and
+//     keywords the module names, in the forms that language writes
+//     them.
 //   - The answer states syntactic evidence over a total scope, and
 //     carries the caveat that a name matched across files is
 //     coincidence.
 //   - Two identical requests answer identically.
 //
+// # Exact, in both directions
+//
+// [Suite.Declares] is the whole outline, compared as a set: a symbol
+// found and not listed fails as surely as one listed and not found. It
+// is exact because the alternative proved nothing. Checking only that
+// listed symbols appear passes a query that finds a quarter of its
+// language, which is what every query here once did. A fixture must
+// therefore name every declaration form its language has.
+//
+// [Declared.Doc] is exact the same way for a module whose fixture
+// documents anything: a comment read as documentation that the module
+// did not name fails as surely as one it named and the parser did not
+// find. That is what holds a language to the forms its own documentation
+// tool reads, rather than to every comment above a declaration.
+//
 // # What it does not check
 //
-// It does not check that a grammar finds every declaration a language
-// can express. The tags queries are vendored from upstream and capture
-// what upstream chose to capture; a module states what it expects and
-// the suite holds it to that.
+// It cannot say whether a query is right, only that it has not changed.
+// The same person writes the query and the fixture, so neither knows
+// about the form neither remembered. Establishing that a query finds
+// what its language has takes a corpus nobody wrote for this tool and
+// that language's own compiler, which is a measurement rather than a
+// test.
 //
 // # Dependency position
 //

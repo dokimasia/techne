@@ -32,10 +32,13 @@ type Declaration struct {
 	// "go.mod" or "pyproject.toml".
 	Manifests []string
 
-	// Comment describes how a documentation comment attaches to a
-	// declaration. No grammar states it and the document operations need
-	// it.
+	// Comment is how the language writes comments and documentation.
 	Comment CommentStyle
+
+	// Blank names the identifiers that bind nothing, so a declaration
+	// using one is not reported. Go, Rust and C# spell it "_"; a
+	// language where "_" is an ordinary name leaves this empty.
+	Blank map[string]bool
 
 	// IsTest reports whether a path holds tests rather than shipped code.
 	IsTest func(path string) bool
@@ -48,21 +51,10 @@ type Declaration struct {
 	// unit that declares it, and returns [sema.VisibilityUnknown] where
 	// the name does not say.
 	//
-	// Go and Python spell visibility in the name, so this answers for
-	// them. Java, Rust and TypeScript spell it as a modifier or a
-	// keyword that a name carries nothing of, so those return unknown
-	// rather than reporting every declaration as public.
+	// Go, Python and Ruby spell visibility in the name or by
+	// convention, so this answers for them. The rest spell it as a
+	// modifier, which a name carries nothing of, so those return unknown
+	// rather than reporting every declaration as public. The modifier is
+	// still in [go.dokimi.dev/techne/core/sema.Symbol.Modifiers].
 	Visibility func(name string) sema.Visibility
-}
-
-// CommentStyle describes how a documentation comment attaches to a
-// declaration.
-type CommentStyle struct {
-	// Line prefixes each line of a comment block, including any trailing
-	// space: "// " for Go, "# " for Python.
-	Line string
-
-	// Above reports whether the comment sits above the declaration
-	// rather than inside it.
-	Above bool
 }

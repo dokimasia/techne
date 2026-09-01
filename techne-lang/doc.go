@@ -7,11 +7,21 @@
 // # Facts about a language, not about a grammar
 //
 // [Declaration] holds what stays true whichever engine serves the
-// language: which suffixes select it, where its project roots are, how a
-// documentation comment attaches, which files hold tests, how a path
-// becomes a namespace, and what makes a name visible outside its unit. A
-// language served only by a language server states all of it without
-// constructing a parser it never uses.
+// language: which suffixes select it, where its project roots are, how
+// it writes comments and documentation, which identifiers bind nothing,
+// which files hold tests, how a path becomes a namespace, and what makes
+// a name visible outside its unit. A language served only by a language
+// server states all of it without constructing a parser it never uses.
+//
+// # Documentation has more than one form
+//
+// [CommentStyle.Doc] is a list rather than a pair of fields, because a
+// language has several documentation forms and they are not
+// interchangeable. Rust has four, Java and C# two each, and C whatever
+// Doxygen reads. One token does not mean one thing across languages
+// either: /// is documentation in Java, Rust, C and C#, and a compiler
+// directive in TypeScript. [CommentStyle.Documents] is the form to
+// write; [CommentStyle.Documentation] recognises any of them.
 //
 // # Registration is a call, not an import
 //

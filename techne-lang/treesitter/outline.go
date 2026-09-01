@@ -99,36 +99,125 @@ func (e *Engine) declarations(p source.Path, content []byte) ([]sema.Symbol, err
 	names := e.tags.CaptureNames()
 
 	var out []sema.Symbol
+	at := map[int]int{}
+	walk := tree.RootNode().Walk()
+	defer walk.Close()
+
 	matches := cursor.Matches(e.tags, tree.RootNode(), content)
 	for match := matches.Next(); match != nil; match = matches.Next() {
-		kind, named, span, ok := read(match, names, p, content)
+		kind, node, named, span, ok := read(match, names, p)
 		if !ok {
 			continue
 		}
-		out = append(out, sema.Symbol{
-			ID:         sema.NewID(e.declared.Language, unit, named, kind),
-			Name:       named,
-			Kind:       kind,
-			Language:   e.declared.Language,
-			Span:       span,
-			Visibility: e.declared.Visibility(named),
-			Snippet:    snippetOf(content, span),
-		})
+
+		for _, one := range declared(node, named, walk, content) {
+			one.text = unquote(one.text)
+			if e.declared.Blank[one.text] {
+				continue
+			}
+			// One declaration can match a general pattern and a specific
+			// one. Both name the same identifier, so where the name sits
+			// is what tells them apart from two declarations that happen
+			// to share a name.
+			if seen, already := at[one.at]; already {
+				if Outranks(kind, out[seen].Kind) {
+					out[seen].Kind = kind
+					out[seen].ID = sema.NewID(e.declared.Language, unit, one.text, kind)
+				}
+				continue
+			}
+
+			marks := annotations(node, content, p)
+			if kind == sema.KindField {
+				marks = append(marks, tags(node, content, p)...)
+			}
+
+			at[one.at] = len(out)
+			out = append(out, sema.Symbol{
+				ID:          sema.NewID(e.declared.Language, unit, one.text, kind),
+				Name:        one.text,
+				Kind:        kind,
+				Language:    e.declared.Language,
+				Span:        span,
+				Visibility:  e.declared.Visibility(one.text),
+				Modifiers:   modifiers(node, content),
+				Annotations: marks,
+				Doc:         documentation(node, content, e.declared.Comment),
+				Snippet:     snippetOf(content, span),
+			})
+		}
 	}
+	Parents(out)
 	return out, nil
 }
 
-// read pulls the kind, the name and the span out of one match, and
-// reports whether the match declared a symbol at all.
+// unquote strips the quotes from a name a grammar gives as a string
+// literal. An import names its target that way in most languages, and
+// the quotes are punctuation rather than part of the name.
+func unquote(name string) string {
+	if len(name) >= 2 {
+		if first, last := name[0], name[len(name)-1]; first == last {
+			switch first {
+			case '"', '\'', '`':
+				return name[1 : len(name)-1]
+			}
+		}
+	}
+	return name
+}
+
+// identifier is one name a declaration binds, and where it sits.
+type identifier struct {
+	text string
+	at   int
+}
+
+// declared returns every name one declaration binds.
+//
+// A declaring node that names itself is believed over the capture, for
+// two reasons. Go writes `const a, b = 1, 2` as one spec carrying two
+// name fields, and a pattern binds a capture once, so the second name is
+// unreachable from the query. And an embedded field has no name field at
+// all: `struct { FileHeader }` declares FileHeader by its type, so the
+// query captures the type and this leaves it alone.
+//
+// The capture is the fallback for the many patterns whose name is not a
+// name field of the declaring node, as Python's assignment writes it
+// under left and Java's field declaration under declarator.
+func declared(node, named *ts.Node, walk *ts.TreeCursor, content []byte) []identifier {
+	if fields := node.ChildrenByFieldName(string(FieldNameName), walk); len(fields) > 1 {
+		out := make([]identifier, 0, len(fields))
+		for _, field := range fields {
+			// ChildrenByFieldName hands back the separators between the
+			// fields as well as the fields, so `a, b` arrives as three
+			// nodes. Only the named ones declare anything.
+			if !field.IsNamed() {
+				continue
+			}
+			out = append(out, identifier{
+				text: field.Utf8Text(content),
+				at:   int(field.StartByte()),
+			})
+		}
+		return out
+	}
+	return []identifier{{text: named.Utf8Text(content), at: int(named.StartByte())}}
+}
+
+// read pulls one match apart into the kind it declares, the node
+// declaring it, the node naming it, and the span it covers.
+//
+// It returns the two nodes rather than the name alone because a
+// declaration can bind more names than one pattern can capture.
 func read(
 	match *ts.QueryMatch,
 	names []string,
 	p source.Path,
-	content []byte,
-) (sema.Kind, string, source.Span, bool) {
+) (sema.Kind, *ts.Node, *ts.Node, source.Span, bool) {
 	var (
 		kind    sema.Kind
-		named   string
+		node    *ts.Node
+		named   *ts.Node
 		span    source.Span
 		declare bool
 	)
@@ -139,18 +228,23 @@ func read(
 		}
 		name := Capture(names[index])
 		if name == Name {
-			named = capture.Node.Utf8Text(content)
+			// The first name is the one belonging to this declaration. A
+			// later one comes from a nested declaration the same match
+			// reached, as a union's body reaches its fields.
+			if named == nil {
+				named = &capture.Node
+			}
 			continue
 		}
-		if k, declared := KindOf(name); declared {
-			kind, declare = k, true
+		if k, ok := KindOf(name); ok && !declare {
+			kind, node, declare = k, &capture.Node, true
 			span = spanOf(p, capture.Node)
 		}
 	}
-	if !declare || named == "" {
-		return 0, "", source.Span{}, false
+	if !declare || named == nil {
+		return 0, nil, nil, source.Span{}, false
 	}
-	return kind, named, span, true
+	return kind, node, named, span, true
 }
 
 // snippetOf returns the source text a span covers.

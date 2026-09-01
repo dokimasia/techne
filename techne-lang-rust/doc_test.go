@@ -12,6 +12,10 @@ import (
 )
 
 // TestDoc runs the suite every language module runs.
+//
+// The fixture carries one of every declaration form Rust has,
+// because the suite compares the outline against it as a whole set: a
+// form left out here is a form nothing checks.
 func TestDoc(t *testing.T) {
 	t.Parallel()
 
@@ -20,30 +24,82 @@ func TestDoc(t *testing.T) {
 		Grammar:     rust.Grammar(),
 		Unclaimed:   "notes.md",
 		Files: map[string]string{
-			"src/service.rs": `pub mod store {
-    pub trait Readable {
-        fn get(&self, id: &str) -> i32;
-    }
+			"pkg/store.rs": `use std::io::Read;
 
-    pub struct Store {
-        n: i32,
-    }
+pub const LIMIT: i32 = 10;
+pub static REGISTRY: i32 = 0;
 
-    impl Store {
-        pub fn new() -> Self { Store { n: 1 } }
-    }
+// A note to the next reader, which rustdoc does not read.
+pub type Id = String;
 
-    fn helper() -> i32 { 1 }
+pub union Bits {
+    raw: i32,
+}
+
+/// Store holds items by name.
+#[derive(Debug)]
+pub struct Store {
+    size: i32,
+}
+
+pub enum Colour {
+    Red,
+    Green,
+}
+
+pub trait Readable {
+    fn get(&self) -> i32;
+}
+
+impl Store {
+    pub fn new(start: i32) -> Self {
+        let value = start;
+        Store { size: value }
+    }
+}
+
+/**
+ * Returns its argument.
+ */
+pub fn helper<T>(v: T) -> T {
+    v
+}
+
+pub mod inner {
+    pub const NESTED: i32 = 1;
 }
 `,
 		},
-		// Rust spells visibility with pub, a modifier the tags query
-		// does not capture, so visibility is unknown throughout.
 		Declares: []conformance.Declared{
-			{Name: "store", Kind: sema.KindModule, Visibility: sema.VisibilityUnknown},
-			{Name: "Readable", Kind: sema.KindInterface, Visibility: sema.VisibilityUnknown},
-			{Name: "Store", Kind: sema.KindType, Visibility: sema.VisibilityUnknown},
-			{Name: "helper", Kind: sema.KindFunction, Visibility: sema.VisibilityUnknown},
+			{Name: "Bits", Kind: sema.KindUnion},
+			{Name: "Colour", Kind: sema.KindEnum},
+			{Name: "Green", Kind: sema.KindEnumMember},
+			{Name: "Id", Kind: sema.KindType},
+			{Name: "LIMIT", Kind: sema.KindConstant, Modifiers: []string{"pub", "const"}},
+			{Name: "NESTED", Kind: sema.KindConstant},
+			{Name: "REGISTRY", Kind: sema.KindVariable},
+			{Name: "Read", Kind: sema.KindImport},
+			{Name: "Readable", Kind: sema.KindInterface},
+			{Name: "Red", Kind: sema.KindEnumMember},
+			{
+				Name: "Store", Kind: sema.KindStruct,
+				Doc:         "Store holds items by name.",
+				Annotations: []string{"derive"},
+				Modifiers:   []string{"pub"},
+			},
+			{Name: "T", Kind: sema.KindTypeParameter},
+			{Name: "get", Kind: sema.KindMethod},
+			{
+				Name: "helper", Kind: sema.KindFunction,
+				Doc: "Returns its argument.",
+			},
+			{Name: "inner", Kind: sema.KindModule},
+			{Name: "new", Kind: sema.KindMethod},
+			{Name: "raw", Kind: sema.KindField},
+			{Name: "size", Kind: sema.KindField},
+			{Name: "start", Kind: sema.KindParameter},
+			{Name: "v", Kind: sema.KindParameter},
+			{Name: "value", Kind: sema.KindVariable},
 		},
 	})
 }

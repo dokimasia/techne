@@ -58,7 +58,7 @@ func TestApp(t *testing.T) {
 
 		t.Run("registers every language techne ships with", func(t *testing.T) {
 			t.Parallel()
-			assert.Length(t, built(t).Languages, 5,
+			assert.Length(t, built(t).Languages, 10,
 				"a language is registered by an explicit call, so the set is what this root chose")
 		})
 

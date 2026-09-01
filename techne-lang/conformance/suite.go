@@ -33,10 +33,16 @@ type Suite struct {
 	// declaration claims.
 	Files map[string]string
 
-	// Declares names what outlining Files must find. The suite fails
-	// when one is missing; it does not fail on a symbol found that is
-	// not listed, because a grammar may capture more than a module
-	// chooses to enumerate.
+	// Declares is the whole outline of Files, and is compared as a set.
+	// A symbol found and not listed fails the suite exactly as one
+	// listed and not found does.
+	//
+	// It is exact because the alternative proved nothing. Checking only
+	// that listed symbols appear passes a query that finds a quarter of
+	// the language, which is what every query here did: Go reported no
+	// constant and no interface, Python no method, and eight of the
+	// fourteen kinds were produced by nothing at all. A fixture must
+	// therefore name every declaration form its language has.
 	Declares []Declared
 
 	// Unclaimed is a path whose extension the language does not claim.
@@ -46,6 +52,10 @@ type Suite struct {
 }
 
 // Declared is one symbol a module says its source declares.
+//
+// Name, Kind and Visibility are compared as a whole set. The rest are
+// checked only where the module states them, because a fixture cannot
+// exercise every declaration's metadata without becoming unreadable.
 type Declared struct {
 	Name string
 	Kind sema.Kind
@@ -53,6 +63,13 @@ type Declared struct {
 	// language spelling visibility as a modifier expects
 	// [sema.VisibilityUnknown], because a name carries nothing of it.
 	Visibility sema.Visibility
+	// Doc is the documentation the fixture writes on this declaration,
+	// in whichever form the language's own documentation tool reads.
+	Doc string
+	// Annotations are the annotation names the declaration carries.
+	Annotations []string
+	// Modifiers are the keywords the declaration carries.
+	Modifiers []string
 }
 
 // Run applies every check to one language module.
@@ -97,14 +114,11 @@ func Run(t *testing.T, s Suite) {
 		e := build(t, fsys, s)
 		got := outline(t, e, ".")
 
-		t.Run("finds what the module declares", func(t *testing.T) {
+		t.Run("finds exactly what the module declares", func(t *testing.T) {
 			t.Parallel()
-			for _, want := range s.Declares {
-				assert.True(t, held(got.Items, want), fmt.Sprintf(
-					"the vendored tags query captures %s %s (visibility %s), "+
-						"which the module says it declares; found %s",
-					want.Kind, want.Name, want.Visibility, summarise(got.Items)))
-			}
+			assert.Equal(t, summarise(got.Items), expected(s.Declares),
+				"the fixture is the whole outline: a declaration the query "+
+					"misses and a symbol it invents are the same failure")
 		})
 
 		t.Run("returns only well-formed symbols", func(t *testing.T) {
@@ -162,6 +176,48 @@ func Run(t *testing.T, s Suite) {
 			assert.False(t, published.Provenance.SupportsNegativeClaim(),
 				"a parser's empty answer means none were found, never that there are none")
 			assert.True(t, published.Status.Answered(), "an engine ran and returned what it found")
+		})
+
+		t.Run("carries the metadata the module names", func(t *testing.T) {
+			t.Parallel()
+			for _, want := range s.Declares {
+				if len(want.Annotations) == 0 && len(want.Modifiers) == 0 {
+					continue
+				}
+				// A name and kind can repeat: an interface and the class
+				// implementing it both declare get, and only one carries
+				// the annotation. The check is that some declaration of
+				// that name and kind carries it.
+				matching := every(got.Items, want)
+				if len(matching) == 0 {
+					continue // the exact-set check already reports this
+				}
+				for _, name := range want.Annotations {
+					assert.True(t, anyAnnotated(matching, name),
+						"metadata decides what a tool rewriting the declaration must reproduce, "+
+							"so it is read rather than dropped")
+				}
+				for _, keyword := range want.Modifiers {
+					assert.True(t, anyModified(matching, keyword),
+						"for most of these languages the keywords are the only place "+
+							"visibility is written")
+				}
+			}
+		})
+
+		t.Run("reads the documentation the language writes", func(t *testing.T) {
+			t.Parallel()
+			if !documents(s.Declares) {
+				t.Skip("this module's fixture writes no documentation")
+			}
+			// Exact, like the outline. A comment read as documentation
+			// that the module did not name fails as surely as one it
+			// named and the parser did not find, which is the whole
+			// reason a language states which of its comment forms
+			// document and which do not.
+			assert.Equal(t, documented(got.Items), expectedDocs(s.Declares),
+				"a language states the forms its own documentation tool reads, "+
+					"and a comment written in any other form is not documentation")
 		})
 
 		t.Run("answers two identical requests identically", func(t *testing.T) {
@@ -229,6 +285,20 @@ func Run(t *testing.T, s Suite) {
 		})
 	})
 
+	t.Run("refuses a query naming a capture no kind carries", func(t *testing.T) {
+		t.Parallel()
+		// A capture the vocabulary does not know would match and then be
+		// dropped, so the pattern would find nothing and say nothing.
+		// That has to fail at startup, because an engine that silently
+		// finds nothing is the hardest failure to notice in a system
+		// whose job includes reporting that it found nothing.
+		spoiled := s.Grammar
+		spoiled.Tags = s.Grammar.Tags + "\n((_) @definition.no_such_shape)"
+		_, err := treesitter.New(fsys, s.Declaration, spoiled)
+		assert.ErrorIs(t, err, treesitter.ErrUnknownCapture,
+			"a mistyped capture must stop startup rather than produce an engine that finds nothing")
+	})
+
 	t.Run("a file the language does not claim", func(t *testing.T) {
 		t.Parallel()
 		if s.Unclaimed == "" {
@@ -258,18 +328,101 @@ func outline(t *testing.T, e *treesitter.Engine, scope source.Path) engine.Resul
 	return got
 }
 
-// summarise renders what the outline found, so a missing declaration
-// fails with the alternatives beside it rather than only its own name.
+// summarise renders what the outline found, sorted, so a mismatch fails
+// with both whole sets beside each other.
 func summarise(found []sema.Symbol) string {
 	seen := make([]string, 0, len(found))
 	for _, sym := range found {
 		seen = append(seen, fmt.Sprintf("%s %s/%s", sym.Kind, sym.Name, sym.Visibility))
 	}
-	sort.Strings(seen)
-	return "[" + strings.Join(seen, ", ") + "]"
+	return list(seen)
 }
 
-// held reports whether the outline found one expected declaration.
+// expected renders what the module says its fixture declares, in the
+// form summarise produces.
+func expected(want []Declared) string {
+	named := make([]string, 0, len(want))
+	for _, d := range want {
+		named = append(named, fmt.Sprintf("%s %s/%s", d.Kind, d.Name, d.Visibility))
+	}
+	return list(named)
+}
+
+func list(of []string) string {
+	sort.Strings(of)
+	return "[" + strings.Join(of, ", ") + "]"
+}
+
+// every returns each symbol matching a declared name and kind.
+func every(in []sema.Symbol, want Declared) []sema.Symbol {
+	var out []sema.Symbol
+	for _, sym := range in {
+		if sym.Name == want.Name && sym.Kind == want.Kind {
+			out = append(out, sym)
+		}
+	}
+	return out
+}
+
+func anyAnnotated(in []sema.Symbol, name string) bool {
+	for _, sym := range in {
+		if sym.Annotated(name) {
+			return true
+		}
+	}
+	return false
+}
+
+func anyModified(in []sema.Symbol, keyword string) bool {
+	for _, sym := range in {
+		if sym.Modified(keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+// documents reports whether a fixture writes any documentation, so a
+// module that exercises none is skipped rather than held to an empty
+// expectation it never stated.
+func documents(want []Declared) bool {
+	for _, d := range want {
+		if d.Doc != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// documented renders every declaration the parser attached
+// documentation to, sorted, so a mismatch shows both whole sets beside
+// each other.
+func documented(found []sema.Symbol) string {
+	seen := make([]string, 0, len(found))
+	for _, sym := range found {
+		if sym.Doc == "" {
+			continue
+		}
+		seen = append(seen, fmt.Sprintf("%s %s: %q", sym.Kind, sym.Name, sym.Doc))
+	}
+	return list(seen)
+}
+
+// expectedDocs renders what the module says its fixture documents, in
+// the form documented produces.
+func expectedDocs(want []Declared) string {
+	named := make([]string, 0, len(want))
+	for _, d := range want {
+		if d.Doc == "" {
+			continue
+		}
+		named = append(named, fmt.Sprintf("%s %s: %q", d.Kind, d.Name, d.Doc))
+	}
+	return list(named)
+}
+
+// held reports whether a search found one expected declaration. A search
+// is asked for one name, so unlike an outline it is a subset check.
 func held(found []sema.Symbol, want Declared) bool {
 	for _, sym := range found {
 		if sym.Name == want.Name && sym.Kind == want.Kind && sym.Visibility == want.Visibility {

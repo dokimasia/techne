@@ -7,10 +7,15 @@ use (
 	./
 	./techne-core
 	./techne-lang
+	./techne-lang-c
+	./techne-lang-csharp
 	./techne-lang-go
 	./techne-lang-java
+	./techne-lang-javascript
 	./techne-lang-python
+	./techne-lang-ruby
 	./techne-lang-rust
+	./techne-lang-scala
 	./techne-lang-typescript
 	./techne-presenter
 )

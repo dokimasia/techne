@@ -26,25 +26,21 @@ func TestDeclaration(t *testing.T) {
 		})
 	})
 
-	t.Run("CommentStyle", func(t *testing.T) {
+	t.Run("Blank", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("carries the trailing space in the prefix", func(t *testing.T) {
+		t.Run("is empty where every identifier binds a name", func(t *testing.T) {
 			t.Parallel()
-			// The prefix is written verbatim, so a language that wants
-			// "// text" rather than "//text" says so here rather than in
-			// whatever writes the comment.
-			style := lang.CommentStyle{Line: "// ", Above: true}
-			assert.Equal(t, style.Line, "// ",
-				"the prefix is written verbatim, so a language states its own spacing here")
+			var unset lang.Declaration
+			assert.False(t, unset.Blank["_"],
+				"a language where _ is an ordinary name must not have its declarations dropped")
 		})
 
-		t.Run("says whether the comment sits above the declaration", func(t *testing.T) {
+		t.Run("names the identifiers that bind nothing", func(t *testing.T) {
 			t.Parallel()
-			// Python's convention puts it inside; Go's puts it above.
-			// One boolean covers both, and the zero value is inside.
-			var inside lang.CommentStyle
-			assert.False(t, inside.Above, "one boolean covers both conventions, and the zero value is inside")
+			d := lang.Declaration{Blank: map[string]bool{"_": true}}
+			assert.True(t, d.Blank["_"],
+				"a declaration whose name binds nothing is not a symbol a caller can act on")
 		})
 	})
 }

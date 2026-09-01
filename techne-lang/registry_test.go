@@ -24,7 +24,7 @@ func declared() lang.Declaration {
 		Language:   fixture,
 		Extensions: []string{".fx"},
 		Manifests:  []string{"fixture.toml"},
-		Comment:    lang.CommentStyle{Line: "// ", Above: true},
+		Comment:    lang.CommentStyle{Line: "// ", Doc: []lang.DocStyle{{Open: "//"}}},
 		IsTest:     func(p string) bool { return strings.HasSuffix(p, "_test.fx") },
 		Namespace:  func(p string) string { return strings.TrimSuffix(p, ".fx") },
 		Visibility: visibility,

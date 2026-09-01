@@ -12,6 +12,10 @@ import (
 )
 
 // TestDoc runs the suite every language module runs.
+//
+// The fixture carries one of every declaration form TypeScript has,
+// because the suite compares the outline against it as a whole set: a
+// form left out here is a form nothing checks.
 func TestDoc(t *testing.T) {
 	t.Parallel()
 
@@ -20,26 +24,68 @@ func TestDoc(t *testing.T) {
 		Grammar:     typescript.Grammar(),
 		Unclaimed:   "notes.md",
 		Files: map[string]string{
-			"src/service.ts": `export interface Readable {
-  get(id: string): number;
+			"pkg/store.ts": `import { Injectable } from "@nestjs/common";
+
+export const LIMIT = 10;
+let counter = 0;
+
+/// <reference types="node" />
+export type Id = string;
+
+export interface Readable {
+  size: number;
+  get(): number;
 }
 
+export enum Colour {
+  Red,
+  Green,
+}
+
+/**
+ * Store holds items by name.
+ */
+@Injectable()
 export class Store implements Readable {
-  get(id: string): number { return 1; }
+  size: number = 0;
+
+  constructor(private readonly start: number) {}
+
+  get(): number {
+    return this.size;
+  }
 }
 
-export function make(): Store { return new Store(); }
-
-function helper(): number { return 1; }
+export function make<T>(value: T): T {
+  return value;
+}
 `,
 		},
-		// TypeScript spells visibility with an export keyword, which the
-		// tags query does not capture, so visibility is unknown.
 		Declares: []conformance.Declared{
-			{Name: "Readable", Kind: sema.KindInterface, Visibility: sema.VisibilityUnknown},
-			{Name: "Store", Kind: sema.KindType, Visibility: sema.VisibilityUnknown},
-			{Name: "make", Kind: sema.KindFunction, Visibility: sema.VisibilityUnknown},
-			{Name: "helper", Kind: sema.KindFunction, Visibility: sema.VisibilityUnknown},
+			{Name: "@nestjs/common", Kind: sema.KindImport},
+			{Name: "Colour", Kind: sema.KindEnum},
+			{Name: "Green", Kind: sema.KindEnumMember},
+			{Name: "Id", Kind: sema.KindType},
+			{Name: "Injectable", Kind: sema.KindImport},
+			{Name: "LIMIT", Kind: sema.KindConstant},
+			{Name: "Readable", Kind: sema.KindInterface},
+			{Name: "Red", Kind: sema.KindEnumMember},
+			{
+				Name: "Store", Kind: sema.KindStruct,
+				Doc:         "Store holds items by name.",
+				Annotations: []string{"Injectable"},
+				Modifiers:   []string{"export"},
+			},
+			{Name: "T", Kind: sema.KindTypeParameter},
+			{Name: "constructor", Kind: sema.KindConstructor},
+			{Name: "counter", Kind: sema.KindVariable},
+			{Name: "get", Kind: sema.KindMethod},
+			{Name: "get", Kind: sema.KindMethod},
+			{Name: "make", Kind: sema.KindFunction},
+			{Name: "size", Kind: sema.KindField},
+			{Name: "size", Kind: sema.KindField},
+			{Name: "start", Kind: sema.KindField, Modifiers: []string{"private", "readonly"}},
+			{Name: "value", Kind: sema.KindParameter},
 		},
 	})
 }

@@ -12,6 +12,11 @@ import (
 )
 
 // TestDoc runs the suite every language module runs.
+//
+// The fixture carries one of every declaration form Java has,
+// along with the documentation, annotations and modifiers written on
+// them, because the suite compares the outline against it as a whole
+// set: a form left out here is a form nothing checks.
 func TestDoc(t *testing.T) {
 	t.Parallel()
 
@@ -20,27 +25,79 @@ func TestDoc(t *testing.T) {
 		Grammar:     java.Grammar(),
 		Unclaimed:   "notes.md",
 		Files: map[string]string{
-			"pkg/Store.java": `package pkg;
+			"pkg/Service.java": `package pkg;
 
+import java.util.List;
+
+/**
+ * Readable is anything with a size.
+ */
+@FunctionalInterface
 public interface Readable {
-    int get(String id);
+    int get();
 }
 
-public class Store implements Readable {
-    public int get(String id) { return 1; }
+public enum Colour {
+    RED,
+    GREEN
+}
 
-    private int helper() { return 1; }
+@Component
+public class Store implements Readable {
+    public static final int LIMIT = 10;
+
+    private int size;
+
+    public Store(int start) {
+        this.size = start;
+    }
+
+    /// Returns the number of items.
+    @Override
+    public int get() {
+        return size;
+    }
+
+    static <T> T pick(T first, T second) {
+        List<T> both = null;
+        return first;
+    }
 }
 `,
 		},
-		// Java spells visibility as a modifier, which a tags query does
-		// not capture, so every declaration is reported unknown rather
-		// than guessed as public.
 		Declares: []conformance.Declared{
-			{Name: "Readable", Kind: sema.KindInterface, Visibility: sema.VisibilityUnknown},
-			{Name: "Store", Kind: sema.KindType, Visibility: sema.VisibilityUnknown},
-			{Name: "get", Kind: sema.KindMethod, Visibility: sema.VisibilityUnknown},
-			{Name: "helper", Kind: sema.KindMethod, Visibility: sema.VisibilityUnknown},
+			{Name: "pkg", Kind: sema.KindPackage},
+			{Name: "java.util.List", Kind: sema.KindImport},
+
+			{
+				Name: "Readable", Kind: sema.KindInterface,
+				Annotations: []string{"FunctionalInterface"},
+				Doc:         "Readable is anything with a size.",
+			},
+			{Name: "get", Kind: sema.KindMethod},
+
+			{Name: "Colour", Kind: sema.KindEnum},
+			{Name: "RED", Kind: sema.KindEnumMember},
+			{Name: "GREEN", Kind: sema.KindEnumMember},
+
+			{Name: "Store", Kind: sema.KindStruct, Annotations: []string{"Component"}},
+			{Name: "LIMIT", Kind: sema.KindConstant, Modifiers: []string{"static", "final"}},
+			{Name: "size", Kind: sema.KindField, Modifiers: []string{"private"}},
+
+			{Name: "Store", Kind: sema.KindConstructor},
+			{Name: "start", Kind: sema.KindParameter},
+
+			{
+				Name: "get", Kind: sema.KindMethod,
+				Annotations: []string{"Override"},
+				Doc:         "Returns the number of items.",
+			},
+
+			{Name: "pick", Kind: sema.KindMethod, Modifiers: []string{"static"}},
+			{Name: "T", Kind: sema.KindTypeParameter},
+			{Name: "first", Kind: sema.KindParameter},
+			{Name: "second", Kind: sema.KindParameter},
+			{Name: "both", Kind: sema.KindVariable},
 		},
 	})
 }

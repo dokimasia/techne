@@ -20,8 +20,15 @@ import (
 // changing it invalidates stored data.
 const Language source.Language = "go"
 
-//go:embed queries/tags.scm
-var tagsQuery string
+// Upstream's query, unchanged, followed by this module's own patterns.
+// Keeping them in separate files makes upgrading a grammar a re-vendor
+// and a diff review rather than a hand merge.
+
+//go:embed queries/upstream.scm
+var upstreamQuery string
+
+//go:embed queries/extends.scm
+var extendsQuery string
 
 // Declaration states the facts about go that hold whichever
 // engine serves it.
@@ -30,7 +37,14 @@ func Declaration() lang.Declaration {
 		Language:   Language,
 		Extensions: []string{".go"},
 		Manifests:  []string{"go.mod", "go.work"},
-		Comment:    lang.CommentStyle{Line: "// ", Above: true},
+		Comment: lang.CommentStyle{
+			Line: "// ", BlockOpen: "/*", BlockClose: "*/",
+			Doc: []lang.DocStyle{
+				{Open: "//"},
+				{Open: "/*", Close: "*/"},
+			},
+		},
+		Blank:      map[string]bool{"_": true},
 		IsTest:     IsTest,
 		Namespace:  Unit,
 		Visibility: Visibility,
@@ -42,7 +56,7 @@ func Declaration() lang.Declaration {
 func Grammar() treesitter.Grammar {
 	return treesitter.Grammar{
 		Language: ts.NewLanguage(binding.Language()),
-		Tags:     tagsQuery,
+		Tags:     upstreamQuery + "\n" + extendsQuery,
 	}
 }
 

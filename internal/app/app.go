@@ -14,10 +14,15 @@ import (
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/tool"
 	"go.dokimi.dev/techne/lang"
+	"go.dokimi.dev/techne/lang/c"
+	"go.dokimi.dev/techne/lang/csharp"
 	golang "go.dokimi.dev/techne/lang/go"
 	"go.dokimi.dev/techne/lang/java"
+	"go.dokimi.dev/techne/lang/javascript"
 	"go.dokimi.dev/techne/lang/python"
+	"go.dokimi.dev/techne/lang/ruby"
 	"go.dokimi.dev/techne/lang/rust"
+	"go.dokimi.dev/techne/lang/scala"
 	"go.dokimi.dev/techne/lang/typescript"
 	"go.dokimi.dev/techne/presenter"
 )
@@ -33,10 +38,15 @@ type register func(fs.FS, *lang.Registry, *engine.Catalog) error
 // line in go.work. The directory then goes. No other module names a
 // language, so none of them is touched.
 var languages = []register{
+	c.Register,
+	csharp.Register,
 	golang.Register,
-	python.Register,
 	java.Register,
+	javascript.Register,
+	python.Register,
+	ruby.Register,
 	rust.Register,
+	scala.Register,
 	typescript.Register,
 }
 

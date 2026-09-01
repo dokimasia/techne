@@ -23,18 +23,50 @@ func TestCapture(t *testing.T) {
 			// The engine follows their convention rather than asking a
 			// language module to rewrite its query.
 			for capture, want := range map[treesitter.Capture]sema.Kind{
-				treesitter.DefinitionFunction:  sema.KindFunction,
-				treesitter.DefinitionMethod:    sema.KindMethod,
-				treesitter.DefinitionType:      sema.KindType,
-				treesitter.DefinitionClass:     sema.KindType,
-				treesitter.DefinitionInterface: sema.KindInterface,
-				treesitter.DefinitionConstant:  sema.KindConstant,
-				treesitter.DefinitionModule:    sema.KindModule,
-				treesitter.DefinitionMacro:     sema.KindFunction,
+				treesitter.DefinitionFunction:      sema.KindFunction,
+				treesitter.DefinitionMethod:        sema.KindMethod,
+				treesitter.DefinitionConstructor:   sema.KindConstructor,
+				treesitter.DefinitionType:          sema.KindType,
+				treesitter.DefinitionStruct:        sema.KindStruct,
+				treesitter.DefinitionUnion:         sema.KindUnion,
+				treesitter.DefinitionEnum:          sema.KindEnum,
+				treesitter.DefinitionEnumMember:    sema.KindEnumMember,
+				treesitter.DefinitionInterface:     sema.KindInterface,
+				treesitter.DefinitionAnnotation:    sema.KindAnnotation,
+				treesitter.DefinitionField:         sema.KindField,
+				treesitter.DefinitionProperty:      sema.KindProperty,
+				treesitter.DefinitionVariable:      sema.KindVariable,
+				treesitter.DefinitionConstant:      sema.KindConstant,
+				treesitter.DefinitionParameter:     sema.KindParameter,
+				treesitter.DefinitionTypeParameter: sema.KindTypeParameter,
+				treesitter.DefinitionImport:        sema.KindImport,
+				treesitter.DefinitionLabel:         sema.KindLabel,
+				treesitter.DefinitionPackage:       sema.KindPackage,
+				treesitter.DefinitionModule:        sema.KindModule,
+				treesitter.DefinitionMacro:         sema.KindMacro,
+				treesitter.DefinitionImplement:     sema.KindImplementation,
 			} {
 				got, declares := treesitter.KindOf(capture)
 				assert.True(t, declares, "a capture the grammars' own tags queries use declares a symbol")
 				assert.Equal(t, got, want, "a capture maps to the kind the shared vocabulary carries for it")
+			}
+		})
+
+		t.Run("maps the shapes one kind carries onto that kind", func(t *testing.T) {
+			t.Parallel()
+			// A class, a Scala object and a Go struct are one shape here:
+			// a named aggregate of fields and methods. Telling them apart
+			// would mean a caller searching for that shape had to know
+			// which language answered.
+			for _, capture := range []treesitter.Capture{
+				treesitter.DefinitionClass,
+				treesitter.DefinitionObject,
+				treesitter.DefinitionStruct,
+			} {
+				got, declares := treesitter.KindOf(capture)
+				assert.True(t, declares, "each of these names an aggregate some grammar declares")
+				assert.Equal(t, got, sema.KindStruct,
+					"a caller searching for a shape must not have to know which language answered")
 			}
 		})
 

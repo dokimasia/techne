@@ -20,8 +20,15 @@ import (
 // changing it invalidates stored data.
 const Language source.Language = "rust"
 
-//go:embed queries/tags.scm
-var tagsQuery string
+// Upstream's query is vendored for diffing but not compiled in. It tags
+// a struct, an enum, a union and a type alias all @definition.class,
+// which collapses four shapes the vocabulary keeps apart. Concatenating
+// it would leave the kind of every Rust ADT to whichever pattern matched
+// first, because class and enum rank alike. Everything upstream captures
+// is covered below.
+
+//go:embed queries/extends.scm
+var extendsQuery string
 
 // Declaration states the facts about rust that hold whichever
 // engine serves it.
@@ -30,7 +37,16 @@ func Declaration() lang.Declaration {
 		Language:   Language,
 		Extensions: []string{".rs"},
 		Manifests:  []string{"Cargo.toml"},
-		Comment:    lang.CommentStyle{Line: "/// ", Above: true},
+		Comment: lang.CommentStyle{
+			Line: "// ", BlockOpen: "/*", BlockClose: "*/",
+			Doc: []lang.DocStyle{
+				{Open: "///"},
+				{Open: "/**", Close: "*/", Continuation: " * "},
+				{Open: "//!", Inside: true},
+				{Open: "/*!", Close: "*/", Continuation: " * ", Inside: true},
+			},
+		},
+		Blank:      map[string]bool{"_": true},
 		IsTest:     IsTest,
 		Namespace:  Namespace,
 		Visibility: Visibility,
@@ -42,7 +58,7 @@ func Declaration() lang.Declaration {
 func Grammar() treesitter.Grammar {
 	return treesitter.Grammar{
 		Language: ts.NewLanguage(binding.Language()),
-		Tags:     tagsQuery,
+		Tags:     extendsQuery,
 	}
 }
 

@@ -20,15 +20,15 @@ import (
 // changing it invalidates stored data.
 const Language source.Language = "typescript"
 
-// The TypeScript grammar inherits the JavaScript one, so its tags query
-// is the two files together: JavaScript's supplies class and function
-// declarations, TypeScript's adds interfaces, signatures and modules.
+// The TypeScript grammar inherits the JavaScript one, so a .ts file uses
+// both languages' forms. This module's own patterns cover both.
+//
+// Upstream's two files are vendored for diffing but not compiled in:
+// JavaScript's only constant pattern is for the CommonJS export form, so
+// a plain const was captured by nothing.
 
-//go:embed queries/javascript-tags.scm
-var javascriptTags string
-
-//go:embed queries/tags.scm
-var typescriptTags string
+//go:embed queries/extends.scm
+var extendsQuery string
 
 // Declaration states the facts about typescript that hold whichever
 // engine serves it.
@@ -37,7 +37,12 @@ func Declaration() lang.Declaration {
 		Language:   Language,
 		Extensions: []string{".ts", ".mts", ".cts"},
 		Manifests:  []string{"package.json", "tsconfig.json"},
-		Comment:    lang.CommentStyle{Line: "// ", Above: true},
+		Comment: lang.CommentStyle{
+			Line: "// ", BlockOpen: "/*", BlockClose: "*/",
+			Doc: []lang.DocStyle{
+				{Open: "/**", Close: "*/", Continuation: " * "},
+			},
+		},
 		IsTest:     IsTest,
 		Namespace:  Namespace,
 		Visibility: Visibility,
@@ -49,7 +54,7 @@ func Declaration() lang.Declaration {
 func Grammar() treesitter.Grammar {
 	return treesitter.Grammar{
 		Language: ts.NewLanguage(binding.LanguageTypescript()),
-		Tags:     javascriptTags + "\n" + typescriptTags,
+		Tags:     extendsQuery,
 	}
 }
 

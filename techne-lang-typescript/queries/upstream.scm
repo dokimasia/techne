@@ -1,8 +1,3 @@
-;; Vendored verbatim from tree-sitter-typescript v0.23.2.
-;;
-;; This file covers only what TypeScript adds to JavaScript. It is
-;; compiled after javascript-tags.scm, which supplies the rest.
-
 (function_signature
   name: (identifier) @name) @definition.function
 

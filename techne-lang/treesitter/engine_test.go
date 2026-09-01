@@ -22,7 +22,10 @@ func complete() lang.Declaration {
 	return lang.Declaration{
 		Language:   source.Language("fixture"),
 		Extensions: []string{".fx"},
-		Comment:    lang.CommentStyle{Line: "// ", Above: true},
+		Comment: lang.CommentStyle{
+			Line: "// ", BlockOpen: "/*", BlockClose: "*/",
+			Doc: []lang.DocStyle{{Open: "//"}},
+		},
 		IsTest:     func(string) bool { return false },
 		Namespace:  func(p string) string { return strings.TrimSuffix(p, ".fx") },
 		Visibility: visibility,
