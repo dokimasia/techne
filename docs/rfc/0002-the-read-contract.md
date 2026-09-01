@@ -493,6 +493,17 @@ type Capability struct {
 	Unavailable  string // why not, when it cannot run
 }
 
+// Add registers an engine. It reports an error when the name is taken:
+// a provenance names the engine that answered, so two engines sharing a
+// name make an answer untraceable.
+func (c *Catalog) Add(e Engine) error
+
+// For returns the engines that can answer this role for this language,
+// strongest evidence first and cheapest among equals. An engine that
+// does not serve the role, serves another language, or cannot run is
+// left out.
+func (c *Catalog) For(ctx context.Context, lang source.Language, role Role) []Engine
+
 func (c *Catalog) Capabilities(ctx context.Context) []Capability
 ```
 
