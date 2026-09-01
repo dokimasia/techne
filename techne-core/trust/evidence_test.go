@@ -44,6 +44,33 @@ func TestEvidence(t *testing.T) {
 		})
 	})
 
+	t.Run("String", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("is the wire form of a tier", func(t *testing.T) {
+			t.Parallel()
+			for f, want := range map[trust.Fidelity]string{
+				trust.None: "none", trust.Syntactic: "syntactic",
+				trust.Indexed: "indexed", trust.Resolved: "resolved",
+			} {
+				assert.Equal(t, f.String(), want, "an answer carries this string to a caller")
+			}
+			assert.Equal(t, trust.Fidelity(200).String(), "none",
+				"a tier outside the set claims nothing rather than reading as an empty name")
+		})
+
+		t.Run("is the wire form of a coverage claim", func(t *testing.T) {
+			t.Parallel()
+			for c, want := range map[trust.Completeness]string{
+				trust.ScopeUnknown: "unknown", trust.ScopePartial: "partial", trust.ScopeTotal: "total",
+			} {
+				assert.Equal(t, c.String(), want, "an answer carries this string to a caller")
+			}
+			assert.Equal(t, trust.Completeness(200).String(), "unknown",
+				"a claim outside the set reads as unknown rather than as an empty name")
+		})
+	})
+
 	t.Run("SupportsNegativeClaim", func(t *testing.T) {
 		t.Parallel()
 

@@ -44,6 +44,41 @@ const (
 	ScopeTotal
 )
 
+// fidelityNames is the single definition point for the wire form of
+// each tier. An answer carries these strings to a caller.
+var fidelityNames = map[Fidelity]string{
+	None:      "none",
+	Syntactic: "syntactic",
+	Indexed:   "indexed",
+	Resolved:  "resolved",
+}
+
+// String returns the wire form of the tier, or that of [None] for a
+// value outside the set.
+func (f Fidelity) String() string {
+	if name, ok := fidelityNames[f]; ok {
+		return name
+	}
+	return fidelityNames[None]
+}
+
+// completenessNames is the single definition point for the wire form of
+// each coverage claim.
+var completenessNames = map[Completeness]string{
+	ScopeUnknown: "unknown",
+	ScopePartial: "partial",
+	ScopeTotal:   "total",
+}
+
+// String returns the wire form of the coverage claim, or that of
+// [ScopeUnknown] for a value outside the set.
+func (c Completeness) String() string {
+	if name, ok := completenessNames[c]; ok {
+		return name
+	}
+	return completenessNames[ScopeUnknown]
+}
+
 // SupportsNegativeClaim reports whether an empty answer means there are
 // none, rather than that none were found.
 //

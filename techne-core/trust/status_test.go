@@ -51,6 +51,22 @@ func TestStatus(t *testing.T) {
 		})
 	})
 
+	t.Run("String", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("is the wire form of the status", func(t *testing.T) {
+			t.Parallel()
+			for st, want := range map[trust.Status]string{
+				trust.Unset: "unset", trust.OK: "ok", trust.Degraded: "degraded",
+				trust.Partial: "partial", trust.Unsupported: "unsupported", trust.Refused: "refused",
+			} {
+				assert.Equal(t, st.String(), want, "an answer carries this string to a caller")
+			}
+			assert.Equal(t, trust.Status(200).String(), "unset",
+				"a status outside the set reads as unset rather than as a success")
+		})
+	})
+
 	t.Run("distinctness", func(t *testing.T) {
 		t.Parallel()
 

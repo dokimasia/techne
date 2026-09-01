@@ -34,6 +34,26 @@ const (
 	Refused
 )
 
+// statusNames is the single definition point for the wire form of each
+// status. An answer carries these strings to a caller.
+var statusNames = map[Status]string{
+	Unset:       "unset",
+	OK:          "ok",
+	Degraded:    "degraded",
+	Partial:     "partial",
+	Unsupported: "unsupported",
+	Refused:     "refused",
+}
+
+// String returns the wire form of the status, or that of [Unset] for a
+// value outside the set.
+func (s Status) String() string {
+	if name, ok := statusNames[s]; ok {
+		return name
+	}
+	return statusNames[Unset]
+}
+
 // Answered reports whether an engine produced a payload.
 //
 // A false result means the item list is empty because nothing ran, not

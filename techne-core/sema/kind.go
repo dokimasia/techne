@@ -3,6 +3,8 @@
 
 package sema
 
+import "encoding/json"
+
 // Kind is what a declaration is.
 //
 // The set is smaller than any one language's grammar and larger than the
@@ -75,4 +77,10 @@ func (k Kind) String() string {
 		return name
 	}
 	return kindNames[KindUnknown]
+}
+
+// MarshalJSON writes the wire form rather than the number, so a caller
+// reads a kind without a lookup table.
+func (k Kind) MarshalJSON() ([]byte, error) {
+	return json.Marshal(k.String())
 }

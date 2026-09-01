@@ -15,9 +15,9 @@ type Position struct {
 	// Offset is the authoritative coordinate. Line and Column are
 	// derived from it and are carried so an answer reads without the
 	// file.
-	Offset int
-	Line   int
-	Column int
+	Offset int `json:"offset"`
+	Line   int `json:"line"`
+	Column int `json:"column"`
 }
 
 // Span is a half-open range over one file: Start is included, End is
@@ -26,7 +26,7 @@ type Position struct {
 //
 // The zero Span names no file and covers nothing.
 type Span struct {
-	Path  Path
-	Start Position
-	End   Position
+	Path  Path     `json:"path"`
+	Start Position `json:"start"`
+	End   Position `json:"end"`
 }

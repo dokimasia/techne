@@ -3,6 +3,8 @@
 
 package sema
 
+import "encoding/json"
+
 // Visibility is whether a declaration can be named outside the unit that
 // declares it.
 //
@@ -41,4 +43,10 @@ func (v Visibility) String() string {
 		return name
 	}
 	return visibilityNames[VisibilityUnknown]
+}
+
+// MarshalJSON writes the wire form rather than the number, so a caller
+// reads a visibility without a lookup table.
+func (v Visibility) MarshalJSON() ([]byte, error) {
+	return json.Marshal(v.String())
 }

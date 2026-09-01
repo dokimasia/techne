@@ -3,7 +3,11 @@
 
 package sema
 
-import "go.dokimi.dev/techne/core/source"
+import (
+	"encoding/json"
+
+	"go.dokimi.dev/techne/core/source"
+)
 
 // RelationKind is how one declaration reaches another.
 //
@@ -59,6 +63,25 @@ func RelationKinds() []RelationKind {
 	}
 }
 
+// relationNames is the single definition point for the wire form of
+// each direction.
+var relationNames = map[RelationKind]string{
+	RelationUnknown: "unknown",
+	Calls:           "calls", CalledBy: "called-by",
+	Implements: "implements", ImplementedBy: "implemented-by",
+	References: "references", ReferencedBy: "referenced-by",
+	Imports: "imports", ImportedBy: "imported-by",
+	Embeds: "embeds", EmbeddedBy: "embedded-by",
+}
+
+// String returns the wire form of the direction.
+func (r RelationKind) String() string {
+	if name, ok := relationNames[r]; ok {
+		return name
+	}
+	return relationNames[RelationUnknown]
+}
+
 // Inverse returns the kind that asks the same question from the other
 // end, and [RelationUnknown] for a kind with no pairing.
 func (r RelationKind) Inverse() RelationKind {
@@ -67,10 +90,15 @@ func (r RelationKind) Inverse() RelationKind {
 
 // Relation is one edge and where in the source it was found.
 type Relation struct {
-	Kind RelationKind
-	From ID
-	To   ID
+	Kind RelationKind `json:"kind"`
+	From ID           `json:"from"`
+	To   ID           `json:"to"`
 	// At is where the edge was written, which is the reference site
 	// rather than either declaration.
-	At source.Span
+	At source.Span `json:"at"`
+}
+
+// MarshalJSON writes the wire form rather than the number.
+func (r RelationKind) MarshalJSON() ([]byte, error) {
+	return json.Marshal(relationNames[r])
 }
