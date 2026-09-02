@@ -54,10 +54,37 @@ func pick(items []sema.Symbol, scope source.Path, name string, kind sema.Kind) (
 	if len(found) == 1 {
 		return found[0], nil
 	}
+	// An import is declared once per file that brings the name into
+	// scope, so a workspace importing one package from eleven files
+	// declares it eleven times. They are eleven sites and one subject:
+	// what the name identifies is the thing imported, which is the same
+	// for all of them. Refusing them as ambiguous would leave the
+	// question unaskable anywhere the answer is worth having.
+	if one, same := together(found); same {
+		return one, nil
+	}
 	return sema.Symbol{}, &Failure{
 		Code:   trust.Refused.String(),
 		Reason: ambiguous(name, scope, found, items),
 	}
+}
+
+// together reports whether several declarations name one thing, and
+// which to answer about.
+//
+// Only imports do. Two functions of one name are two functions and the
+// caller has to say which; two imports of one name are one package
+// brought in twice, and there is nothing to choose between them.
+func together(found []sema.Symbol) (sema.Symbol, bool) {
+	if len(found) < 2 {
+		return sema.Symbol{}, false
+	}
+	for _, one := range found {
+		if one.Kind != sema.KindImport || one.Name != found[0].Name {
+			return sema.Symbol{}, false
+		}
+	}
+	return found[0], true
 }
 
 // matching keeps the declarations a name and a kind pick out.

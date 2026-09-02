@@ -71,7 +71,10 @@ func (o RelationsOutput) Render() string {
 	fmt.Fprintf(&b, "%s %s — %s\n", o.Relation, o.Of, plural(len(o.Items), "site", "sites"))
 	for _, one := range o.Items {
 		fmt.Fprintf(&b, "\n%s:%d", one.Path, one.Line)
-		if one.Name != "" {
+		// The far end is named unless it is the file the site is in,
+		// which an import edge makes it: "a.go:7 in a.go" states the
+		// same fact twice and reads as a mistake.
+		if one.Name != "" && one.Name != one.Path {
 			fmt.Fprintf(&b, "  in %s", qualify(one.In, one.Name))
 		}
 		b.WriteString("\n")

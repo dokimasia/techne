@@ -28,3 +28,13 @@
   method: (identifier) @accessor
   arguments: (argument_list (simple_symbol) @name)
   (#match? @accessor "^attr_(reader|writer|accessor)$")) @definition.property
+
+;; Ruby brings a file into scope with a method call rather than a
+;; keyword, which is why upstream excludes require from what it captures
+;; as a call. Excluded there and captured nowhere, a file that requires
+;; two others reported importing nothing — over total coverage, which
+;; reads as a file with no dependencies.
+(call
+  method: (identifier) @_brings
+  arguments: (argument_list (string (string_content) @name))
+  (#any-of? @_brings "require" "require_relative" "load")) @definition.import

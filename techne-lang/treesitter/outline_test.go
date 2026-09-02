@@ -26,10 +26,11 @@ func TestOutline(t *testing.T) {
 			var e engine.Engine = (*treesitter.Engine)(nil)
 			_, serves := e.(engine.Outliner)
 			assert.True(t, serves, "the engine serves the role its package exists for")
-			for _, claimed := range []bool{assertRelator(e), assertVerifier(e)} {
-				assert.False(t, claimed,
-					"a parser cannot bind a name across files, so it claims no role that needs it")
-			}
+			assert.False(t, assertVerifier(e),
+				"a parser cannot say what a compiler says, so it claims no role that needs one")
+			assert.True(t, assertRelator(e),
+				"one direction is written in the source rather than resolved from it, "+
+					"and the relator declines every other")
 			assert.True(t, assertPlanner(e),
 				"one operation writes a comment above a declaration and needs nothing bound, "+
 					"and the planner declines every other")

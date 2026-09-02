@@ -10,6 +10,7 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
+	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/lang"
@@ -147,6 +148,127 @@ func serving(t *testing.T, c *engine.Catalog, l source.Language, role engine.Rol
 	out := make([]string, 0, len(held))
 	for _, one := range held {
 		out = append(out, one.Name())
+	}
+	return out
+}
+
+// An import is the one edge a parser can be correct about: the tags
+// query already captures it, and neither end needs a name bound to
+// anything. It is also the one relation a workspace with no language
+// server installed can still ask for.
+func TestImports(t *testing.T) {
+	t.Parallel()
+
+	// relating builds the engines over a small workspace and asks one
+	// direction of one edge.
+	relating := func(t *testing.T, of sema.ID, kind sema.RelationKind) engine.Result[sema.Relation] {
+		t.Helper()
+		registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
+		held := lang.Workspace{FS: fstest.MapFS{
+			"a.go": {Data: []byte("package p\n\nimport (\n\t\"fmt\"\n\t\"encoding/json\"\n)\n\ntype Store struct{}\n")},
+			"b.go": {Data: []byte("package p\n\nimport \"fmt\"\n\nfunc Use() {}\n")},
+			"c.go": {Data: []byte("package p\n\nfunc Alone() {}\n")},
+		}}
+		assert.NoError(t, golang.Register(held, registry, catalogue), "the module registers")
+
+		for _, e := range catalogue.For(t.Context(), golang.Declaration().Language, engine.RoleRelate) {
+			relator, serves := e.(engine.Relator)
+			if !serves {
+				continue
+			}
+			got, err := relator.Relate(t.Context(), engine.Request{Scope: ".", Preferred: trust.Syntactic},
+				of, kind)
+			if err == nil {
+				return got
+			}
+		}
+		t.Fatalf("no engine answered %s", kind)
+		return engine.Result[sema.Relation]{}
+	}
+
+	t.Run("imported-by", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("names every file that brings a package into scope", func(t *testing.T) {
+			t.Parallel()
+			got := relating(t, sema.NewID(golang.Declaration().Language, ".", "fmt", sema.KindImport),
+				sema.ImportedBy)
+
+			assert.Equal(t, ends(got.Items), []string{"a.go", "b.go"},
+				"both files that import it, and not the one that does not")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal,
+				"the walk read every file in the scope")
+		})
+
+		t.Run("carries the line the import was written on", func(t *testing.T) {
+			t.Parallel()
+			got := relating(t, sema.NewID(golang.Declaration().Language, ".", "fmt", sema.KindImport),
+				sema.ImportedBy)
+
+			assert.Contains(t, got.Items[0].Via, "fmt",
+				"a caller reading who depends on this wants to read the import")
+		})
+
+		t.Run("matches a package by the name it is written under", func(t *testing.T) {
+			t.Parallel()
+			// A caller asks for what it reads, which is the last segment
+			// as often as the whole path.
+			got := relating(t, sema.NewID(golang.Declaration().Language, ".", "json", sema.KindImport),
+				sema.ImportedBy)
+
+			assert.Equal(t, ends(got.Items), []string{"a.go"},
+				"encoding/json is asked for as json")
+		})
+	})
+
+	t.Run("imports", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("names what the file declaring a symbol brings into scope", func(t *testing.T) {
+			t.Parallel()
+			got := relating(t, sema.NewID(golang.Declaration().Language, ".", "Store", sema.KindStruct),
+				sema.Imports)
+
+			assert.Equal(t, ends(got.Items), []string{"fmt", "encoding/json"},
+				"the imports of the file that declares it, in the order it wrote them, "+
+					"and no other file's")
+		})
+	})
+
+	t.Run("a direction that needs a binding", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("is declined rather than answered with none", func(t *testing.T) {
+			t.Parallel()
+			// A parser matched text. Answering none would be a claim
+			// that nothing calls the declaration, over a tier that
+			// cannot support one.
+			registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
+			assert.NoError(t,
+				golang.Register(lang.Workspace{FS: fstest.MapFS{
+					"a.go": {Data: []byte("package p\n\nfunc Use() {}\n")},
+				}}, registry, catalogue), "the module registers")
+
+			for _, e := range catalogue.For(t.Context(), golang.Declaration().Language, engine.RoleRelate) {
+				relator, serves := e.(engine.Relator)
+				if !serves {
+					continue
+				}
+				_, err := relator.Relate(t.Context(), engine.Request{Scope: "."},
+					sema.NewID(golang.Declaration().Language, ".", "Use", sema.KindFunction),
+					sema.CalledBy)
+				assert.ErrorIs(t, err, engine.ErrDecline,
+					"who calls this is a binding, and this engine has none")
+			}
+		})
+	})
+}
+
+// ends is what each edge pointed at, in order.
+func ends(held []sema.Relation) []string {
+	out := make([]string, 0, len(held))
+	for _, one := range held {
+		out = append(out, one.To.Name)
 	}
 	return out
 }

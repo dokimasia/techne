@@ -24,7 +24,10 @@ func TestDoc(t *testing.T) {
 		Grammar:     ruby.Grammar(),
 		Unclaimed:   "notes.md",
 		Files: map[string]string{
-			"pkg/store.rb": `LIMIT = 10
+			"pkg/store.rb": `require "json"
+require_relative "helper"
+
+LIMIT = 10
 
 module Shop
   # Store holds items by name.
@@ -47,6 +50,8 @@ end
 `,
 		},
 		Declares: []conformance.Declared{
+			{Name: "helper", Kind: sema.KindImport},
+			{Name: "json", Kind: sema.KindImport},
 			{Name: ":name", Kind: sema.KindProperty},
 			{Name: "@size", Kind: sema.KindField},
 			{Name: "LIMIT", Kind: sema.KindConstant},
