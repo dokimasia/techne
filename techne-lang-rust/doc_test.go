@@ -82,6 +82,10 @@ pub mod inner {
 			{Name: "Readable", Kind: sema.KindInterface},
 			{Name: "Red", Kind: sema.KindEnumMember},
 			{
+				Name: "Store", Kind: sema.KindImplementation,
+				Signature: "impl Store",
+			},
+			{
 				Name: "Store", Kind: sema.KindStruct,
 				Doc:         "Store holds items by name.",
 				Annotations: []conformance.Annotated{{Name: "derive", Text: "#[derive(Debug)]"}},

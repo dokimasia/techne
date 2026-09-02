@@ -14,6 +14,13 @@
 (trait_item name: (type_identifier) @name) @definition.interface
 
 (function_item name: (identifier) @name) @definition.function
+;; An impl block attaches behaviour to a type and is named for the type
+;; it is for, so `impl Encoder for Http` and `impl Http` both group under
+;; Http. Capturing it is what puts an associated type and a method
+;; inside it rather than beside the file's own declarations.
+(impl_item type: (type_identifier) @name) @definition.implementation
+(impl_item type: (generic_type type: (type_identifier) @name)) @definition.implementation
+
 (impl_item body: (declaration_list (function_item name: (identifier) @name) @definition.method))
 (trait_item body: (declaration_list (function_signature_item name: (identifier) @name) @definition.method))
 (trait_item body: (declaration_list (function_item name: (identifier) @name) @definition.method))
