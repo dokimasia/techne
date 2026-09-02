@@ -22,7 +22,7 @@ func TestEngine(t *testing.T) {
 
 		t.Run("refuses a declaration that names no language", func(t *testing.T) {
 			t.Parallel()
-			_, err := lsp.New(t.TempDir(), lang.Declaration{}, pretending(""))
+			_, err := lsp.New(t.TempDir(), lang.Declaration{}, pretending(modeDefault))
 			assert.HasError(t, err, "an engine answers about one language and must know which")
 		})
 
@@ -33,7 +33,7 @@ func TestEngine(t *testing.T) {
 			// rather than on the first call.
 			held := filepath.Join(workspace(t, map[string]string{"a.fake": content}), "a.fake")
 
-			_, err := lsp.New(held, declared(), pretending(""))
+			_, err := lsp.New(held, declared(), pretending(modeDefault))
 			assert.HasError(t, err, "a file is not a workspace")
 		})
 
@@ -42,7 +42,7 @@ func TestEngine(t *testing.T) {
 			// Checked when a module registers rather than when a call
 			// arrives: a server with no language id opens every file
 			// under an empty name and is answered about nothing.
-			held := pretending("")
+			held := pretending(modeDefault)
 			held.LanguageID = ""
 
 			_, err := lsp.New(t.TempDir(), declared(), held)
@@ -58,7 +58,7 @@ func TestEngine(t *testing.T) {
 			// Told gopls answered, a caller knows what to install, what
 			// to upgrade and whose release notes to read. Told "go", it
 			// knows none of that.
-			e := serving(t, "", map[string]string{"a.fake": content})
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			assert.Equal(t, e.Name(), "fake", "the server's own name")
 			assert.Equal(t, string(e.Language()), "fake", "beside the language it answers about")
 		})
@@ -69,7 +69,7 @@ func TestEngine(t *testing.T) {
 
 		t.Run("is what the language module declared, per role", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, "", map[string]string{"a.fake": content})
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			assert.Equal(t, e.Fidelity(engine.RoleResolve), trust.Resolved,
 				"the tier the declaration claimed")
 		})
@@ -78,7 +78,7 @@ func TestEngine(t *testing.T) {
 			t.Parallel()
 			// A server claiming a tier for a role nobody declared would
 			// win a catalogue's sort for work it cannot do.
-			e := serving(t, "", map[string]string{"a.fake": content})
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			assert.Equal(t, e.Fidelity(engine.RoleFormat), trust.None,
 				"an undeclared role reaches nothing")
 		})
@@ -92,7 +92,7 @@ func TestEngine(t *testing.T) {
 			// Priced at the first call, a catalogue would prefer a parser
 			// for every question, including the ones only a server can
 			// answer.
-			e := serving(t, "", map[string]string{"a.fake": content})
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			assert.Equal(t, e.Cost(engine.RoleResolve), engine.CostSession,
 				"dear once and cheap after")
 		})
@@ -116,7 +116,7 @@ func TestEngine(t *testing.T) {
 
 		t.Run("passes for a server that is here", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, "", map[string]string{"a.fake": content})
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			assert.NoError(t, e.Available(t.Context()), "the fake is this test binary")
 		})
 	})
@@ -129,7 +129,7 @@ func TestEngine(t *testing.T) {
 			// A role is declined by lacking a method rather than by
 			// returning an error, so what this engine satisfies is the
 			// whole of what a catalogue can select it for.
-			var held any = serving(t, "", map[string]string{"a.fake": content})
+			var held any = serving(t, modeDefault, map[string]string{"a.fake": content})
 
 			for _, one := range []struct {
 				role   engine.Role

@@ -36,6 +36,8 @@ func (e *Engine) Resolve(
 		return engine.Result[sema.Symbol]{Skipped: !ok, Completeness: trust.ScopeTotal}, err
 	}
 
+	e.working.settle(ctx, e.settling())
+
 	answered, err := held.asks.Definition(ctx, &protocol.DefinitionParams{
 		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(doc.path))},
 		Position:     doc.mark(at),
@@ -57,10 +59,11 @@ func (e *Engine) Resolve(
 		}
 	}
 
+	covered, caveats := e.settled(ctx)
 	return engine.Result[sema.Symbol]{
 		Items:        out,
-		Completeness: trust.ScopeTotal,
-		Caveats:      []trust.Caveat{dynamic},
+		Completeness: covered,
+		Caveats:      caveats,
 	}, nil
 }
 

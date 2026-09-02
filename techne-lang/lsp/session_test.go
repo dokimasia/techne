@@ -28,7 +28,7 @@ func counting(t *testing.T) (*lsp.Engine, func() int) {
 	dir := workspace(t, map[string]string{"a.fake": content})
 	log := filepath.Join(t.TempDir(), "starts")
 
-	server := pretending("")
+	server := pretending(modeDefault)
 	server.Env[noting] = log
 
 	e, err := lsp.New(dir, declared(), server)
@@ -87,7 +87,7 @@ func TestSession(t *testing.T) {
 
 		t.Run("reports a server that dies during the handshake", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, "dies", map[string]string{"a.fake": content})
+			e := serving(t, modeDies, map[string]string{"a.fake": content})
 			_, err := e.Outline(t.Context(), engine.Request{Scope: "a.fake"})
 
 			assert.HasError(t, err, "a server that exits mid-handshake is a failed start")
@@ -102,7 +102,7 @@ func TestSession(t *testing.T) {
 		t.Run("does nothing for an engine that started nothing", func(t *testing.T) {
 			t.Parallel()
 			e, err := lsp.New(workspace(t, map[string]string{"a.fake": content}),
-				declared(), pretending(""))
+				declared(), pretending(modeDefault))
 			assert.NoError(t, err, "an engine builds")
 			assert.NoError(t, e.Close(t.Context()), "closing one that never ran is not a fault")
 		})
@@ -112,7 +112,7 @@ func TestSession(t *testing.T) {
 			// A composition root closes, and so does whatever else holds
 			// the engine. The second must not wait on a process already
 			// reaped, which never returns.
-			e := serving(t, "", map[string]string{"a.fake": content})
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			_, err := e.Outline(t.Context(), engine.Request{Scope: "a.fake"})
 			assert.NoError(t, err, "the server started")
 
@@ -141,7 +141,7 @@ func TestSession(t *testing.T) {
 			// A start with no deadline is a tool that hangs rather than
 			// one that fails, and a hang is the hardest failure to
 			// attribute.
-			e := serving(t, "silent", map[string]string{"a.fake": content})
+			e := serving(t, modeSilent, map[string]string{"a.fake": content})
 
 			assert.CompletesWithin(t, 5*time.Second, func(ctx context.Context) error {
 				held, stop := context.WithTimeout(ctx, 300*time.Millisecond)
@@ -156,7 +156,7 @@ func TestSession(t *testing.T) {
 
 // missing is a declaration for a server that is not on this machine.
 func missing() lsp.Server {
-	held := pretending("")
+	held := pretending(modeDefault)
 	held.Command = []string{"techne-no-such-language-server"}
 	return held
 }

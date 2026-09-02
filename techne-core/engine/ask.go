@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"path"
+	"strings"
 
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
@@ -64,6 +65,21 @@ func Languages(r Router, req Request) []source.Language {
 // about.
 const Root source.Path = "."
 
+// Declined is why the engines that could have answered did not.
+//
+// A decline is a fact a caller can act on and often the only actionable
+// thing in the exchange: a server saying it cannot find the TypeScript
+// installation names what to install, where "no engine serves this file"
+// names nothing and reads as a language techne cannot refactor. So the
+// reasons come back rather than being dropped on the way past.
+//
+// Empty when an engine answered, and empty when none was asked.
+type Declined []string
+
+// Reason joins the declines into one line, and is empty when there were
+// none.
+func (d Declined) Reason() string { return strings.Join(d, "; ") }
+
 // Ask puts one question to the engines serving a language, strongest
 // first, and returns the first answer.
 //
@@ -84,18 +100,43 @@ func Ask[T any](
 	role Role,
 	want trust.Fidelity,
 	call func(Engine) (Result[T], error),
-) (Answer[T], bool, error) {
+) (Answer[T], bool, Declined, error) {
+	var declined Declined
 	for _, e := range c.For(ctx, language, role) {
 		result, err := call(e)
 		switch {
 		case errors.Is(err, ErrDecline):
+			declined = append(declined, attributed(e.Name(), reason(err)))
 			continue
 		case err != nil:
-			return Answer[T]{}, false, err
+			return Answer[T]{}, false, declined, err
 		}
-		return Publish(result, e, role, want), true, nil
+		return Publish(result, e, role, want), true, nil, nil
 	}
-	return Answer[T]{}, false, nil
+	return Answer[T]{}, false, declined, nil
+}
+
+// attributed names which engine declined, unless the reason already
+// does. An engine's own error carries its name by convention, and one
+// opening with the name twice reads as two engines refusing.
+func attributed(name, why string) string {
+	if strings.Contains(why, name) {
+		return why
+	}
+	return name + ": " + why
+}
+
+// reason is a decline without the sentinel that marks it as one.
+//
+// The sentinel is how a service knows to move on; the words after it are
+// what a caller reads. Left in, every reason a caller sees would open
+// with the same four words.
+func reason(err error) string {
+	held := err.Error()
+	if _, after, cut := strings.Cut(held, ErrDecline.Error()+": "); cut {
+		return after
+	}
+	return held
 }
 
 // AskEach puts one question to every language a request could be about,
@@ -111,18 +152,20 @@ func AskEach[T any](
 	req Request,
 	role Role,
 	call func(Engine) (Result[T], error),
-) ([]Answer[T], error) {
+) ([]Answer[T], Declined, error) {
 	var out []Answer[T]
+	var declined Declined
 	for _, language := range Languages(r, req) {
-		answered, ok, err := Ask(ctx, c, language, role, req.Preferred, call)
+		answered, ok, why, err := Ask(ctx, c, language, role, req.Preferred, call)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
+		declined = append(declined, why...)
 		if ok {
 			out = append(out, answered)
 		}
 	}
-	return out, nil
+	return out, declined, nil
 }
 
 // AskAny puts one question to the languages a request could be about and
@@ -138,14 +181,16 @@ func AskAny[T any](
 	req Request,
 	role Role,
 	call func(Engine) (Result[T], error),
-) (Answer[T], bool, error) {
+) (Answer[T], bool, Declined, error) {
+	var declined Declined
 	for _, language := range Languages(r, req) {
-		answered, ok, err := Ask(ctx, c, language, role, req.Preferred, call)
+		answered, ok, why, err := Ask(ctx, c, language, role, req.Preferred, call)
 		if err != nil || ok {
-			return answered, ok, err
+			return answered, ok, declined, err
 		}
+		declined = append(declined, why...)
 	}
-	return Answer[T]{}, false, nil
+	return Answer[T]{}, false, declined, nil
 }
 
 // Unsupported is the answer when nothing could be asked.

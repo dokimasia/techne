@@ -62,6 +62,10 @@ type Engine struct {
 	// and is replaced with the session it belongs to: what the last
 	// server said is not true of the next one.
 	pushed *published
+
+	// working is what this session's server has said it is still doing,
+	// and is replaced with it for the same reason.
+	working *working
 }
 
 // New returns an engine over one language's server, rooted at a
@@ -132,7 +136,8 @@ func (e *Engine) Close(ctx context.Context) error {
 		return nil
 	}
 	held := e.held
-	e.held, e.failed, e.pushed = nil, nil, nil
+	e.held, e.failed = nil, nil
+	e.pushed, e.working = nil, nil
 	e.opened.Clear()
 	return held.stop(ctx)
 }
@@ -156,9 +161,10 @@ func (e *Engine) running(ctx context.Context) (*session, error) {
 		return nil, err
 	}
 
-	e.pushed = newPublished()
+	e.pushed, e.working = newPublished(), newWorking()
 	held, err := start(ctx, e.server, e.root, answers{
-		root: e.root, settings: e.server.Settings, pushed: e.pushed,
+		root: e.root, settings: e.server.Settings,
+		pushed: e.pushed, working: e.working,
 	})
 	if err != nil {
 		e.failed = err
@@ -205,6 +211,12 @@ func (e *Engine) handshake(ctx context.Context, held *session) error {
 					HierarchicalDocumentSymbolSupport: &yes,
 				},
 			},
+			Window: &protocol.WindowClientCapabilities{
+				// Without this a server has no reason to report what it
+				// is doing, and one still loading a workspace answers
+				// every question with nothing while looking finished.
+				WorkDoneProgress: &yes,
+			},
 			Workspace: &protocol.WorkspaceClientCapabilities{
 				WorkspaceFolders: &yes,
 				// Claimed because it is answered. A server told the
@@ -235,7 +247,16 @@ func (e *Engine) handshake(ctx context.Context, held *session) error {
 	if answered != nil {
 		held.capable = answered.Capabilities
 	}
-	return held.asks.Initialized(ctx, &protocol.InitializedParams{})
+	if err := held.asks.Initialized(ctx, &protocol.InitializedParams{}); err != nil {
+		return err
+	}
+
+	// A server that loads a workspace announces it a moment after this,
+	// not during it. Asked in that moment it answers with nothing, and
+	// nothing looks exactly like a complete answer. So the first
+	// question waits for the server to say whether it is busy.
+	e.working.announce(ctx, announcing)
+	return nil
 }
 
 // open tells the server about a file, once.

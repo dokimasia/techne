@@ -57,6 +57,11 @@ func (e *Engine) Relate(
 			"%w: %s: no request behind %s", engine.ErrDecline, e.server.Name, kind)
 	}
 
+	// Waited on before the question rather than after it: a server
+	// mid-load answers with nothing, and an answer worth marking partial
+	// is worth waiting a moment to make total.
+	e.working.settle(ctx, e.settling())
+
 	subject, doc, known, err := e.declaring(ctx, held, req, of)
 	if err != nil {
 		return engine.Result[sema.Relation]{}, err
@@ -88,10 +93,11 @@ func (e *Engine) Relate(
 	}
 
 	slices.SortFunc(out, order)
+	covered, caveats := e.settled(ctx)
 	return engine.Result[sema.Relation]{
 		Items:        out,
-		Completeness: trust.ScopeTotal,
-		Caveats:      []trust.Caveat{dynamic},
+		Completeness: covered,
+		Caveats:      caveats,
 	}, nil
 }
 

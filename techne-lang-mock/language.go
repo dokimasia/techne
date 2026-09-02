@@ -5,7 +5,6 @@ package mock
 
 import (
 	"fmt"
-	"io/fs"
 	"path"
 	"strings"
 
@@ -94,12 +93,19 @@ func Costing(c engine.Cost) Option {
 // A composition root calls the result exactly as it calls a real
 // language module's Register, so a mock language is registered the way
 // every other language is rather than through a path of its own.
-func Registering(name string, opts ...Option) func(fs.FS, *lang.Registry, *engine.Catalog) error {
-	return func(fsys fs.FS, r *lang.Registry, c *engine.Catalog) error {
+func Registering(
+	name string,
+	opts ...Option,
+) func(lang.Workspace, *lang.Registry, *engine.Catalog) error {
+	return func(w lang.Workspace, r *lang.Registry, c *engine.Catalog) error {
 		if name == "" {
 			return fmt.Errorf("mock: a language needs a name")
 		}
-		e, err := New(fsys, Declaration(name), opts...)
+		// The workspace root is ignored. This language has no server to
+		// point at one, which is the point of it: every tier it answers
+		// at comes from the option it was built with rather than from
+		// anything installed.
+		e, err := New(w.FS, Declaration(name), opts...)
 		if err != nil {
 			return err
 		}
@@ -108,6 +114,6 @@ func Registering(name string, opts ...Option) func(fs.FS, *lang.Registry, *engin
 }
 
 // Register adds one mock language, called mock.
-func Register(fsys fs.FS, r *lang.Registry, c *engine.Catalog) error {
-	return Registering(Language)(fsys, r, c)
+func Register(w lang.Workspace, r *lang.Registry, c *engine.Catalog) error {
+	return Registering(Language)(w, r, c)
 }

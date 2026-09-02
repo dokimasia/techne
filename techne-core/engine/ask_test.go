@@ -6,6 +6,7 @@ package engine_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -86,7 +87,7 @@ func TestAsk(t *testing.T) {
 
 		t.Run("takes the first engine that answers", func(t *testing.T) {
 			t.Parallel()
-			got, ok, err := engine.Ask(t.Context(), holding(t, answering{name: "first"}, answering{name: "second"}),
+			got, ok, _, err := engine.Ask(t.Context(), holding(t, answering{name: "first"}, answering{name: "second"}),
 				fixture, engine.RoleOutline, trust.None, outlining)
 
 			assert.NoError(t, err, "asking an engine that answers succeeds")
@@ -95,11 +96,55 @@ func TestAsk(t *testing.T) {
 				"the catalogue orders by evidence, so the first is the strongest")
 		})
 
+		t.Run("carries out why every engine declined", func(t *testing.T) {
+			t.Parallel()
+			// What an engine said is often the only actionable thing in
+			// the exchange: a server naming the toolchain it cannot find
+			// tells a caller what to install, where "no engine serves
+			// this file" tells it the language is unsupported.
+			_, ok, declined, err := engine.Ask(t.Context(),
+				holding(t, answering{name: "first", declines: true},
+					answering{name: "second", declines: true}),
+				fixture, engine.RoleOutline, trust.Syntactic, outlining)
+
+			assert.NoError(t, err, "a decline is not a failure")
+			assert.False(t, ok, "and nothing answered")
+			assert.Length(t, declined, 2, "one reason per engine that could have")
+			assert.Contains(t, declined.Reason(), "not this one",
+				"carrying what the engine actually said")
+			assert.Contains(t, declined.Reason(), "first", "and which engine said it")
+		})
+
+		t.Run("names the engine only where the reason does not", func(t *testing.T) {
+			t.Parallel()
+			// An engine's own error carries its name by convention. A
+			// reason opening with the name twice reads as two engines
+			// refusing rather than one.
+			_, _, declined, err := engine.Ask(t.Context(),
+				holding(t, answering{name: "named", declines: true, owns: true}),
+				fixture, engine.RoleOutline, trust.Syntactic, outlining)
+
+			assert.NoError(t, err, "a decline is not a failure")
+			assert.Equal(t, strings.Count(declined.Reason(), "named"), 1,
+				"attributed once, however the engine wrote its own error")
+		})
+
+		t.Run("carries nothing out when one answered", func(t *testing.T) {
+			t.Parallel()
+			_, ok, declined, err := engine.Ask(t.Context(),
+				holding(t, answering{name: "first"}),
+				fixture, engine.RoleOutline, trust.Syntactic, outlining)
+
+			assert.NoError(t, err, "asking succeeds")
+			assert.True(t, ok, "and an engine answered")
+			assert.Empty(t, declined, "so there is nothing to explain")
+		})
+
 		t.Run("moves on from an engine that declines", func(t *testing.T) {
 			t.Parallel()
 			// Declining serves the role and cannot answer this request,
 			// which is different from being broken.
-			got, ok, err := engine.Ask(t.Context(),
+			got, ok, _, err := engine.Ask(t.Context(),
 				holding(t, answering{name: "first", declines: true}, answering{name: "second"}),
 				fixture, engine.RoleOutline, trust.None, outlining)
 
@@ -113,7 +158,7 @@ func TestAsk(t *testing.T) {
 			// Answering from a weaker engine when the stronger one is
 			// broken hides the breakage for as long as anyone believes
 			// the answer.
-			_, _, err := engine.Ask(t.Context(),
+			_, _, _, err := engine.Ask(t.Context(),
 				holding(t, answering{name: "first", breaks: true}, answering{name: "second"}),
 				fixture, engine.RoleOutline, trust.None, outlining)
 			assert.HasError(t, err, "a broken engine reaches the caller rather than being routed around")
@@ -121,7 +166,7 @@ func TestAsk(t *testing.T) {
 
 		t.Run("reports that nothing answered", func(t *testing.T) {
 			t.Parallel()
-			_, ok, err := engine.Ask(t.Context(), holding(t), fixture,
+			_, ok, _, err := engine.Ask(t.Context(), holding(t), fixture,
 				engine.RoleOutline, trust.None, outlining)
 			assert.NoError(t, err, "having nothing to ask is not a fault")
 			assert.False(t, ok, "and is told apart from an engine that answered with nothing")
@@ -129,7 +174,7 @@ func TestAsk(t *testing.T) {
 
 		t.Run("stamps the evidence rather than taking the engine's word", func(t *testing.T) {
 			t.Parallel()
-			got, _, err := engine.Ask(t.Context(), holding(t, answering{name: "first"}),
+			got, _, _, err := engine.Ask(t.Context(), holding(t, answering{name: "first"}),
 				fixture, engine.RoleOutline, trust.Resolved, outlining)
 
 			assert.NoError(t, err, "asking succeeds")
@@ -145,7 +190,7 @@ func TestAsk(t *testing.T) {
 
 		t.Run("asks every language a directory could hold", func(t *testing.T) {
 			t.Parallel()
-			got, err := engine.AskEach(t.Context(),
+			got, _, err := engine.AskEach(t.Context(),
 				holding(t, answering{name: "fx"}, answering{name: "other", language: other}),
 				claiming{}, engine.Request{Scope: "src"}, engine.RoleOutline, outlining)
 
@@ -162,7 +207,7 @@ func TestAsk(t *testing.T) {
 			// A symbol is declared in one language, so a second answer
 			// would be about a second symbol and the work is wasted.
 			second := &counting{answering{name: "other", language: other}, 0}
-			got, ok, err := engine.AskAny(t.Context(),
+			got, ok, _, err := engine.AskAny(t.Context(),
 				holding(t, answering{name: "fx"}, second),
 				claiming{}, engine.Request{Scope: "src"}, engine.RoleOutline, outlining)
 
@@ -225,7 +270,10 @@ type answering struct {
 	name     string
 	language source.Language
 	declines bool
-	breaks   bool
+	// owns writes the engine's own name into its decline, which is what
+	// the repository's error convention produces.
+	owns   bool
+	breaks bool
 }
 
 func (a answering) Name() string { return a.name }
@@ -242,6 +290,9 @@ func (answering) Cost(engine.Role) engine.Cost        { return engine.CostParse 
 
 func (a answering) Outline(context.Context, engine.Request) (engine.Result[sema.Symbol], error) {
 	switch {
+	case a.declines && a.owns:
+		return engine.Result[sema.Symbol]{}, fmt.Errorf("%w: %s: not this one",
+			engine.ErrDecline, a.name)
 	case a.declines:
 		return engine.Result[sema.Symbol]{}, fmt.Errorf("%w: not this one", engine.ErrDecline)
 	case a.breaks:

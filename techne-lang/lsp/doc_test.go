@@ -46,7 +46,7 @@ func TestDoc(t *testing.T) {
 			// A server outlines one file no better than a parser does, at
 			// a thousandth of the speed. One tier for the engine would
 			// make an outline start a process to do worse.
-			held := pretending("")
+			held := pretending(modeDefault)
 			held.Serves[engine.RoleOutline] = trust.Syntactic
 
 			e := servingAs(t, held, map[string]string{"a.fake": content})
@@ -78,7 +78,7 @@ func TestDoc(t *testing.T) {
 			// The protocol counts UTF-16 code units. A span taken as
 			// bytes lands in the middle of a rune, and the edit computed
 			// from it writes over half a character.
-			got, err := serving(t, "unicode", map[string]string{"a.fake": unicode}).
+			got, err := serving(t, modeUnicode, map[string]string{"a.fake": unicode}).
 				Outline(t.Context(), engine.Request{Scope: "a.fake"})
 
 			assert.NoError(t, err, "outlining succeeds")
@@ -96,7 +96,7 @@ func TestDoc(t *testing.T) {
 			// none of this language's files says nothing about the
 			// language, and must not lower what an engine beside it is
 			// worth.
-			e := serving(t, "", map[string]string{"notes.md": "# notes\n"})
+			e := serving(t, modeDefault, map[string]string{"notes.md": "# notes\n"})
 
 			outlined, err := e.Outline(t.Context(), engine.Request{Scope: "."})
 			assert.NoError(t, err, "a scope with nothing to read is not a fault")

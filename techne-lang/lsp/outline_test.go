@@ -20,7 +20,7 @@ func TestOutline(t *testing.T) {
 
 		t.Run("reports what the server said the file declares", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Outline(t.Context(), engine.Request{Scope: "a.fake"})
 
 			assert.NoError(t, err, "outlining a file the server answers about succeeds")
@@ -33,7 +33,7 @@ func TestOutline(t *testing.T) {
 			// Working it out again from spans would disagree with the
 			// server wherever a language nests differently from how it
 			// is written, which is what the hierarchical shape is for.
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Outline(t.Context(), engine.Request{Scope: "a.fake"})
 
 			assert.NoError(t, err, "outlining succeeds")
@@ -52,7 +52,7 @@ func TestOutline(t *testing.T) {
 			// gopls writes a method as (*Store).Get, which is how it is
 			// declared and not what it is called. A caller searches for
 			// the name.
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Outline(t.Context(), engine.Request{Scope: "a.fake"})
 
 			assert.NoError(t, err, "outlining succeeds")
@@ -66,7 +66,7 @@ func TestOutline(t *testing.T) {
 			// names strings and keys as well as declarations. A caller
 			// filtering an outline would otherwise meet entries it
 			// cannot act on.
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Outline(t.Context(), engine.Request{Scope: "a.fake"})
 
 			assert.NoError(t, err, "outlining succeeds")
@@ -81,7 +81,7 @@ func TestOutline(t *testing.T) {
 			t.Parallel()
 			// The protocol carries a line and a character and no offset,
 			// and the offset is the authoritative coordinate here.
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Outline(t.Context(), engine.Request{Scope: "a.fake"})
 
 			assert.NoError(t, err, "outlining succeeds")
@@ -100,7 +100,7 @@ func TestOutline(t *testing.T) {
 			// as bytes it is "e Stör", two to the left and cutting a
 			// character in half. An edit computed from that writes over
 			// half a rune.
-			got, err := serving(t, "unicode", map[string]string{"a.fake": unicode}).
+			got, err := serving(t, modeUnicode, map[string]string{"a.fake": unicode}).
 				Outline(t.Context(), engine.Request{Scope: "a.fake"})
 
 			assert.NoError(t, err, "outlining succeeds")
@@ -116,7 +116,7 @@ func TestOutline(t *testing.T) {
 			// A directory with none of this language in it says nothing
 			// about the language, and must not lower what an engine
 			// beside it is worth.
-			got, err := serving(t, "", map[string]string{"notes.md": "# notes\n"}).
+			got, err := serving(t, modeDefault, map[string]string{"notes.md": "# notes\n"}).
 				Outline(t.Context(), engine.Request{Scope: "."})
 
 			assert.NoError(t, err, "a scope with nothing to read is not a fault")
@@ -126,7 +126,7 @@ func TestOutline(t *testing.T) {
 
 		t.Run("carries the caveat every resolved answer carries", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Outline(t.Context(), engine.Request{Scope: "a.fake"})
 
 			assert.NoError(t, err, "outlining succeeds")
@@ -140,7 +140,7 @@ func TestOutline(t *testing.T) {
 
 		t.Run("answers an empty file with nothing rather than a fault", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, "empty", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeEmpty, map[string]string{"a.fake": content}).
 				Outline(t.Context(), engine.Request{Scope: "a.fake"})
 
 			assert.NoError(t, err, "a file declaring nothing is an answer")

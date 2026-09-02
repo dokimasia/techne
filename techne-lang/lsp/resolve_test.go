@@ -32,9 +32,9 @@ func TestResolve(t *testing.T) {
 		// does not resolve, which is the answer techne exists to be
 		// trusted about.
 		for mode, why := range map[string]string{
-			"":      "a list of locations, which is what most servers send",
-			"one":   "one location, unwrapped, which the specification allows",
-			"links": "a list of links, which carries the name's own range separately",
+			modeDefault:     "a list of locations, which is what most servers send",
+			modeOneLocation: "one location, unwrapped, which the specification allows",
+			modeLinks:       "a list of links, which carries the name's own range separately",
 		} {
 			t.Run("reads a definition sent as "+why, func(t *testing.T) {
 				t.Parallel()
@@ -52,7 +52,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("answers a name that denotes nothing with nothing", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, "nowhere", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeUnresolved, map[string]string{"a.fake": content}).
 				Resolve(t.Context(), engine.Request{Scope: "a.fake"}, pointing())
 
 			assert.NoError(t, err, "a name that resolves to nothing is an answer, not a fault")
@@ -65,7 +65,7 @@ func TestResolve(t *testing.T) {
 			// A position is in a file. Asked about one this language does
 			// not claim, this engine has read nothing and must not lower
 			// what the engine beside it is worth.
-			got, err := serving(t, "", map[string]string{"notes.md": "# notes\n"}).
+			got, err := serving(t, modeDefault, map[string]string{"notes.md": "# notes\n"}).
 				Resolve(t.Context(), engine.Request{Scope: "notes.md"}, pointing())
 
 			assert.NoError(t, err, "a scope with nothing to read is not a fault")
@@ -75,7 +75,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("says it read nothing where the scope is a directory", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Resolve(t.Context(), engine.Request{Scope: "."}, pointing())
 
 			assert.NoError(t, err, "a scope naming no file is not a fault")
@@ -85,7 +85,7 @@ func TestResolve(t *testing.T) {
 
 		t.Run("carries the caveat every resolved answer carries", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Resolve(t.Context(), engine.Request{Scope: "a.fake"}, pointing())
 
 			assert.NoError(t, err, "resolving succeeds")

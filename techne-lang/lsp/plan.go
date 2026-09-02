@@ -12,6 +12,7 @@ import (
 
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
+	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 	"go.lsp.dev/protocol"
@@ -56,6 +57,11 @@ func (e *Engine) Plan(
 		return engine.Result[edit.Change]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
 
+	// A plan computed against a half-loaded workspace rewrites the
+	// references the server had found so far and leaves the rest, which
+	// is the one outcome worse than refusing.
+	e.working.settle(ctx, e.settling())
+
 	at, doc, known, err := e.aimed(ctx, held, req, target)
 	if err != nil {
 		return engine.Result[edit.Change]{}, err
@@ -78,8 +84,8 @@ func (e *Engine) Plan(
 	}
 	if ready == nil {
 		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"%w: %s: nothing at %s:%d can be renamed",
-			engine.ErrRefuse, e.server.Name, doc.path, at.Line+1)
+			"%w: %s: nothing at %s:%d:%d can be renamed",
+			engine.ErrRefuse, e.server.Name, doc.path, at.Line+1, at.Character+1)
 	}
 
 	answered, err := held.asks.Rename(ctx, &protocol.RenameParams{
@@ -105,11 +111,27 @@ func (e *Engine) Plan(
 			"%w: %s: the rename reaches %s, which is outside the workspace",
 			engine.ErrRefuse, e.server.Name, outside)
 	}
+	covered, caveats := e.settled(ctx)
 	return engine.Result[edit.Change]{
 		Items:        changes,
-		Completeness: trust.ScopeTotal,
-		Caveats:      []trust.Caveat{dynamic},
+		Completeness: covered,
+		Caveats:      caveats,
 	}, nil
+}
+
+// covering is the smallest declaration holding an offset.
+func covering(held []sema.Symbol, offset int) (sema.Symbol, bool) {
+	var found sema.Symbol
+	var known bool
+	for _, one := range held {
+		if one.Span.Start.Offset > offset || one.Span.End.Offset < offset {
+			continue
+		}
+		if !known || covers(found.Span) > covers(one.Span) {
+			found, known = one, true
+		}
+	}
+	return found, known
 }
 
 // beyond names the first change that falls outside the workspace, or
@@ -127,9 +149,11 @@ func beyond(held []edit.Change) string {
 
 // aimed is the position an operation is pointed at.
 //
-// A span is believed as it stands: whoever sent it has already resolved
-// which declaration it wanted. An identity is looked up, because it names
-// a declaration and not a place, and the place is what a server needs.
+// Both kinds resolve to the same thing: the place a declaration's own
+// name is written. A span covers the whole declaration and starts at
+// whatever opens it — class, type, def — and a server asked about a
+// keyword answers that there is nothing there to rename. So the span is
+// used to find the declaration and the declaration to find its name.
 func (e *Engine) aimed(
 	ctx context.Context,
 	held *session,
@@ -138,13 +162,20 @@ func (e *Engine) aimed(
 ) (protocol.Position, document, bool, error) {
 	switch target.Kind {
 	case edit.TargetSpan:
-		doc, err := e.read(target.Span.Path)
+		symbols, doc, err := e.symbols(ctx, held, target.Span.Path)
 		if err != nil {
 			return protocol.Position{}, document{}, false, err
 		}
-		if err := e.open(ctx, held, target.Span.Path); err != nil {
-			return protocol.Position{}, document{}, false, err
+		// The innermost declaration covering the span, for the reason
+		// [finder.at] takes the innermost: a span inside a method is
+		// inside the type holding it, and the caller meant the one it
+		// pointed at.
+		if within, known := covering(symbols, target.Span.Start.Offset); known {
+			return naming(doc, within), doc, true, nil
 		}
+		// A span covering no declaration is believed as it stands.
+		// Whoever sent it may be pointing at something an outline does
+		// not report, and a server is a better judge of that than this.
 		return doc.mark(target.Span.Start), doc, true, nil
 
 	case edit.TargetSymbol:

@@ -46,6 +46,11 @@ type answers struct {
 	// diagnostics, and dropping what it sends would report every such
 	// language as clean.
 	pushed *published
+
+	// working is what the server has said it is still doing. A server
+	// mid-load answers every question with nothing, and nothing reported
+	// as a complete answer is a claim that there is nothing there.
+	working *working
 }
 
 // PublishDiagnostics keeps what a server reported about a file.
@@ -129,15 +134,18 @@ func (a answers) WorkspaceFolders(context.Context) ([]protocol.WorkspaceFolder, 
 	}}, nil
 }
 
-// WorkDoneProgressCreate accepts a progress token.
+// WorkDoneProgressCreate accepts a progress token, and counts the job it
+// stands for as started.
 //
-// The progress reported against it is a notification this client drops.
-// Refusing the token instead makes a server that reports progress on
-// every request fail every request.
-func (answers) WorkDoneProgressCreate(
-	context.Context,
-	*protocol.WorkDoneProgressCreateParams,
+// It arrives before the notification that begins the job, which is what
+// makes it the useful signal: a question asked between the two would
+// otherwise find the server idle and believe an answer it was still
+// working on. Ending the job clears the token either way.
+func (a answers) WorkDoneProgressCreate(
+	_ context.Context,
+	params *protocol.WorkDoneProgressCreateParams,
 ) error {
+	a.working.began(tokened(params.Token))
 	return nil
 }
 

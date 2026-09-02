@@ -9,6 +9,7 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/internal/app"
+	"go.dokimi.dev/techne/lang"
 )
 
 // TestDoc covers the claim the package comment makes: this is the one
@@ -24,9 +25,9 @@ func TestDoc(t *testing.T) {
 			// Registration is an explicit call rather than an init with
 			// a blank import, so two servers built from the same binary
 			// hold the same set and nothing else can add to it.
-			first, err := app.Build(fstest.MapFS{}, nil)
+			first, err := app.Build(lang.Workspace{FS: fstest.MapFS{}}, nil)
 			assert.NoError(t, err, "an empty workspace still registers every language")
-			second, err := app.Build(fstest.MapFS{}, nil)
+			second, err := app.Build(lang.Workspace{FS: fstest.MapFS{}}, nil)
 			assert.NoError(t, err, "an empty workspace still registers every language")
 			assert.Equal(t, len(first.Languages), len(second.Languages),
 				"the set does not depend on which packages happened to be imported")
@@ -37,7 +38,7 @@ func TestDoc(t *testing.T) {
 			// A server serves a language whether or not the workspace
 			// has a file in it, so capabilities answers the same either
 			// way.
-			empty, err := app.Build(fstest.MapFS{}, nil)
+			empty, err := app.Build(lang.Workspace{FS: fstest.MapFS{}}, nil)
 			assert.NoError(t, err, "an empty workspace still registers every language")
 			assert.NotEmpty(t, empty.Languages, "a language is registered before any file is read")
 		})

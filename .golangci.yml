@@ -130,6 +130,7 @@ linters:
             - go.dokimi.dev/techne/lang$
             - go.dokimi.dev/techne/lang/treesitter
             - go.dokimi.dev/techne/lang/lsp
+            - go.dokimi.dev/techne/lang/engines
             - go.dokimi.dev/techne/lang/command
             - go.dokimi.dev/techne/lang/conformance
             # The tree-sitter binding. Grammars are not allowed here:

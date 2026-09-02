@@ -21,7 +21,7 @@ func TestVerify(t *testing.T) {
 
 		t.Run("asks a server that answers when asked", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
 
 			assert.NoError(t, err, "verifying succeeds")
@@ -33,7 +33,7 @@ func TestVerify(t *testing.T) {
 			// A server with no pull request is not a server with nothing
 			// to say. Reading only the request reports it as clean, which
 			// is a clean bill of health from something never asked.
-			got, err := serving(t, "pushes", map[string]string{"a.fake": content}).
+			got, err := serving(t, modePushes, map[string]string{"a.fake": content}).
 				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
 
 			assert.NoError(t, err, "verifying succeeds")
@@ -42,7 +42,7 @@ func TestVerify(t *testing.T) {
 
 		t.Run("grades a diagnostic the way this vocabulary does", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
 
 			assert.NoError(t, err, "verifying succeeds")
@@ -56,7 +56,7 @@ func TestVerify(t *testing.T) {
 			// A server is not required to send a severity. Defaulting one
 			// to the least serious hides it from a caller filtering for
 			// errors, and defaulting it to error invents one.
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
 
 			assert.NoError(t, err, "verifying succeeds")
@@ -69,7 +69,7 @@ func TestVerify(t *testing.T) {
 			// A caller suppressing by rule must not have to match the
 			// message text, and a broken build must be tellable from a
 			// linter's objection.
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
 
 			assert.NoError(t, err, "verifying succeeds")
@@ -82,7 +82,7 @@ func TestVerify(t *testing.T) {
 			// The protocol writes a code as either a string or a number.
 			// Reading one arm leaves the other empty, and a caller
 			// suppressing by rule has nothing to suppress by.
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
 
 			assert.NoError(t, err, "verifying succeeds")
@@ -93,7 +93,7 @@ func TestVerify(t *testing.T) {
 			t.Parallel()
 			// Whoever renders it has no filesystem, and a message with no
 			// line to read it against costs a read per diagnostic.
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
 
 			assert.NoError(t, err, "verifying succeeds")
@@ -106,7 +106,7 @@ func TestVerify(t *testing.T) {
 			// A server has one analysis and no notion of which linter to
 			// run. Answering from it silently would report a suite as
 			// having passed when it was never run.
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Verify(t.Context(), engine.Request{Scope: "a.fake"}, []string{"vet"})
 
 			assert.NoError(t, err, "verifying succeeds")
@@ -116,7 +116,7 @@ func TestVerify(t *testing.T) {
 
 		t.Run("says it read nothing where the scope holds none of its files", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, "", map[string]string{"notes.md": "# notes\n"}).
+			got, err := serving(t, modeDefault, map[string]string{"notes.md": "# notes\n"}).
 				Verify(t.Context(), engine.Request{Scope: "."}, nil)
 
 			assert.NoError(t, err, "a scope with nothing to read is not a fault")

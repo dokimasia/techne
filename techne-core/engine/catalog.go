@@ -20,25 +20,39 @@ import (
 // nothing adds an engine afterwards.
 type Catalog struct {
 	engines []Engine
-	named   map[string]bool
+	named   map[named]bool
+}
+
+// named is an engine's name within one language, which is what has to be
+// unique.
+type named struct {
+	language source.Language
+	engine   string
 }
 
 // NewCatalog returns an empty catalogue.
 func NewCatalog() *Catalog {
-	return &Catalog{named: map[string]bool{}}
+	return &Catalog{named: map[named]bool{}}
 }
 
 // Add registers an engine.
 //
-// It reports an error when an engine with the same name is already
-// registered: a provenance names the engine that answered, so two
-// engines sharing a name make an answer untraceable.
+// It reports an error when an engine of that name already answers about
+// that language: a provenance names the engine that answered, so two of
+// them sharing a name make an answer untraceable.
+//
+// Unique within a language rather than across all of them, because one
+// program serves several: typescript-language-server answers about
+// TypeScript and about JavaScript, and clangd about C and C++. Those are
+// two engines with one name, and an answer naming it is not ambiguous —
+// only one of them was ever asked, because [Catalog.For] selects by
+// language first.
 func (c *Catalog) Add(e Engine) error {
-	name := e.Name()
-	if c.named[name] {
-		return fmt.Errorf("engine: %q is already registered", name)
+	held := named{language: e.Language(), engine: e.Name()}
+	if c.named[held] {
+		return fmt.Errorf("engine: %q already answers about %q", held.engine, held.language)
 	}
-	c.named[name] = true
+	c.named[held] = true
 	c.engines = append(c.engines, e)
 	return nil
 }
@@ -53,7 +67,7 @@ func (c *Catalog) Add(e Engine) error {
 func (c *Catalog) For(ctx context.Context, lang source.Language, role Role) []Engine {
 	var usable []Engine
 	for _, e := range c.engines {
-		if e.Language() != lang || !serves(e, role) {
+		if e.Language() != lang || !offers(e, role) {
 			continue
 		}
 		if reason := unavailable(ctx, e); reason != nil {
@@ -95,7 +109,7 @@ func (c *Catalog) Capabilities(ctx context.Context) []Capability {
 	var out []Capability
 	for _, e := range c.engines {
 		for _, role := range Roles() {
-			if !serves(e, role) {
+			if !offers(e, role) {
 				continue
 			}
 			capability := Capability{
@@ -114,6 +128,23 @@ func (c *Catalog) Capabilities(ctx context.Context) []Capability {
 		}
 	}
 	return out
+}
+
+// offers reports whether an engine answers a role at all.
+//
+// Two things have to hold, and both are the engine's own statement about
+// itself. It must implement the port, which is how it declines a role
+// outright. And it must reach some tier for the role, which is how it
+// declines one whose port it implements: an engine implements a port for
+// every role that port covers and cannot implement it for some and not
+// others, so a language server that leaves outline to a parser says so
+// by reaching nothing for it.
+//
+// Selection and the capability report both ask this. Asking it in one
+// place is what keeps a report from advertising a role that can never be
+// selected.
+func offers(e Engine, role Role) bool {
+	return serves(e, role) && e.Fidelity(role) != trust.None
 }
 
 // unavailable reports why an engine cannot run, or nil. An engine that

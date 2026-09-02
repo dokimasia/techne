@@ -77,7 +77,7 @@ func (s *Service) Apply(ctx context.Context, req edit.Request) (edit.Outcome, er
 		return refused(req.Operation, err.Error()), nil
 	}
 
-	plan, err := s.plan(ctx, req, spec)
+	plan, declined, err := s.plan(ctx, req, spec)
 	switch {
 	case errors.Is(err, engine.ErrRefuse):
 		// The planner understood the request and will not serve it, so
@@ -85,6 +85,11 @@ func (s *Service) Apply(ctx context.Context, req edit.Request) (edit.Outcome, er
 		return refused(req.Operation, trimmed(err)), nil
 	case err != nil:
 		return edit.Outcome{}, err
+	case len(plan.Changes) == 0 && plan.Provenance.Engine == "" && declined.Reason() != "":
+		// What an engine said about why it could not plan is often the
+		// only actionable thing in the exchange, and is a different fact
+		// from nothing planning this operation at all.
+		return unsupported(req.Operation, declined.Reason()), nil
 	case len(plan.Changes) == 0 && plan.Provenance.Engine == "":
 		return unsupported(req.Operation, fmt.Sprintf(
 			"no engine plans %s for %q", req.Operation, req.Scope)), nil
@@ -239,25 +244,29 @@ func (s *Service) unchanged(plan edit.Plan) (map[source.Path][]byte, string, err
 //
 // The first that answers wins. A symbol is declared in one language, so
 // a second answer would be about a second symbol.
-func (s *Service) plan(ctx context.Context, req edit.Request, spec edit.Spec) (edit.Plan, error) {
+func (s *Service) plan(
+	ctx context.Context,
+	req edit.Request,
+	spec edit.Spec,
+) (edit.Plan, engine.Declined, error) {
 	asking := engine.Request{
 		Scope:     req.Scope,
 		Language:  req.Language,
 		Preferred: spec.MinFidelity,
 		Tests:     true,
 	}
-	answered, ok, err := engine.AskAny(ctx, s.catalog, s.router, asking, engine.RolePlan,
+	answered, ok, declined, err := engine.AskAny(ctx, s.catalog, s.router, asking, engine.RolePlan,
 		func(e engine.Engine) (engine.Result[edit.Change], error) {
 			return e.(engine.Planner).Plan(ctx, asking, req.Operation, req.Target, req.Args)
 		})
 	if err != nil || !ok {
-		return edit.Plan{}, err
+		return edit.Plan{}, declined, err
 	}
 	return edit.Plan{
 		Operation:  req.Operation,
 		Changes:    answered.Items,
 		Provenance: answered.Provenance,
-	}, nil
+	}, nil, nil
 }
 
 // seal pins the content the plan depends on and hands it back.
@@ -337,7 +346,7 @@ func (s *Service) check(
 		return nil, true, nil
 	}
 	asking := engine.Request{Scope: req.Scope, Language: req.Language}
-	answered, ok, err := engine.AskAny(ctx, s.catalog, s.router, asking, engine.RoleCheck,
+	answered, ok, _, err := engine.AskAny(ctx, s.catalog, s.router, asking, engine.RoleCheck,
 		func(e engine.Engine) (engine.Result[edit.Finding], error) {
 			return e.(engine.Checker).Check(ctx, files)
 		})

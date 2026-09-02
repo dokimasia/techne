@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -52,6 +53,59 @@ func TestMain(m *testing.M) {
 	os.Exit(serve(os.Getenv(pretend)))
 }
 
+// The shapes the fake takes. Each is a real server's behaviour, and a
+// name rather than a literal because the fake and the cases have to
+// agree on it and a typo in either would quietly test nothing.
+const (
+	// modeDefault the shape most servers answer in.
+	modeDefault = ""
+	// modeSilent starts and never answers.
+	modeSilent = "silent"
+	// modeDies exits during the handshake.
+	modeDies = "dies"
+	// modeEmpty reports a file that declares nothing.
+	modeEmpty = "empty"
+	// modeUnicode answers about a line holding a character outside ASCII.
+	modeUnicode = "unicode"
+	// modeFlat answers document symbols without building the tree.
+	modeFlat = "flat"
+	// modeOneLocation answers a definition as a single location rather than a list.
+	modeOneLocation = "one"
+	// modeLinks answers a definition as a list of links.
+	modeLinks = "links"
+	// modeUnresolved answers that a name denotes nothing.
+	modeUnresolved = "nowhere"
+	// modeUnranged answers a workspace query naming a file and no range in it.
+	modeUnranged = "resolving"
+	// modeUnnameable says the position cannot be renamed.
+	modeUnnameable = "unnameable"
+	// modeOrdered answers a rename as an ordered list that may move files.
+	modeOrdered = "ordered"
+	// modeOverlapping answers a rename with edits that write over each other.
+	modeOverlapping = "overlapping"
+	// modeStrict renames only what is at the column the protocol counts to.
+	modeStrict = "strict"
+	// modePushes reports diagnostics when it finishes rather than when asked.
+	modePushes = "pushes"
+	// modeAsks interrogates the client during the handshake.
+	modeAsks = "asks"
+	// modeElsewhere answers about a file outside the workspace.
+	modeElsewhere = "elsewhere"
+	// modeUncallable refuses the call hierarchy, as it does for anything not callable.
+	modeUncallable = "uncallable"
+	// modeLoading reads the workspace before it can answer, and says so
+	// the way a server does: a job that begins and later ends.
+	modeLoading = "loading"
+	// modeStuck begins that job and never finishes it.
+	modeStuck = "stuck"
+)
+
+// loading is how long the loading mode takes to read its workspace.
+//
+// Longer than starting a process and asking it two questions, so a case
+// that fails to wait meets the empty answer rather than racing past it.
+const loading = 2 * time.Second
+
 // asked is one request off the wire, in the shape the fake reads it.
 type asked struct {
 	ID     *int64          `json:"id"`
@@ -76,6 +130,16 @@ func serve(mode string) int {
 	}
 
 	in, out := bufio.NewReader(os.Stdin), os.Stdout
+	// Writing happens from the loop and, in the loading modes, from a
+	// timer as well.
+	var sending sync.Mutex
+	say := func(body string) {
+		sending.Lock()
+		defer sending.Unlock()
+		write(out, body)
+	}
+	// done reports whether the loading modes have finished loading.
+	done := false
 	// answered is what the client said when this server asked it
 	// something, so a case can see a callback that a passing outline
 	// would otherwise hide.
@@ -106,11 +170,11 @@ func serve(mode string) int {
 			// a workspace symbol answer.
 			seen = rooted(held.Params) + "/a.fake"
 			switch mode {
-			case "silent":
+			case modeSilent:
 				// A server that starts and never answers. The client
 				// must give up on its context rather than wait for one.
 				select {}
-			case "dies":
+			case modeDies:
 				return 3
 			}
 			// A notification and a request of its own before the answer,
@@ -120,7 +184,7 @@ func serve(mode string) int {
 				`"params":{"type":3,"message":"starting"}}`)
 			write(out, `{"jsonrpc":"2.0","id":9001,"method":"client/registerCapability",`+
 				`"params":{"registrations":[]}}`)
-			if mode == "asks" {
+			if mode == modeAsks {
 				// A real server asks these during startup and blocks on
 				// the reply. What comes back is kept so the next request
 				// can report it, because a fake cannot assert.
@@ -132,10 +196,30 @@ func serve(mode string) int {
 				answered["edit"] = request(in, out, 9004,
 					`"workspace/applyEdit","params":{"edit":{"changes":{}}}`)
 			}
+			if mode == modeLoading || mode == modeStuck {
+				// A server that reads the workspace announces it right
+				// after the handshake, which is the moment a client that
+				// asked too early would be answered with nothing.
+				say(`{"jsonrpc":"2.0","id":9100,` +
+					`"method":"window/workDoneProgress/create",` +
+					`"params":{"token":"loading"}}`)
+				say(`{"jsonrpc":"2.0","method":"$/progress","params":` +
+					`{"token":"loading","value":{"kind":"begin","title":"Loading"}}}`)
+				if mode == modeLoading {
+					go func() {
+						time.Sleep(loading)
+						say(`{"jsonrpc":"2.0","method":"$/progress","params":` +
+							`{"token":"loading","value":{"kind":"end"}}}`)
+						sending.Lock()
+						done = true
+						sending.Unlock()
+					}()
+				}
+			}
 			answer(out, held.ID, capabilities(mode))
 
 		case "textDocument/didOpen":
-			if mode == "pushes" {
+			if mode == modePushes {
 				// A server with no pull request reports when it has
 				// finished rather than when it is asked.
 				write(out, fmt.Sprintf(
@@ -144,7 +228,7 @@ func serve(mode string) int {
 			}
 
 		case "textDocument/documentSymbol":
-			if mode == "asks" {
+			if mode == modeAsks {
 				// The answers are reported as declaration names, which is
 				// the only channel a fake has to a case reading an
 				// outline.
@@ -155,11 +239,24 @@ func serve(mode string) int {
 		case "textDocument/definition":
 			answer(out, held.ID, defined(mode, seen))
 		case "textDocument/references":
+			if mode == modeLoading || mode == modeStuck {
+				// What a server answers before it has read the
+				// workspace: nothing, in the same shape as a real
+				// answer. Reported as it stands it is a claim that the
+				// declaration is unused.
+				sending.Lock()
+				ready := done
+				sending.Unlock()
+				if !ready {
+					answer(out, held.ID, `[]`)
+					continue
+				}
+			}
 			answer(out, held.ID, references(where(mode, seen)))
 		case "textDocument/implementation":
 			answer(out, held.ID, implementations(seen))
 		case "textDocument/prepareCallHierarchy":
-			if mode == "uncallable" {
+			if mode == modeUncallable {
 				// What a server says when asked about a declaration
 				// nothing can call: a type, an interface, a constant.
 				oops(out, held.ID, "Store is not a function")
@@ -251,7 +348,7 @@ func rooted(params json.RawMessage) string {
 // where is the file an answer names, which for one mode is a file
 // outside the workspace techne was pointed at.
 func where(mode, seen string) string {
-	if mode == "elsewhere" {
+	if mode == modeElsewhere {
 		return "file://" + os.Getenv(elsewhere)
 	}
 	return seen
@@ -287,7 +384,7 @@ func document(params json.RawMessage) string {
 // real server of each kind.
 func capabilities(mode string) string {
 	pull := `,"diagnosticProvider":{"interFileDependencies":false,"workspaceDiagnostics":false}`
-	if mode == "pushes" {
+	if mode == modePushes {
 		pull = ""
 	}
 	return `{"capabilities":{"documentSymbolProvider":true,"definitionProvider":true,` +
@@ -299,9 +396,9 @@ func capabilities(mode string) string {
 // symbols is what the fake reports a document declares.
 func symbols(mode string) string {
 	switch mode {
-	case "empty":
+	case modeEmpty:
 		return `[]`
-	case "unicode", "strict":
+	case modeUnicode, "strict":
 		// One name, on a line holding an emoji before it. The emoji is
 		// two UTF-16 units and four bytes, so the name begins at unit 17
 		// and byte 19: a client that took the one for the other reads
@@ -310,7 +407,7 @@ func symbols(mode string) string {
 		  {"name":"Störe","kind":23,
 		   "range":{"start":{"line":2,"character":17},"end":{"line":2,"character":22}},
 		   "selectionRange":{"start":{"line":2,"character":17},"end":{"line":2,"character":22}}}]`
-	case "flat":
+	case modeFlat:
 		// The shape a server that does not build the tree sends, which
 		// decoded as the tree yields names with every field empty.
 		return `[
@@ -353,12 +450,12 @@ const at = `{"start":{"line":2,"character":5},"end":{"line":2,"character":10}}`
 // name that does not resolve.
 func defined(mode, of string) string {
 	switch mode {
-	case "one":
+	case modeOneLocation:
 		return fmt.Sprintf(`{"uri":%q,"range":%s}`, of, at)
-	case "links":
+	case modeLinks:
 		return fmt.Sprintf(`[{"targetUri":%q,"targetRange":%s,"targetSelectionRange":%s}]`,
 			of, at, at)
-	case "nowhere":
+	case modeUnresolved:
 		return `null`
 	}
 	return fmt.Sprintf(`[{"uri":%q,"range":%s}]`, of, at)
@@ -401,7 +498,7 @@ func outgoing(of string) string {
 // file and no range in it, which is the arm a client that assumed a
 // range would drop.
 func matches(mode, of string) string {
-	if mode == "resolving" {
+	if mode == modeUnranged {
 		return fmt.Sprintf(`[{"name":"Store","kind":23,"location":{"uri":%q}}]`, of)
 	}
 	return fmt.Sprintf(`[
@@ -413,9 +510,9 @@ func matches(mode, of string) string {
 
 func prepared(mode string, params json.RawMessage) string {
 	switch mode {
-	case "unnameable":
+	case modeUnnameable:
 		return `null`
-	case "strict":
+	case modeStrict:
 		// The name on the unicode line begins at UTF-16 unit 17 and at
 		// byte 19. A client that sent the byte count is pointing at
 		// something else, and is told so the way a server tells anyone:
@@ -453,16 +550,16 @@ func renamed(mode, of string) string {
 	   "newText":"Vault"}]`
 
 	switch mode {
-	case "strict":
+	case modeStrict:
 		return fmt.Sprintf(`{"changes":{%q:[
 		  {"range":{"start":{"line":2,"character":17},"end":{"line":2,"character":22}},
 		   "newText":"Vault"}]}}`, of)
-	case "ordered":
+	case modeOrdered:
 		return fmt.Sprintf(`{"documentChanges":[
 		  {"textDocument":{"uri":%q,"version":1},"edits":%s},
 		  {"kind":"rename","oldUri":%q,"newUri":%q}]}`,
 			of, edits, of, strings.Replace(of, "a.fake", "vault.fake", 1))
-	case "overlapping":
+	case modeOverlapping:
 		return fmt.Sprintf(`{"changes":{%q:[
 		  {"range":{"start":{"line":2,"character":0},"end":{"line":2,"character":10}},
 		   "newText":"type Vault"},
@@ -530,10 +627,22 @@ func frame(from *bufio.Reader) ([]byte, error) {
 // the section lookup is exercised rather than answered null twice.
 func pretending(mode string) lsp.Server {
 	var settings map[string]any
-	if mode == "asks" {
+	if mode == modeAsks {
 		settings = map[string]any{"fake": map[string]any{"strict": true}}
 	}
+	// Short, so a case about a server that never finishes loading does
+	// not wait out the figure a real one is given.
+	var waits time.Duration
+	switch mode {
+	case modeLoading:
+		waits = 3 * loading
+	case modeStuck:
+		// Short, so a case about a server that never finishes does not
+		// wait out the figure a real one is given.
+		waits = time.Second
+	}
 	return lsp.Server{
+		Loading:    waits,
 		Name:       "fake",
 		Command:    []string{os.Args[0]},
 		LanguageID: "fake",
@@ -620,7 +729,7 @@ func reaching(t *testing.T, files map[string]string) *lsp.Engine {
 	t.Helper()
 	away := filepath.Join(workspace(t, map[string]string{"far.fake": content}), "far.fake")
 
-	server := pretending("elsewhere")
+	server := pretending(modeElsewhere)
 	server.Env[elsewhere] = away
 	return servingAs(t, server, files)
 }

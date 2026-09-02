@@ -32,7 +32,7 @@ func TestPosition(t *testing.T) {
 			// The name begins at byte 19 of its line and at UTF-16 unit
 			// 17, because the emoji before it is four bytes and two
 			// units. The fake refuses to rename anything but unit 17.
-			e := serving(t, "strict", map[string]string{"a.fake": unicode})
+			e := serving(t, modeStrict, map[string]string{"a.fake": unicode})
 			outlined, err := e.Outline(t.Context(), engine.Request{Scope: "a.fake"})
 			assert.NoError(t, err, "the case can find what it points at")
 			assert.Length(t, outlined.Items, 1, "the file declares one thing")
@@ -52,7 +52,7 @@ func TestPosition(t *testing.T) {
 			// A caller that read a position out of an answer this package
 			// gave it has an offset and no line. Ignoring it would point
 			// every such request at the start of the file.
-			e := serving(t, "strict", map[string]string{"a.fake": unicode})
+			e := serving(t, modeStrict, map[string]string{"a.fake": unicode})
 
 			got, err := e.Plan(t.Context(), engine.Request{Scope: "a.fake"},
 				edit.RenameSymbol,
@@ -70,7 +70,7 @@ func TestPosition(t *testing.T) {
 			t.Parallel()
 			// A caller looking at an editor has a line and a column and
 			// no byte count, which the port's own contract allows.
-			e := serving(t, "strict", map[string]string{"a.fake": unicode})
+			e := serving(t, modeStrict, map[string]string{"a.fake": unicode})
 
 			got, err := e.Plan(t.Context(), engine.Request{Scope: "a.fake"},
 				edit.RenameSymbol,
@@ -89,7 +89,7 @@ func TestPosition(t *testing.T) {
 			// The guard the three cases above rely on. Without it they
 			// would pass against a server that accepted anything, and
 			// prove nothing about the conversion.
-			e := serving(t, "strict", map[string]string{"a.fake": unicode})
+			e := serving(t, modeStrict, map[string]string{"a.fake": unicode})
 
 			_, err := e.Plan(t.Context(), engine.Request{Scope: "a.fake"},
 				edit.RenameSymbol,
@@ -109,7 +109,7 @@ func TestPosition(t *testing.T) {
 
 		t.Run("is cut from the bytes it covers", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Outline(t.Context(), engine.Request{Scope: "a.fake"})
 
 			assert.NoError(t, err, "outlining succeeds")
@@ -121,7 +121,7 @@ func TestPosition(t *testing.T) {
 			t.Parallel()
 			// A caller rendering an answer reports a line, and counting
 			// one out of an offset needs the file it came from.
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Outline(t.Context(), engine.Request{Scope: "a.fake"})
 
 			assert.NoError(t, err, "outlining succeeds")

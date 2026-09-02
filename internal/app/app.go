@@ -7,10 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
@@ -36,7 +36,7 @@ import (
 
 // register is one language module's entry point. The list below is the
 // only place techne names a language.
-type register func(fs.FS, *lang.Registry, *engine.Catalog) error
+type register func(lang.Workspace, *lang.Registry, *engine.Catalog) error
 
 // languages are the modules this binary ships with.
 //
@@ -64,7 +64,19 @@ type Server struct {
 	// Languages are the ones registered, so a caller can report what
 	// this binary serves without knowing what was compiled in.
 	Languages []source.Language
+
+	// engines is what has to be stopped on the way out. A language
+	// server is a process, and one left running per language per run is
+	// a leak nobody sees until the machine is out of memory.
+	engines *engine.Catalog
 }
+
+// Close stops every engine holding something that outlives a call.
+//
+// Whoever built the server calls it. An engine nobody asked anything
+// started nothing, so closing a server that answered no questions does
+// nothing.
+func (s *Server) Close(ctx context.Context) error { return s.engines.Close(ctx) }
 
 // mocked is the mock languages to register, read from the environment.
 //
@@ -134,20 +146,33 @@ func simulating(spec string) register {
 // mockVar names the languages to simulate.
 const mockVar = "TECHNE_MOCK"
 
+// shutting is how long a language server is given to stop before it is
+// killed. Long enough for one to write out what it was holding, short
+// enough that a client closing a connection does not wait on it.
+const shutting = 5 * time.Second
+
 // Build assembles a server over one workspace.
 //
-// The workspace is given twice: as an [io/fs.FS] the engines read
-// through, and as the [change.Files] the write path writes through.
-// Passing nil for the second registers the read tools alone, which is
-// what a caller with nothing to write to wants.
+// The workspace is given twice: as the tree the engines read, and as the
+// [change.Files] the write path writes through. Passing nil for the
+// second registers the read tools alone, which is what a caller with
+// nothing to write to wants.
+//
+// A workspace carrying no root on disk registers parsers alone. A
+// language server is a process that opens files by name and cannot be
+// pointed at a tree that is nowhere, so it is left out rather than
+// declared and then failing on the first call.
 //
 // It reports an error when a language module refuses to register, which
 // is a mistake in that module rather than something a caller did.
-func Build(fsys fs.FS, files change.Files) (*Server, error) {
+//
+// The result holds processes once anything is asked of it, so a caller
+// closes it.
+func Build(w lang.Workspace, files change.Files) (*Server, error) {
 	registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
 	shipped := append(slices.Clone(languages), mocked()...)
 	for _, add := range shipped {
-		if err := add(fsys, registry, catalogue); err != nil {
+		if err := add(w, registry, catalogue); err != nil {
 			return nil, fmt.Errorf("app: %w", err)
 		}
 	}
@@ -187,7 +212,7 @@ func Build(fsys fs.FS, files change.Files) (*Server, error) {
 		return nil, fmt.Errorf("app: %w", err)
 	}
 
-	return &Server{Tools: tools, Languages: registry.Languages()}, nil
+	return &Server{Tools: tools, Languages: registry.Languages(), engines: catalogue}, nil
 }
 
 // Run serves one workspace over stdio until the context is cancelled or
@@ -207,10 +232,18 @@ func Run(ctx context.Context, root, version string) error {
 	}
 	defer func() { _ = workspace.Close() }()
 
-	built, err := Build(workspace.FS(), workspace)
+	built, err := Build(lang.Workspace{FS: workspace.FS(), Root: root}, workspace)
 	if err != nil {
 		return err
 	}
+	// The servers outlive the request that started them and are stopped
+	// here, on a context of its own: the one that served is cancelled by
+	// the time this runs, and a shutdown needs one that is not.
+	defer func() {
+		stopping, stop := context.WithTimeout(context.WithoutCancel(ctx), shutting)
+		defer stop()
+		_ = built.Close(stopping)
+	}()
 
 	server, err := presenter.NewServer(built.Tools, presenter.Info{Name: "techne", Version: version})
 	if err != nil {

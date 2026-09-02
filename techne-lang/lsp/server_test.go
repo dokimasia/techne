@@ -5,6 +5,7 @@ package lsp_test
 
 import (
 	"testing"
+	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
@@ -101,6 +102,35 @@ func TestServer(t *testing.T) {
 			held.Serves = map[engine.Role]trust.Fidelity{engine.RoleOutline: trust.None}
 			assert.HasError(t, held.Valid(),
 				"a role claimed at no tier would be selected for and answer for nothing")
+		})
+	})
+}
+
+func TestLoading(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Loading", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("is declared per server, because they differ by orders", func(t *testing.T) {
+			t.Parallel()
+			// A parser-backed server is ready in milliseconds and one
+			// that imports a build system is not ready for minutes. One
+			// figure for both either stalls every question or reports
+			// every slow server's answers as short.
+			held := pretending(modeDefault)
+			held.Loading = 90 * time.Second
+
+			assert.NoError(t, held.Valid(), "a declared wait is part of a sound declaration")
+			assert.Equal(t, held.Loading, 90*time.Second, "and is kept as declared")
+		})
+
+		t.Run("is optional, and zero takes the default", func(t *testing.T) {
+			t.Parallel()
+			held := pretending(modeDefault)
+			held.Loading = 0
+			assert.NoError(t, held.Valid(),
+				"a server with nothing to say about its own start is still valid")
 		})
 	})
 }

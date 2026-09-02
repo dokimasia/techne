@@ -55,10 +55,11 @@ func (e *Engine) Outline(ctx context.Context, req engine.Request) (engine.Result
 		out = append(out, found...)
 	}
 
+	covered, caveats := e.settled(ctx)
 	return engine.Result[sema.Symbol]{
 		Items:        out,
-		Completeness: trust.ScopeTotal,
-		Caveats:      []trust.Caveat{dynamic},
+		Completeness: covered,
+		Caveats:      caveats,
 	}, nil
 }
 

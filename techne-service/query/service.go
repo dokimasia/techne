@@ -122,11 +122,17 @@ func ask[T any](
 	role engine.Role,
 	call func(engine.Engine) (engine.Result[T], error),
 ) (engine.Answer[T], error) {
-	answered, err := engine.AskEach(ctx, s.catalog, s.router, req, role, call)
+	answered, declined, err := engine.AskEach(ctx, s.catalog, s.router, req, role, call)
 	if err != nil {
 		return engine.Answer[T]{}, err
 	}
 	if len(answered) == 0 {
+		// What an engine said about why it could not answer is often the
+		// only actionable thing in the exchange, and is a different fact
+		// from nothing serving the file at all.
+		if why := declined.Reason(); why != "" {
+			return engine.Unsupported[T](why), nil
+		}
 		return engine.Unsupported[T](fmt.Sprintf(
 			"no engine serves %q for this role", req.Scope)), nil
 	}

@@ -5,13 +5,14 @@ package c
 
 import (
 	_ "embed"
-	"io/fs"
 
 	ts "github.com/tree-sitter/go-tree-sitter"
 	binding "github.com/tree-sitter/tree-sitter-c/bindings/go"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/lang"
+	"go.dokimi.dev/techne/lang/engines"
+	"go.dokimi.dev/techne/lang/lsp"
 	"go.dokimi.dev/techne/lang/treesitter"
 )
 
@@ -58,15 +59,37 @@ func Grammar() treesitter.Grammar {
 	}
 }
 
+// server is what runs this language's server.
+//
+// Named once and used twice, as the server's own name and as the command
+// to run: a declaration that spelt them differently would report one
+// thing about itself and start another. It needs no argument, because it
+// speaks the protocol over stdio and does nothing else.
+const server = "clangd"
+
+// Server is the language server this module declares.
+//
+// clangd is part of LLVM and reads compile_commands.json to learn how
+// each file is built. Without one it falls back to guessing the flags,
+// and answers about a translation unit that may not be the real one.
+//
+// Declared whether or not it is installed. Told nothing, a caller
+// concludes this language cannot be served at all; told the server is
+// missing, it knows what to install.
+func Server() lsp.Server {
+	return lsp.Server{
+		Name:       server,
+		Command:    []string{server},
+		LanguageID: lsp.IdentityC,
+		Serves:     lsp.Binding(),
+	}
+}
+
 // Register adds c to a registry and its engines to a catalogue.
 //
-// A composition root calls this. Reading the workspace through an
-// [io/fs.FS] keeps every path relative and lets a caller serve a tree
-// that is not on disk.
-func Register(fsys fs.FS, r *lang.Registry, c *engine.Catalog) error {
-	parser, err := treesitter.New(fsys, Declaration(), Grammar())
-	if err != nil {
-		return err
-	}
-	return r.Register(c, Declaration(), parser)
+// A composition root calls this. Which engines follow from a workspace
+// is settled in one place rather than ten, so a language cannot end up
+// served differently from its siblings by accident.
+func Register(w lang.Workspace, r *lang.Registry, c *engine.Catalog) error {
+	return engines.Register(w, r, c, Declaration(), Grammar(), Server())
 }

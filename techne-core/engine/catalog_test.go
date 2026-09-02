@@ -55,7 +55,7 @@ func TestCatalog(t *testing.T) {
 	t.Run("Add", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("refuses two engines with one name", func(t *testing.T) {
+		t.Run("refuses two engines with one name for one language", func(t *testing.T) {
 			t.Parallel()
 			// Provenance names the engine that answered. Two engines
 			// sharing a name make an answer untraceable.
@@ -63,6 +63,18 @@ func TestCatalog(t *testing.T) {
 			assert.NoError(t, c.Add(fake{name: "parser", lang: lang}), "the first engine registers")
 			assert.HasError(t, c.Add(fake{name: "parser", lang: lang}),
 				"a provenance names the engine that answered, so two engines cannot share a name")
+		})
+
+		t.Run("accepts one name answering about two languages", func(t *testing.T) {
+			t.Parallel()
+			// One program serves several: typescript-language-server
+			// answers about TypeScript and about JavaScript, clangd about
+			// C and C++. Refusing the second would make a language lose
+			// its server for being second in the list.
+			c := engine.NewCatalog()
+			assert.NoError(t, c.Add(fake{name: "shared", lang: lang}), "the first registers")
+			assert.NoError(t, c.Add(fake{name: "shared", lang: source.Language("elsewhere")}),
+				"and so does the same program answering about another language")
 		})
 	})
 
@@ -96,7 +108,7 @@ func TestCatalog(t *testing.T) {
 		t.Run("skips an engine that does not serve the role", func(t *testing.T) {
 			t.Parallel()
 			c := engine.NewCatalog()
-			mustAdd(t, c, fake{name: "outliner", lang: lang})
+			mustAdd(t, c, fake{name: "outliner", lang: lang, fidelity: trust.Syntactic})
 			assert.Empty(t, c.For(t.Context(), lang, engine.RoleVerify),
 				"an engine lacking the method does not serve the role")
 		})
@@ -123,15 +135,31 @@ func TestCatalog(t *testing.T) {
 			// it implement Available would mean every adapter carrying a
 			// method that returns nil.
 			c := engine.NewCatalog()
-			mustAdd(t, c, fake{name: "parser", lang: lang})
+			mustAdd(t, c, fake{name: "parser", lang: lang, fidelity: trust.Syntactic})
 			assert.Length(t, c.For(t.Context(), lang, engine.RoleOutline), 1,
 				"an in-process engine has nothing outside to check and is always usable")
+		})
+
+		t.Run("skips an engine that reaches nothing for the role", func(t *testing.T) {
+			t.Parallel()
+			// An engine implements a port for the roles it serves and
+			// cannot implement it for some and not others, so declaring
+			// no evidence is how it declines the rest. Offered anyway, it
+			// would be tried when the engine above it declines, and would
+			// appear in a capability report as serving at no tier.
+			c := engine.NewCatalog()
+			mustAdd(t, c, fake{name: "silent", lang: lang, fidelity: trust.None})
+			assert.Empty(t, c.For(t.Context(), lang, engine.RoleOutline),
+				"an engine holding no evidence for a role has nothing to say about it")
 		})
 
 		t.Run("skips another language", func(t *testing.T) {
 			t.Parallel()
 			c := engine.NewCatalog()
-			mustAdd(t, c, fake{name: "other", lang: source.Language("elsewhere")})
+			mustAdd(t, c, fake{
+				name: "other", lang: source.Language("elsewhere"),
+				fidelity: trust.Syntactic,
+			})
 			assert.Empty(t, c.For(t.Context(), lang, engine.RoleOutline),
 				"an engine answers about one language and is not offered for another")
 		})
@@ -139,6 +167,17 @@ func TestCatalog(t *testing.T) {
 
 	t.Run("Capabilities", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("reports no role an engine reaches nothing for", func(t *testing.T) {
+			t.Parallel()
+			// The report and the selection ask the same question. One
+			// advertising a role the other will never select tells a
+			// caller it can do something it cannot.
+			c := engine.NewCatalog()
+			mustAdd(t, c, fake{name: "silent", lang: lang, fidelity: trust.None})
+			assert.Empty(t, c.Capabilities(t.Context()),
+				"nothing is advertised that nothing can be selected for")
+		})
 
 		t.Run("reports what each engine serves, and why it cannot", func(t *testing.T) {
 			t.Parallel()

@@ -31,7 +31,7 @@ func TestRegistering(t *testing.T) {
 		t.Run("is refused when there is none", func(t *testing.T) {
 			t.Parallel()
 			registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
-			assert.HasError(t, mock.Registering("")(fstest.MapFS{}, registry, catalogue),
+			assert.HasError(t, mock.Registering("")(lang.Workspace{FS: fstest.MapFS{}}, registry, catalogue),
 				"a language without a name routes nowhere")
 		})
 	})
@@ -47,7 +47,7 @@ func TestRegistering(t *testing.T) {
 			// all, and nothing techne ships can stand one up.
 			registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
 			for _, name := range []string{"alpha", "beta"} {
-				assert.NoError(t, mock.Registering(name)(fstest.MapFS{}, registry, catalogue),
+				assert.NoError(t, mock.Registering(name)(lang.Workspace{FS: fstest.MapFS{}}, registry, catalogue),
 					"each language registers")
 			}
 
@@ -66,11 +66,20 @@ func TestRegistering(t *testing.T) {
 			t.Parallel()
 			registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
 			assert.NoError(t,
-				mock.Registering("strong")(fstest.MapFS{}, registry, catalogue),
+				mock.Registering("strong")(lang.Workspace{FS: fstest.MapFS{}}, registry, catalogue),
 				"one that resolves registers")
-			assert.NoError(t,
-				mock.Registering("weak", mock.At(trust.Syntactic))(fstest.MapFS{}, registry, catalogue),
-				"and one that only parses registers beside it")
+			assert.NoError(
+				t,
+				mock.Registering(
+					"weak",
+					mock.At(trust.Syntactic),
+				)(
+					lang.Workspace{FS: fstest.MapFS{}},
+					registry,
+					catalogue,
+				),
+				"and one that only parses registers beside it",
+			)
 
 			for _, one := range []struct {
 				language source.Language

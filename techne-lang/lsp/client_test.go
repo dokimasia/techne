@@ -25,7 +25,7 @@ func TestClient(t *testing.T) {
 	// returns what it said, keyed by the request it answered.
 	asked := func(t *testing.T) map[string]string {
 		t.Helper()
-		got, err := serving(t, "asks", map[string]string{"a.fake": content}).
+		got, err := serving(t, modeAsks, map[string]string{"a.fake": content}).
 			Outline(t.Context(), engine.Request{Scope: "a.fake"})
 		assert.NoError(t, err, "a server that asks the client questions still answers")
 
@@ -108,7 +108,7 @@ func TestClient(t *testing.T) {
 			// The fake registers during initialise and waits for the
 			// reply before it answers. Refusing it is an error response,
 			// and a server treating one as fatal never gets further.
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Outline(t.Context(), engine.Request{Scope: "a.fake"})
 
 			assert.NoError(t, err, "a server that registers a capability finishes starting")

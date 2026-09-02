@@ -6,6 +6,7 @@ package lsp
 import (
 	"os/exec"
 	"strings"
+	"time"
 
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/trust"
@@ -51,6 +52,17 @@ type Server struct {
 	// this process has. A server that needs a JDK or a toolchain pointed
 	// at is told here rather than by whoever launches techne.
 	Env map[string]string
+
+	// Loading is how long a question waits for this server to finish
+	// reading the workspace before it is answered anyway. Zero takes the
+	// package default.
+	//
+	// Declared per server because they differ by orders of magnitude: a
+	// parser-backed server is ready in milliseconds, and one that
+	// imports a build system is not ready for minutes. A question that
+	// outwaits this is still answered, and the answer says its coverage
+	// is partial rather than claiming to have seen everything.
+	Loading time.Duration
 }
 
 // Reaches is the tier this server claims for a role, and [trust.None]

@@ -20,7 +20,7 @@ func TestSearch(t *testing.T) {
 
 		t.Run("reports what the server's index matched", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Search(t.Context(), engine.Request{Scope: "."}, engine.Query{
 					Text: "St", Private: true,
 				})
@@ -35,7 +35,7 @@ func TestSearch(t *testing.T) {
 			// The newer shape lets a server defer working the range out
 			// until a caller asks about that one symbol. Dropping it
 			// loses a declaration the server found.
-			got, err := serving(t, "resolving", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeUnranged, map[string]string{"a.fake": content}).
 				Search(t.Context(), engine.Request{Scope: "."}, engine.Query{Text: "St"})
 
 			assert.NoError(t, err, "searching succeeds")
@@ -48,7 +48,7 @@ func TestSearch(t *testing.T) {
 			// A workspace symbol carries a name, a kind and a range, and
 			// no signature and no source. A caller that found what it
 			// wanted should not need a second call to read it.
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Search(t.Context(), engine.Request{Scope: "."}, engine.Query{Text: "St"})
 
 			assert.NoError(t, err, "searching succeeds")
@@ -64,7 +64,7 @@ func TestSearch(t *testing.T) {
 			// conclude something does not exist. A capped index cannot
 			// support that: the name it did not return may be the
 			// hundred and first rather than absent.
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Search(t.Context(), engine.Request{Scope: "."}, engine.Query{Text: "St"})
 
 			assert.NoError(t, err, "searching succeeds")
@@ -77,7 +77,7 @@ func TestSearch(t *testing.T) {
 
 		t.Run("narrows to a kind the protocol's query cannot express", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Search(t.Context(), engine.Request{Scope: "."}, engine.Query{
 					Text: "St", Kind: sema.KindField, Private: true,
 				})
@@ -91,7 +91,7 @@ func TestSearch(t *testing.T) {
 			// A caller asking what a workspace offers is asking what it
 			// exposes. The protocol's query is one string and cannot say
 			// so, which is why it is said here.
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Search(t.Context(), engine.Request{Scope: "."}, engine.Query{Text: "St"})
 
 			assert.NoError(t, err, "searching succeeds")
@@ -100,7 +100,7 @@ func TestSearch(t *testing.T) {
 
 		t.Run("stops at the limit the caller set", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Search(t.Context(), engine.Request{Scope: "."}, engine.Query{
 					Text: "St", Private: true, Limit: 1,
 				})
@@ -113,7 +113,7 @@ func TestSearch(t *testing.T) {
 			t.Parallel()
 			// A workspace query covers the workspace, and a caller that
 			// named a directory asked about that directory.
-			got, err := serving(t, "", map[string]string{"a.fake": content}).
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
 				Search(t.Context(), engine.Request{Scope: "elsewhere"}, engine.Query{
 					Text: "St", Private: true,
 				})

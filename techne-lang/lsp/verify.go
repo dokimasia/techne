@@ -19,14 +19,6 @@ import (
 	"go.lsp.dev/uri"
 )
 
-// settling is how long a file waits for a server that reports unasked.
-//
-// A server with no pull request analyses a file after it is opened and
-// publishes when it is done, so a file opened by this very call has
-// nothing said about it yet. Waiting is the difference between reporting
-// a file as clean and reporting what is wrong with it.
-const settling = 2 * time.Second
-
 // Verify reports what the server says is wrong with a scope.
 //
 // # Two ways a server reports, and both are read

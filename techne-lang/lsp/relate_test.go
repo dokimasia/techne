@@ -37,7 +37,7 @@ func TestRelate(t *testing.T) {
 			// who-uses-this wants is which declaration holds the use, and
 			// working that out is this engine's job rather than the
 			// caller's.
-			e := serving(t, "", map[string]string{"a.fake": content})
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
 				subject(t, e, "Store"), sema.ReferencedBy)
 
@@ -50,7 +50,7 @@ func TestRelate(t *testing.T) {
 			t.Parallel()
 			// A caller asking who uses this wants to read the use.
 			// Fetching each one costs a turn per site.
-			e := serving(t, "", map[string]string{"a.fake": content})
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
 				subject(t, e, "Store"), sema.ReferencedBy)
 
@@ -63,7 +63,7 @@ func TestRelate(t *testing.T) {
 			t.Parallel()
 			// A name written in a type is a reference and not a call, so
 			// answering calls out of the reference list overstates them.
-			e := serving(t, "", map[string]string{"a.fake": content})
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
 				subject(t, e, "Get"), sema.CalledBy)
 
@@ -73,7 +73,7 @@ func TestRelate(t *testing.T) {
 
 		t.Run("answers what a declaration calls", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, "", map[string]string{"a.fake": content})
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
 				subject(t, e, "Get"), sema.Calls)
 
@@ -86,7 +86,7 @@ func TestRelate(t *testing.T) {
 
 		t.Run("answers what satisfies a type", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, "", map[string]string{"a.fake": content})
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
 				subject(t, e, "Store"), sema.ImplementedBy)
 
@@ -100,7 +100,7 @@ func TestRelate(t *testing.T) {
 			// Answering none would be a claim that there are none, and a
 			// language that has imports would be reported as having no
 			// imports rather than as not having been asked.
-			e := serving(t, "", map[string]string{"a.fake": content})
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			_, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
 				subject(t, e, "Store"), sema.Imports)
 
@@ -129,7 +129,7 @@ func TestRelate(t *testing.T) {
 			// A server refuses the call hierarchy for a declaration
 			// nothing can call. Answering none would claim nothing calls
 			// it; failing would lose the answers another engine may have.
-			e := serving(t, "uncallable", map[string]string{"a.fake": content})
+			e := serving(t, modeUncallable, map[string]string{"a.fake": content})
 			_, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
 				subject(t, e, "Store"), sema.CalledBy)
 
@@ -139,7 +139,7 @@ func TestRelate(t *testing.T) {
 
 		t.Run("says it read nothing where the scope holds none of its files", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, "", map[string]string{"notes.md": "# notes\n"}).
+			got, err := serving(t, modeDefault, map[string]string{"notes.md": "# notes\n"}).
 				Relate(t.Context(), engine.Request{Scope: "."}, sema.ID("fake::Store"),
 					sema.ReferencedBy)
 

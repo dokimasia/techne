@@ -30,7 +30,7 @@ func TestPlan(t *testing.T) {
 
 		t.Run("reads a workspace edit sent as a map of files", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, "", map[string]string{"a.fake": content})
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			got, err := renaming(t, e)
 
 			assert.NoError(t, err, "planning a rename succeeds")
@@ -45,7 +45,7 @@ func TestPlan(t *testing.T) {
 			// express, and a rename that renames the file is exactly
 			// when a server sends it. Reading only the map silently
 			// drops the move.
-			e := serving(t, "ordered", map[string]string{"a.fake": content})
+			e := serving(t, modeOrdered, map[string]string{"a.fake": content})
 			got, err := renaming(t, e)
 
 			assert.NoError(t, err, "planning a rename succeeds")
@@ -62,7 +62,7 @@ func TestPlan(t *testing.T) {
 			t.Parallel()
 			// A server sends them in whatever order it found them. The
 			// write path walks them once and relies on the order.
-			e := serving(t, "", map[string]string{"a.fake": content})
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			got, err := renaming(t, e)
 
 			assert.NoError(t, err, "planning succeeds")
@@ -76,7 +76,7 @@ func TestPlan(t *testing.T) {
 			// Applied in one pass they would write over each other. A
 			// change that cannot be applied as described must not be
 			// handed on as though it could.
-			e := serving(t, "overlapping", map[string]string{"a.fake": content})
+			e := serving(t, modeOverlapping, map[string]string{"a.fake": content})
 			_, err := renaming(t, e)
 
 			assert.HasError(t, err, "overlapping edits are refused rather than applied wrongly")
@@ -88,7 +88,7 @@ func TestPlan(t *testing.T) {
 			// Skipping the question turns a keyword or a literal into a
 			// rename that reports no edits, which reads as a rename that
 			// had nothing to do.
-			e := serving(t, "unnameable", map[string]string{"a.fake": content})
+			e := serving(t, modeUnnameable, map[string]string{"a.fake": content})
 			_, err := renaming(t, e)
 
 			assert.ErrorIs(t, err, engine.ErrRefuse,
@@ -97,7 +97,7 @@ func TestPlan(t *testing.T) {
 
 		t.Run("refuses a rename with no new name", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, "", map[string]string{"a.fake": content})
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			_, err := e.Plan(t.Context(), engine.Request{Scope: "a.fake"},
 				edit.RenameSymbol,
 				edit.Target{Kind: edit.TargetSymbol, Symbol: subject(t, e, "Store")},
@@ -111,7 +111,7 @@ func TestPlan(t *testing.T) {
 			// Declining lets a parser that can do it have a turn.
 			// Approximating it would put a plan behind the write gate
 			// that no type checker computed.
-			e := serving(t, "", map[string]string{"a.fake": content})
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			_, err := e.Plan(t.Context(), engine.Request{Scope: "a.fake"},
 				edit.ExtractFunction,
 				edit.Target{Kind: edit.TargetSymbol, Symbol: subject(t, e, "Store")},
@@ -138,7 +138,7 @@ func TestPlan(t *testing.T) {
 			t.Parallel()
 			// A caller that has already resolved which declaration it
 			// meant should not have to name it a second way.
-			e := serving(t, "", map[string]string{"a.fake": content})
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			outlined, err := e.Outline(t.Context(), engine.Request{Scope: "a.fake"})
 			assert.NoError(t, err, "the case can find what it points at")
 			one, _ := named(outlined.Items, "Store")

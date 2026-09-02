@@ -13,6 +13,7 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/internal/app"
+	"go.dokimi.dev/techne/lang"
 )
 
 // held is the workspace as something that can be written to, so a test
@@ -60,7 +61,8 @@ func built(t *testing.T) *app.Server {
 // test that writes can read what it wrote.
 func over(t *testing.T, files fstest.MapFS) (*app.Server, fstest.MapFS) {
 	t.Helper()
-	s, err := app.Build(files, held{files: files})
+	s, err := app.Build(lang.Workspace{FS: files}, held{files: files})
+	t.Cleanup(func() { _ = s.Close(t.Context()) })
 	assert.NoError(t, err, "every language techne ships with registers into one workspace")
 	return s, files
 }
