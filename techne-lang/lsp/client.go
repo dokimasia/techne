@@ -19,8 +19,14 @@ import (
 // servers.
 const nothing = "null"
 
-// declined is why techne never lets a server write.
-const declined = "techne applies edits through its own gate"
+// Why a server is told its edit was not applied. Both are true and they
+// are not the same: one is an offer nobody asked for, and the other is
+// the answer to a question techne asked, which it will gate and apply
+// itself.
+const (
+	declined  = "techne applies edits through its own gate"
+	collected = "techne took the edit and applies it through its own gate"
+)
 
 // answers is what techne says when a server asks it something.
 //
@@ -51,6 +57,11 @@ type answers struct {
 	// mid-load answers every question with nothing, and nothing reported
 	// as a complete answer is a claim that there is nothing there.
 	working *working
+
+	// offering is where an edit techne asked a server to compute is
+	// kept. Some servers expose a refactoring only as a command, and
+	// answer it by offering the client the result to apply.
+	offering *asking
 }
 
 // PublishDiagnostics keeps what a server reported about a file.
@@ -149,21 +160,31 @@ func (a answers) WorkDoneProgressCreate(
 	return nil
 }
 
-// ApplyEdit refuses, always.
+// ApplyEdit never applies anything, and keeps what was offered when
+// techne asked for it.
 //
-// A server offering to write is offering to write behind techne, which
-// plans a change, gates it and applies it atomically. An edit that
-// arrives this way is subject to none of that: nothing previewed it,
-// nothing checked it, and a caller told a change was refused would find
-// it on disk anyway.
+// A server offering to write unprompted is offering to write behind
+// techne, which plans a change, gates it and applies it atomically. An
+// edit that arrives that way is subject to none of it: nothing
+// previewed it, nothing checked it, and a caller told a change was
+// refused would find it on disk anyway.
 //
-// Refused as an answer rather than as an error, because the server asked
-// a legitimate question and is entitled to know it was told no.
-func (answers) ApplyEdit(
+// One case is not that. A refactoring some servers expose only as a
+// command is performed rather than described: the server computes the
+// result and sends it here to be applied. techne asked for exactly that
+// edit, so it is kept and becomes the plan — and still goes through the
+// gate rather than onto disk.
+//
+// Either way the answer is that nothing was applied, which is true. The
+// server asked a legitimate question and is entitled to know.
+func (a answers) ApplyEdit(
 	_ context.Context,
-	_ *protocol.ApplyWorkspaceEditParams,
+	params *protocol.ApplyWorkspaceEditParams,
 ) (*protocol.ApplyWorkspaceEditResult, error) {
 	reason := declined
+	if params != nil && a.offering.offered(&params.Edit) {
+		reason = collected
+	}
 	return &protocol.ApplyWorkspaceEditResult{Applied: false, FailureReason: &reason}, nil
 }
 

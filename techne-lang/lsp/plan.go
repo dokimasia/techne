@@ -12,7 +12,6 @@ import (
 
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
-	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 	"go.lsp.dev/protocol"
@@ -21,12 +20,20 @@ import (
 
 // Plan computes the edits an operation needs, and writes nothing.
 //
-// # One operation, for now
+// # Three operations, each with a request behind it
 //
-// Renaming a declaration is the operation the protocol defines outright:
+// Renaming a declaration is the one the protocol defines outright:
 // textDocument/rename returns a workspace edit covering every file the
 // name reaches, computed by the same type checker that resolves it.
-// Everything else in the catalogue is declined rather than approximated.
+// Moving a file is workspace/willRenameFiles, which is what an editor
+// sends before it moves one and what mends the imports. Lifting a run of
+// lines into a function is a code action, which is how every editor
+// offers it.
+//
+// The rest of the catalogue is declined rather than approximated. What
+// is common to the three is that the server computes the edits: a plan
+// built here out of matched text would be wrong in exactly the cases
+// nobody checks.
 //
 // # Nothing here touches disk
 //
@@ -34,7 +41,7 @@ import (
 // is techne's write path that reads the files, gates the result and
 // applies it atomically — the same path a parser's plan goes through, so
 // a server cannot weaken it. That is also why [answers.ApplyEdit]
-// refuses: a server offering to write is offering to bypass all of it.
+// refuses unless techne asked for the edit itself.
 func (e *Engine) Plan(
 	ctx context.Context,
 	req engine.Request,
@@ -42,108 +49,43 @@ func (e *Engine) Plan(
 	target edit.Target,
 	args edit.Args,
 ) (engine.Result[edit.Change], error) {
-	if op != edit.RenameSymbol {
-		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"%w: %s: no request behind %s", engine.ErrDecline, e.server.Name, op)
+	switch op {
+	case edit.RenameSymbol:
+		return e.renaming(ctx, req, target, args)
+	case edit.MoveFile:
+		return e.relocating(ctx, target, args)
+	case edit.ExtractFunction:
+		return e.extracting(ctx, req, target, args)
 	}
-	fresh := strings.TrimSpace(args[edit.ArgNewName])
-	if fresh == "" {
-		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"%w: %s needs %s", engine.ErrRefuse, op, edit.ArgNewName)
-	}
-
-	held, err := e.running(ctx)
-	if err != nil {
-		return engine.Result[edit.Change]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
-	}
-
-	if !provides(held.capable.RenameProvider) {
-		return engine.Result[edit.Change]{}, e.unsupported("textDocument/rename")
-	}
-
-	at, doc, known, err := e.aimed(ctx, held, req, target)
-	if err != nil {
-		return engine.Result[edit.Change]{}, err
-	}
-	if !known {
-		return engine.Result[edit.Change]{Skipped: true, Completeness: trust.ScopeTotal}, nil
-	}
-
-	// A plan computed against a half-loaded workspace rewrites the
-	// references the server had found so far and leaves the rest, which
-	// is the one outcome worse than refusing. Waited on after the files
-	// are open, because opening them is what starts the work.
-	e.working.settle(ctx, e.settling())
-
-	// Asked first, where the server answers it: whether the thing at
-	// this position can be renamed at all. Skipping it turns a keyword
-	// or a literal into a rename that reports no edits and reads as a
-	// rename that had nothing to do.
-	//
-	// Not every server answers it, and one that does not refuses with an
-	// error indistinguishable from the position being unrenameable. So
-	// it is asked only where it was offered, and the rename goes ahead
-	// without it otherwise.
-	if prepares(held.capable.RenameProvider) {
-		ready, refused := held.asks.PrepareRename(ctx, &protocol.PrepareRenameParams{
-			TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(doc.path))},
-			Position:     at,
-		})
-		if refused != nil {
-			return engine.Result[edit.Change]{}, fmt.Errorf("lsp: %s: prepare rename: %w",
-				e.server.Name, refused)
-		}
-		if ready == nil {
-			return engine.Result[edit.Change]{}, fmt.Errorf(
-				"%w: %s: nothing at %s:%d:%d can be renamed",
-				engine.ErrRefuse, e.server.Name, doc.path, at.Line+1, at.Character+1)
-		}
-	}
-
-	answered, err := held.asks.Rename(ctx, &protocol.RenameParams{
-		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(doc.path))},
-		Position:     at,
-		NewName:      fresh,
-	})
-	if err != nil {
-		return engine.Result[edit.Change]{}, fmt.Errorf("lsp: %s: rename: %w", e.server.Name, err)
-	}
-
-	changes, err := e.changes(answered)
-	if err != nil {
-		return engine.Result[edit.Change]{}, err
-	}
-	if outside := beyond(changes); outside != "" {
-		// A server indexes whatever its own configuration covers, which
-		// for a multi-module workspace is more than techne was pointed
-		// at. techne applies changes under its root and reports them
-		// relative to it, so a plan reaching past it cannot be applied
-		// as described — and half of a rename is worse than none.
-		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"%w: %s: the rename reaches %s, which is outside the workspace",
-			engine.ErrRefuse, e.server.Name, outside)
-	}
-	covered, caveats := e.settled(ctx)
-	return engine.Result[edit.Change]{
-		Items:        changes,
-		Completeness: covered,
-		Caveats:      caveats,
-	}, nil
+	return engine.Result[edit.Change]{}, fmt.Errorf(
+		"%w: %s: no request behind %s", engine.ErrDecline, e.server.Name, op)
 }
 
-// covering is the smallest declaration holding an offset.
-func covering(held []sema.Symbol, offset int) (sema.Symbol, bool) {
-	var found sema.Symbol
-	var known bool
-	for _, one := range held {
-		if one.Span.Start.Offset > offset || one.Span.End.Offset < offset {
-			continue
-		}
-		if !known || covers(found.Span) > covers(one.Span) {
-			found, known = one, true
-		}
+// reached is what a plan's coverage is worth.
+//
+// A plan that rewrites the code referring to its target is a claim that
+// every reference was found, and the policy admits one only over total
+// coverage. A server that computed something has shown it looked, and
+// that carries the claim. A server that computed nothing has not: an
+// empty answer is what both a file nothing refers to and a server with
+// no view of the workspace produce, and the two are indistinguishable
+// in the answer itself. So an empty one falls back to the evidence
+// every empty semantic answer rests on.
+//
+// metals is why: it answers a move with no edits and a rename over a
+// build it has not imported with the declaration alone, and reports no
+// progress to say it was not ready, so waiting on it settles nothing.
+func (e *Engine) reached(
+	ctx context.Context,
+	held *session,
+	p source.Path,
+	shown bool,
+) (trust.Completeness, []trust.Caveat) {
+	covered, caveats := e.settled(ctx)
+	if covered == trust.ScopeTotal && !shown && !e.analysed(ctx, held, p) {
+		return trust.ScopePartial, append(caveats, unresolved)
 	}
-	return found, known
+	return covered, caveats
 }
 
 // beyond names the first change that falls outside the workspace, or
@@ -159,72 +101,37 @@ func beyond(held []edit.Change) string {
 	return ""
 }
 
-// aimed is the position an operation is pointed at.
-//
-// Both kinds resolve to the same thing: the place a declaration's own
-// name is written. A span covers the whole declaration and starts at
-// whatever opens it — class, type, def — and a server asked about a
-// keyword answers that there is nothing there to rename. So the span is
-// used to find the declaration and the declaration to find its name.
-func (e *Engine) aimed(
-	ctx context.Context,
-	held *session,
-	req engine.Request,
-	target edit.Target,
-) (protocol.Position, document, bool, error) {
-	switch target.Kind {
-	case edit.TargetSpan:
-		symbols, doc, err := e.symbols(ctx, held, target.Span.Path)
-		if err != nil {
-			return protocol.Position{}, document{}, false, err
-		}
-		// The innermost declaration covering the span, for the reason
-		// [finder.at] takes the innermost: a span inside a method is
-		// inside the type holding it, and the caller meant the one it
-		// pointed at.
-		if within, known := covering(symbols, target.Span.Start.Offset); known {
-			return naming(doc, within), doc, true, nil
-		}
-		// A span covering no declaration is believed as it stands.
-		// Whoever sent it may be pointing at something an outline does
-		// not report, and a server is a better judge of that than this.
-		return doc.mark(target.Span.Start), doc, true, nil
-
-	case edit.TargetSymbol:
-		subject, doc, known, read, err := e.declaring(ctx, held, req, target.Symbol)
-		if err != nil || !read {
-			return protocol.Position{}, document{}, false, err
-		}
-		if !known {
-			// Read the files and found no such declaration. A plan
-			// computed from a position nothing was found at rewrites
-			// whatever happens to be there.
-			return protocol.Position{}, document{}, false, fmt.Errorf(
-				"%w: %s: no declaration in %q matches %s",
-				engine.ErrRefuse, e.server.Name, req.Scope, target.Symbol)
-		}
-		return naming(doc, subject), doc, true, nil
-	}
-
-	return protocol.Position{}, document{}, false, fmt.Errorf(
-		"%w: %s is pointed at nothing this engine can place", engine.ErrRefuse, e.server.Name)
+// changes turns a workspace edit into what the write path applies.
+func (e *Engine) changes(held *protocol.WorkspaceEdit) ([]edit.Change, error) {
+	return e.changesAgainst(held, nil)
 }
 
-// changes turns a workspace edit into what the write path applies.
+// changesAgainst is the same against text the server holds that is not
+// what is on disk.
+//
+// A range is a line and a character count, and turning it into a byte
+// offset needs the text the server counted in. That is the file for
+// every operation but one: an extraction is renamed after it is made,
+// and the buffer the rename was computed against is the extraction's
+// result, which nothing has written yet. Converted against the file the
+// rename would write over the wrong bytes.
 //
 // Both shapes are read. The older one is a map of files to edits; the
 // newer one is an ordered list that may also create, rename and delete
 // files, which a rename needs when a language ties a file's name to what
 // it declares. A server sends one or the other, and reading only the map
 // silently drops every file operation a rename implied.
-func (e *Engine) changes(held *protocol.WorkspaceEdit) ([]edit.Change, error) {
+func (e *Engine) changesAgainst(
+	held *protocol.WorkspaceEdit,
+	texts map[source.Path]document,
+) ([]edit.Change, error) {
 	if held == nil {
 		return nil, nil
 	}
 
 	var out []edit.Change
 	for held, edits := range held.Changes {
-		change, err := e.rewrite(held, edits)
+		change, err := e.rewriteAgainst(held, edits, texts)
 		if err != nil {
 			return nil, err
 		}
@@ -232,7 +139,7 @@ func (e *Engine) changes(held *protocol.WorkspaceEdit) ([]edit.Change, error) {
 	}
 
 	for _, one := range held.DocumentChanges {
-		change, carries, err := e.operation(one)
+		change, carries, err := e.operation(one, texts)
 		if err != nil {
 			return nil, err
 		}
@@ -250,10 +157,13 @@ func (e *Engine) changes(held *protocol.WorkspaceEdit) ([]edit.Change, error) {
 }
 
 // operation reads one entry of the ordered shape.
-func (e *Engine) operation(held protocol.DocumentChange) (edit.Change, bool, error) {
+func (e *Engine) operation(
+	held protocol.DocumentChange,
+	texts map[source.Path]document,
+) (edit.Change, bool, error) {
 	switch one := held.(type) {
 	case *protocol.TextDocumentEdit:
-		change, err := e.rewrite(one.TextDocument.URI, plain(one.Edits))
+		change, err := e.rewriteAgainst(one.TextDocument.URI, plain(one.Edits), texts)
 		return change, true, err
 
 	case *protocol.CreateFile:
@@ -295,17 +205,24 @@ func plain(held []protocol.TextDocumentEditElement) []protocol.TextEdit {
 	return out
 }
 
-// rewrite converts one file's edits into the coordinates this vocabulary
-// counts in.
+// rewriteAgainst converts one file's edits into the coordinates this
+// vocabulary counts in, counting in the text the server held.
 //
 // Sorted by where they start and checked for overlap, because the write
 // path applies them in one pass and relies on both. A server is not
 // required to send them in order.
-func (e *Engine) rewrite(held uri.URI, edits []protocol.TextEdit) (edit.Change, error) {
+func (e *Engine) rewriteAgainst(
+	held uri.URI,
+	edits []protocol.TextEdit,
+	texts map[source.Path]document,
+) (edit.Change, error) {
 	p := e.pathOf(held)
-	doc, err := e.read(p)
-	if err != nil {
-		return edit.Change{}, err
+	doc, given := texts[p]
+	if !given {
+		var err error
+		if doc, err = e.read(p); err != nil {
+			return edit.Change{}, err
+		}
 	}
 
 	out := make([]edit.TextEdit, 0, len(edits))

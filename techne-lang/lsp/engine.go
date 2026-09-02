@@ -5,11 +5,13 @@ package lsp
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"strings"
+	"slices"
 	"sync"
 
 	"go.dokimi.dev/techne/core/engine"
@@ -54,9 +56,17 @@ type Engine struct {
 	held     *session
 	failed   error
 
-	// opened is the files the server has been told about, so a file is
-	// opened once per session rather than per question.
-	opened sync.Map
+	// opening serialises what the server is told about a file. Two
+	// questions arriving together would otherwise open one file twice, or
+	// send two edits under the same version.
+	opening sync.Mutex
+	// showing is held while the server is being shown a buffer that is
+	// not on disk, which is how a refactoring computed over the result
+	// of another one is asked for. A question arriving in that window
+	// would otherwise put the file back underneath it.
+	showing sync.Mutex
+	// opened is what the server was last given, per absolute path.
+	opened map[string]sent
 
 	// pushed holds the diagnostics of a server that sends them unasked,
 	// and is replaced with the session it belongs to: what the last
@@ -66,6 +76,10 @@ type Engine struct {
 	// working is what this session's server has said it is still doing,
 	// and is replaced with it for the same reason.
 	working *working
+
+	// offering is where an edit a server was asked to compute is kept,
+	// and is replaced with the session for the same reason.
+	offering *asking
 }
 
 // New returns an engine over one language's server, rooted at a
@@ -93,7 +107,17 @@ func New(root string, d lang.Declaration, s Server) (*Engine, error) {
 	if info, err := os.Stat(held); err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("lsp: %q workspace root %q is not a directory", d.Language, held)
 	}
-	return &Engine{declared: d, server: s, root: held}, nil
+	return &Engine{declared: d, server: s, root: held, opened: map[string]sent{}}, nil
+}
+
+// sent is what the server was last given for one file.
+//
+// The digest is of the text it was given, not of the file: what decides
+// whether the server is holding something stale is what it was told, and
+// a file rewritten to its old content is not stale.
+type sent struct {
+	version int32
+	digest  [sha256.Size]byte
 }
 
 // Name identifies this engine in a provenance and a capability report.
@@ -137,8 +161,11 @@ func (e *Engine) Close(ctx context.Context) error {
 	}
 	held := e.held
 	e.held, e.failed = nil, nil
-	e.pushed, e.working = nil, nil
-	e.opened.Clear()
+	e.pushed, e.working, e.offering = nil, nil, nil
+
+	e.opening.Lock()
+	e.opened = map[string]sent{}
+	e.opening.Unlock()
 	return held.stop(ctx)
 }
 
@@ -151,6 +178,7 @@ func (e *Engine) running(ctx context.Context) (*session, error) {
 	defer e.starting.Unlock()
 
 	if e.held != nil {
+		e.current(ctx, e.held)
 		return e.held, nil
 	}
 	if e.failed != nil {
@@ -161,10 +189,10 @@ func (e *Engine) running(ctx context.Context) (*session, error) {
 		return nil, err
 	}
 
-	e.pushed, e.working = newPublished(), newWorking()
+	e.pushed, e.working, e.offering = newPublished(), newWorking(), &asking{}
 	held, err := start(ctx, e.server, e.root, answers{
 		root: e.root, settings: e.server.Settings,
-		pushed: e.pushed, working: e.working,
+		pushed: e.pushed, working: e.working, offering: e.offering,
 	})
 	if err != nil {
 		e.failed = err
@@ -178,6 +206,63 @@ func (e *Engine) running(ctx context.Context) (*session, error) {
 
 	e.held = held
 	return held, nil
+}
+
+// current re-sends every file the server is holding that has moved on
+// since it was given it.
+//
+// Refreshing the one file a question names is not enough. A server
+// answers from every buffer it holds: a rename asks who uses a
+// declaration, and the uses are in other files, one of which the last
+// change rewrote. Driving two renames through one session produced a
+// second rename that found no uses at all and rewrote the declaration
+// alone, because the file holding the uses still said what it said
+// before the first.
+//
+// Once per question rather than once per file. Nothing in this process
+// writes to the workspace while a question is being answered, and doing
+// it per file would cost a read of every open file for every file read.
+func (e *Engine) current(ctx context.Context, held *session) {
+	e.showing.Lock()
+	defer e.showing.Unlock()
+
+	e.opening.Lock()
+	holding := slices.Collect(maps.Keys(e.opened))
+	e.opening.Unlock()
+
+	for _, full := range holding {
+		content, err := os.ReadFile(full)
+		if err != nil {
+			e.closed(ctx, held, full)
+			continue
+		}
+		_ = e.told(ctx, held, full, content)
+	}
+}
+
+// closed tells the server a file it was holding has gone.
+//
+// A move takes one away. A server left holding the buffer keeps
+// answering about a file that is not there and keeps reporting
+// diagnostics against it, and every question after that re-reads a path
+// nothing will ever read.
+func (e *Engine) closed(ctx context.Context, held *session, full string) {
+	e.opening.Lock()
+	_, holding := e.opened[full]
+	delete(e.opened, full)
+	e.opening.Unlock()
+
+	if !holding {
+		return
+	}
+	_ = held.asks.DidClose(ctx, &protocol.DidCloseTextDocumentParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(full)},
+	})
+	_ = held.asks.DidChangeWatchedFiles(ctx, &protocol.DidChangeWatchedFilesParams{
+		Changes: []protocol.FileEvent{{
+			URI: uri.File(full), Type: protocol.FileChangeTypeDeleted,
+		}},
+	})
 }
 
 // handshake is the exchange a server will not answer anything before.
@@ -224,6 +309,25 @@ func (e *Engine) handshake(ctx context.Context, held *session) error {
 					// makes an outline nest.
 					HierarchicalDocumentSymbolSupport: &yes,
 				},
+				// A refactoring is a code action, and a client that
+				// declares none of this is answered with bare commands:
+				// no kind to select on, no data to resolve, and nothing
+				// to tell a refactoring from a quick fix.
+				CodeAction: &protocol.CodeActionClientCapabilities{
+					CodeActionLiteralSupport: protocol.ClientCodeActionLiteralOptions{
+						CodeActionKind: protocol.ClientCodeActionKindOptions{
+							ValueSet: refactorings,
+						},
+					},
+					DataSupport:     &yes,
+					DisabledSupport: &yes,
+					ResolveSupport: protocol.ClientCodeActionResolveOptions{
+						// The edit, which most servers compute only when
+						// asked for: working one out for every action in
+						// a menu nobody opened is what they avoid.
+						Properties: []string{"edit"},
+					},
+				},
 			},
 			Window: &protocol.WindowClientCapabilities{
 				// Without this a server has no reason to report what it
@@ -239,6 +343,32 @@ func (e *Engine) handshake(ctx context.Context, held *session) error {
 				// their behaviour from configuration is a different
 				// server.
 				Configuration: &yes,
+				// A server watches the workspace for files changing
+				// outside its own buffers, and techne's write path is
+				// one of the things that changes them.
+				DidChangeWatchedFiles: &protocol.DidChangeWatchedFilesClientCapabilities{
+					DynamicRegistration: &yes,
+				},
+				// A workspace edit may move, create and delete files as
+				// well as rewrite them, and a server that was not told
+				// the client can apply those sends only the rewrites.
+				WorkspaceEdit: &protocol.WorkspaceEditClientCapabilities{
+					DocumentChanges: &yes,
+					ResourceOperations: []protocol.ResourceOperationKind{
+						protocol.ResourceOperationKindCreate,
+						protocol.ResourceOperationKindRename,
+						protocol.ResourceOperationKindDelete,
+					},
+				},
+				// Several servers advertise willRenameFiles only to a
+				// client that said it sends one. jdtls and metals are
+				// two: undeclared, both report no file operations at all
+				// and moving a file is refused for a language whose
+				// server does it.
+				FileOperations: &protocol.FileOperationClientCapabilities{
+					WillRename: &yes,
+					DidRename:  &yes,
+				},
 			},
 		},
 	}
@@ -273,20 +403,93 @@ func (e *Engine) handshake(ctx context.Context, held *session) error {
 	return nil
 }
 
-// open tells the server about a file, once.
+// open tells the server about a file, and tells it again when the file
+// has moved on since.
 //
-// A server answers about the files it has been given, and re-sending one
-// it already holds is a version conflict rather than a refresh.
+// A server answers about the buffer it was given rather than about the
+// file, and holds that buffer for the life of the session. techne's own
+// write path rewrites files under it: after a rename is applied the
+// server is still holding what the file said before, and the next
+// question is answered about code that is no longer there. The failure
+// is silent — a second rename computed against the old text finds the
+// uses the old text had, rewrites the declaration and leaves the rest,
+// which is the outcome the whole write path exists to prevent.
+//
+// So the file is read every time and sent again when it differs. Reading
+// it costs nothing beside the round trip that follows, and re-sending
+// unchanged content is the version conflict that made this open once.
 func (e *Engine) open(ctx context.Context, held *session, p source.Path) error {
 	full := e.fullPath(p)
-	if _, already := e.opened.Load(full); already {
-		return nil
-	}
-
 	content, err := os.ReadFile(full)
 	if err != nil {
 		return fmt.Errorf("lsp: read %s: %w", p, err)
 	}
+	return e.told(ctx, held, full, content)
+}
+
+// told tells the server what a file on disk holds, both as the buffer it
+// is keeping and as a file that changed underneath it.
+//
+// Both, because they are different things to a server. A server that
+// keeps its own model of the workspace checks it against the filesystem
+// before it refactors and refuses while the two differ: jdtls answers a
+// rename over a file techne's write path rewrote with "out of sync with
+// file system", and updating the buffer does not settle it.
+func (e *Engine) told(ctx context.Context, held *session, full string, content []byte) error {
+	changed, err := e.sync(ctx, held, full, content)
+	if err != nil || !changed {
+		return err
+	}
+	return held.asks.DidChangeWatchedFiles(ctx, &protocol.DidChangeWatchedFilesParams{
+		Changes: []protocol.FileEvent{{
+			URI: uri.File(full), Type: protocol.FileChangeTypeChanged,
+		}},
+	})
+}
+
+// sync tells the server what a file holds, whether or not that is what
+// is on disk.
+//
+// An unsaved buffer is what an editor gives a server while someone is
+// still typing, and it is how a refactoring computed over the result of
+// another one is asked for: the extraction is not written yet, and the
+// server has to see it to be able to rename what it made.
+// It reports whether the server was holding something else, which is
+// what tells a caller the file moved on rather than being seen for the
+// first time.
+func (e *Engine) sync(
+	ctx context.Context,
+	held *session,
+	full string,
+	content []byte,
+) (bool, error) {
+	e.opening.Lock()
+	defer e.opening.Unlock()
+
+	digest := sha256.Sum256(content)
+	was, already := e.opened[full]
+	switch {
+	case already && was.digest == digest:
+		return false, nil
+	case already:
+		// Whole-document synchronisation. A server that asked for
+		// incremental sync accepts a full replacement too: the range is
+		// what is optional, not the text.
+		if err := held.asks.DidChange(ctx, &protocol.DidChangeTextDocumentParams{
+			TextDocument: protocol.VersionedTextDocumentIdentifier{
+				TextDocumentIdentifier: protocol.TextDocumentIdentifier{URI: uri.File(full)},
+				Version:                was.version + 1,
+			},
+			ContentChanges: []protocol.TextDocumentContentChangeEvent{
+				&protocol.TextDocumentContentChangeWholeDocument{Text: string(content)},
+			},
+		}); err != nil {
+			return false, err
+		}
+		e.opened[full] = sent{version: was.version + 1, digest: digest}
+		return true, nil
+	}
+
 	if err := held.asks.DidOpen(ctx, &protocol.DidOpenTextDocumentParams{
 		TextDocument: protocol.TextDocumentItem{
 			URI:        uri.File(full),
@@ -295,10 +498,10 @@ func (e *Engine) open(ctx context.Context, held *session, p source.Path) error {
 			Text:       string(content),
 		},
 	}); err != nil {
-		return err
+		return false, err
 	}
-	e.opened.Store(full, struct{}{})
-	return nil
+	e.opened[full] = sent{version: 1, digest: digest}
+	return false, nil
 }
 
 // fullPath is a path where it is on disk.
@@ -322,13 +525,16 @@ func (e *Engine) fullPath(p source.Path) string {
 // server answers about what it reads, and what it reads includes a
 // standard library and a module cache; reported as a relative path those
 // would climb out of the root and read as workspace files.
+//
+// Climbing out is a path segment of two dots. A file called ..config is
+// a name that begins with them and is inside.
 func (e *Engine) pathOf(held uri.URI) source.Path {
 	full := held.FsPath()
 	if full == "" {
 		return source.Path(held)
 	}
 	relative, err := filepath.Rel(e.root, full)
-	if err != nil || strings.HasPrefix(relative, "..") {
+	if err != nil || outside(source.Path(filepath.ToSlash(relative))) {
 		return source.Path(filepath.ToSlash(full))
 	}
 	return source.Path(filepath.ToSlash(relative))

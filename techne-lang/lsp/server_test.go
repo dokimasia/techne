@@ -109,6 +109,28 @@ func TestServer(t *testing.T) {
 func TestLoading(t *testing.T) {
 	t.Parallel()
 
+	t.Run("Extracts", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("says whether the server offers the refactoring at all", func(t *testing.T) {
+			t.Parallel()
+			// A server nobody declared this for is not one that refuses
+			// it: it is one nobody has asked. pyright, clangd and metals
+			// offer nothing over a run of statements, and that is a fact
+			// about each of them rather than a default.
+			assert.False(t, declaring().Extracts.Offered(),
+				"a declaration that names no action offers none")
+
+			held := declaring()
+			held.Extracts = lsp.Refactor{Kind: "refactor.extract.function"}
+			assert.True(t, held.Extracts.Offered(), "a kind alone is enough to ask for one")
+
+			held.Extracts = lsp.Refactor{Titles: []string{"extract method"}}
+			assert.True(t, held.Extracts.Offered(),
+				"and so is a wording, for a server that sets no kind")
+		})
+	})
+
 	t.Run("Loading", func(t *testing.T) {
 		t.Parallel()
 

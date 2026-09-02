@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -107,7 +109,50 @@ const (
 	// initialise that it answers nothing else — which is most servers
 	// for most of the protocol.
 	modeThin = "thin"
+	// modeEchoes reports the first line of the buffer it is holding as
+	// the declaration a file makes, which is the only way to see from
+	// outside what a server thinks a file says.
+	modeEchoes = "echoes"
+	// modeMoveless declares everything except an interest in files
+	// moving, which is most servers.
+	modeMoveless = "moveless"
+	// modeSilentMove is asked about a file move and answers that it
+	// implies no edits, while publishing nothing and answering no
+	// diagnostic request. metals does exactly that.
+	modeSilentMove = "silentmove"
+	// modeExtracts offers extracting a variable beside extracting a
+	// function, both under one kind, and hands back the edit when the
+	// action is resolved. gopls, rust-analyzer and jdtls all work this
+	// way.
+	modeExtracts = "extracts"
+	// modeCommands offers the same extraction as a command instead, and
+	// answers it by asking the client to apply the result.
+	// typescript-language-server exposes every refactoring this way.
+	modeCommands = "commands"
+	// modeWatches keeps its own model of the workspace and refuses to
+	// refactor while it differs from the filesystem, until it is told
+	// what changed. jdtls answers "out of sync with file system".
+	modeWatches = "watches"
+	// modeOpened rewrites only the buffers the client is holding, and
+	// answers perfectly well who uses a declaration while doing so.
+	// metals renames a class in the one file it was given and leaves
+	// every other use of it where it was.
+	modeOpened = "opened"
+	// modeShort names a use and then does not rewrite it, whatever the
+	// client is holding.
+	modeShort = "short"
 )
+
+// buffered reports whether a mode only rewrites what it was given.
+func buffered(mode string) bool { return mode == modeOpened || mode == modeShort }
+
+// placeholder is what the fake calls the function it extracts, as every
+// real server calls it something of its own: newFunction, fun_name,
+// getWeighted.
+const placeholder = "newFunction"
+
+// extracts reports whether a mode offers a refactoring at all.
+func extracts(mode string) bool { return mode == modeExtracts || mode == modeCommands }
 
 // loading is how long the loading mode takes to read its workspace.
 //
@@ -159,6 +204,15 @@ func serve(mode string) int {
 	// name of, so every answer naming a file echoes back the one the
 	// request named.
 	var seen string
+	// holding is the buffer the client has given this server, per file,
+	// which is what a real server answers from and what goes stale when
+	// something rewrites the file without saying so.
+	holding := map[string]string{}
+	// synced is whether this server's own model of the workspace agrees
+	// with the filesystem. A change to a buffer does not settle it: the
+	// file on disk is a different thing from the buffer, and only being
+	// told about the file settles it.
+	synced := true
 
 	for {
 		raw, err := frame(in)
@@ -228,9 +282,10 @@ func serve(mode string) int {
 					}()
 				}
 			}
-			answer(out, held.ID, capabilities(mode))
+			answer(out, held.ID, capabilities(mode, held.Params))
 
 		case "textDocument/didOpen":
+			holding[seen] = opening(held.Params)
 			if mode == modePushes && !receives(opened) {
 				// A server checks whether the client can receive
 				// diagnostics before it sends any. techne once did not
@@ -245,7 +300,42 @@ func serve(mode string) int {
 						`"params":{"uri":%q,"diagnostics":%s}}`, seen, problems()))
 			}
 
+		case "textDocument/didClose":
+			delete(holding, seen)
+
+		case "textDocument/didChange":
+			holding[seen] = changed(held.Params)
+			if mode == modeWatches {
+				synced = false
+			}
+
+		case "textDocument/codeAction":
+			answer(out, held.ID, actions(mode))
+		case "codeAction/resolve":
+			answer(out, held.ID, resolved(held.Params, seen, holding[seen]))
+		case "workspace/executeCommand":
+			// The refactoring is performed rather than described: the
+			// server works it out, offers the client the result and
+			// answers the command.
+			request(in, out, 9200, fmt.Sprintf(
+				`"workspace/applyEdit","params":{"edit":%s}`,
+				lifted(seen, holding[seen], "function")))
+			answer(out, held.ID, `null`)
+
 		case "textDocument/documentSymbol":
+			if extracts(mode) {
+				// What the buffer this server is holding declares, so a
+				// client can see the declaration an extraction added.
+				answer(out, held.ID, functions(holding[seen]))
+				continue
+			}
+			if mode == modeEchoes {
+				// The buffer this server is holding, as a declaration
+				// name. A client that opened the file and never said it
+				// changed is answered with what it first sent.
+				answer(out, held.ID, oneName(first(holding[seen])))
+				continue
+			}
 			if mode == modeAsks {
 				// The answers are reported as declaration names, which is
 				// the only channel a fake has to a case reading an
@@ -257,6 +347,13 @@ func serve(mode string) int {
 		case "textDocument/definition":
 			answer(out, held.ID, defined(mode, seen))
 		case "textDocument/references":
+			if buffered(mode) {
+				// From the buffer it holds, as a server answers: a use
+				// in a file whose buffer no longer names the
+				// declaration is a use the server cannot see.
+				answer(out, held.ID, usedIn(sibling(seen), viewOf(holding, sibling(seen))))
+				continue
+			}
 			if mode == modeLoading || mode == modeStuck {
 				// What a server answers before it has read the
 				// workspace: nothing, in the same shape as a real
@@ -300,10 +397,43 @@ func serve(mode string) int {
 		case "textDocument/formatting":
 			answer(out, held.ID, formatted(mode))
 		case "workspace/symbol":
+			if mode == modeEchoes {
+				// One declaration per file this server is holding, named
+				// for the file, which is the only way to see from
+				// outside what it still has open.
+				answer(out, held.ID, stillOpen(holding))
+				continue
+			}
 			answer(out, held.ID, matches(mode, seen))
+		case "workspace/didChangeWatchedFiles":
+			synced = true
+
+		case "workspace/willRenameFiles":
+			if mode == modeSilentMove {
+				answer(out, held.ID, `{"changes":{}}`)
+				continue
+			}
+			answer(out, held.ID, moving(movingFile(held.Params)))
+
 		case "textDocument/prepareRename":
 			answer(out, held.ID, prepared(mode, held.Params))
 		case "textDocument/rename":
+			if buffered(mode) {
+				buffer := viewOf(holding, sibling(seen))
+				if mode == modeShort {
+					buffer = ""
+				}
+				answer(out, held.ID, rewriting(seen, sibling(seen), buffer))
+				continue
+			}
+			if mode == modeWatches && !synced {
+				oops(out, held.ID, "Resource is out of sync with file system.")
+				continue
+			}
+			if extracts(mode) {
+				answer(out, held.ID, naming(seen, holding[seen], wanted(held.Params)))
+				continue
+			}
 			answer(out, held.ID, renamed(mode, where(mode, seen)))
 		case "textDocument/diagnostic":
 			answer(out, held.ID, reported())
@@ -364,6 +494,88 @@ func told(answered map[string]string) string {
 			of+"="+answered[of]))
 	}
 	return "[" + strings.Join(out, ",") + "]"
+}
+
+// opening is the text a didOpen carried.
+func opening(params json.RawMessage) string {
+	var held struct {
+		TextDocument struct {
+			Text string `json:"text"`
+		} `json:"textDocument"`
+	}
+	if err := json.Unmarshal(params, &held); err != nil {
+		return ""
+	}
+	return held.TextDocument.Text
+}
+
+// changed is the text a didChange carried, whole-document.
+func changed(params json.RawMessage) string {
+	var held struct {
+		ContentChanges []struct {
+			Text string `json:"text"`
+		} `json:"contentChanges"`
+	}
+	if err := json.Unmarshal(params, &held); err != nil || len(held.ContentChanges) == 0 {
+		return ""
+	}
+	return held.ContentChanges[len(held.ContentChanges)-1].Text
+}
+
+// first is a buffer's first line, which is what the echoing mode reports
+// as the name of what the file declares.
+func first(text string) string {
+	line, _, _ := strings.Cut(text, "\n")
+	return line
+}
+
+// oneName is one declaration by that name, so a case can read what the
+// server was holding out of an outline.
+func oneName(name string) string {
+	return fmt.Sprintf(`[{"name":%q,"kind":23,
+	  "range":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}},
+	  "selectionRange":{"start":{"line":0,"character":0},"end":{"line":0,"character":1}}}]`, name)
+}
+
+// movingFile is the file a move names, as the client named it.
+func movingFile(params json.RawMessage) string {
+	var held struct {
+		Files []struct {
+			OldURI string `json:"oldUri"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(params, &held); err != nil || len(held.Files) == 0 {
+		return ""
+	}
+	return held.Files[0].OldURI
+}
+
+// moving is what a move implies, which for a language tying a file's
+// name to what it declares is a rename of the declaration inside the
+// file that is about to move. jdtls answers exactly this.
+func moving(of string) string {
+	return fmt.Sprintf(`{"changes":{%q:[
+	  {"range":%s,"newText":"Vault"}]}}`, of, at)
+}
+
+// moves reports whether the client said it sends file operations.
+//
+// Read from the initialise the fake kept, because that is what several
+// servers read: jdtls and metals advertise willRenameFiles only to a
+// client that declared it, and answer that they do no file operations
+// at all otherwise.
+func moves(params json.RawMessage) bool {
+	var held struct {
+		Capabilities struct {
+			Workspace struct {
+				FileOperations map[string]any `json:"fileOperations"`
+			} `json:"workspace"`
+		} `json:"capabilities"`
+	}
+	if err := json.Unmarshal(params, &held); err != nil {
+		return false
+	}
+	return held.Capabilities.Workspace.FileOperations["willRename"] == true
 }
 
 // receives reports whether the client said it can be sent diagnostics.
@@ -432,7 +644,7 @@ func document(params json.RawMessage) string {
 // The pull diagnostic provider is absent in the mode that publishes, so
 // the engine has to choose between the two the way it would against a
 // real server of each kind.
-func capabilities(mode string) string {
+func capabilities(mode string, asked json.RawMessage) string {
 	if mode == modeThin {
 		// Rename without prepare, and nothing else at all. A client that
 		// asks anyway is answered with an error, which is
@@ -443,14 +655,27 @@ func capabilities(mode string) string {
 	// one that never finishes, both answer no diagnostic request: they
 	// publish, or they would publish if they ever got that far.
 	pull := `,"diagnosticProvider":{"interFileDependencies":false,"workspaceDiagnostics":false}`
-	if mode == modePushes || mode == modeStuck || mode == modeUngated {
+	if mode == modePushes || mode == modeStuck || mode == modeUngated ||
+		mode == modeSilentMove || buffered(mode) {
 		pull = ""
+	}
+	actions := ""
+	if extracts(mode) {
+		actions = `,"codeActionProvider":{"codeActionKinds":["refactor.extract"],` +
+			`"resolveProvider":true},"executeCommandProvider":{"commands":["fake.refactor"]}`
+	}
+	// Offered only to a client that said it sends file operations, which
+	// is what the servers that answer it do.
+	files := ""
+	if mode != modeMoveless && moves(asked) {
+		files = `,"workspace":{"fileOperations":{"willRename":{"filters":[` +
+			`{"scheme":"file","pattern":{"glob":"**/*.fake","matches":"file"}}]}}}`
 	}
 	return `{"capabilities":{"documentSymbolProvider":true,"definitionProvider":true,` +
 		`"referencesProvider":true,"implementationProvider":true,` +
 		`"callHierarchyProvider":true,"workspaceSymbolProvider":true,` +
 		`"typeHierarchyProvider":true,"documentFormattingProvider":true,` +
-		`"renameProvider":{"prepareProvider":true}` + pull + `}}`
+		`"renameProvider":{"prepareProvider":true}` + pull + files + actions + `}}`
 }
 
 // symbols is what the fake reports a document declares.
@@ -578,6 +803,18 @@ func outgoing(of string) string {
 	  "fromRanges":[{"start":{"line":6,"character":9},"end":{"line":6,"character":14}}]}]`, of)
 }
 
+// stillOpen names one declaration per file this server is holding.
+func stillOpen(holding map[string]string) string {
+	named := make([]string, 0, len(holding))
+	for of := range holding {
+		named = append(named, fmt.Sprintf(
+			`{"name":%q,"kind":23,"location":{"uri":%q,"range":%s}}`,
+			strings.TrimSuffix(path.Base(of), ".fake"), of, at))
+	}
+	slices.Sort(named)
+	return "[" + strings.Join(named, ",") + "]"
+}
+
 // matches is a workspace query, in both shapes. The newer one may name a
 // file and no range in it, which is the arm a client that assumed a
 // range would drop.
@@ -621,6 +858,161 @@ func positioned(params json.RawMessage) string {
 		return ""
 	}
 	return fmt.Sprintf("%d:%d", held.Position.Line, held.Position.Character)
+}
+
+// actions is the refactoring menu, which every server answers with
+// several entries and none of which it marks preferred.
+func actions(mode string) string {
+	if !extracts(mode) {
+		return `[]`
+	}
+	if mode == modeCommands {
+		return `[{"title":"Extract into function","kind":"refactor.extract",
+		  "command":{"title":"Extract","command":"fake.refactor","arguments":[]}}]`
+	}
+	return `[
+	  {"title":"Extract into variable","kind":"refactor.extract","data":{"pick":"variable"}},
+	  {"title":"Extract into function","kind":"refactor.extract","data":{"pick":"function"}}]`
+}
+
+// resolved is the edit behind one action, computed only when asked for,
+// which is what every server that offers this kind does.
+func resolved(params json.RawMessage, of, text string) string {
+	var held struct {
+		Title string `json:"title"`
+		Kind  string `json:"kind"`
+		Data  struct {
+			Pick string `json:"pick"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(params, &held); err != nil {
+		return `null`
+	}
+	return fmt.Sprintf(`{"title":%q,"kind":%q,"edit":%s}`,
+		held.Title, held.Kind, lifted(of, text, held.Data.Pick))
+}
+
+// lifted is what the fake's extraction does: it appends a declaration to
+// the file and names it whatever it likes.
+func lifted(of, text, pick string) string {
+	written := fmt.Sprintf("func %s() int { return 1 }\n", placeholder)
+	if pick != "function" {
+		// The other entry in the menu, so a case can tell which one was
+		// taken rather than only that something was.
+		written = "var extracted = 1\n"
+	}
+	end := strings.Count(text, "\n")
+	return fmt.Sprintf(`{"changes":{%q:[
+	  {"range":{"start":{"line":%d,"character":0},"end":{"line":%d,"character":0}},
+	   "newText":%q}]}}`, of, end, end, written)
+}
+
+// functions is what a buffer declares, read out of the buffer itself:
+// every line that opens a function, by the name it opens with.
+func functions(text string) string {
+	var out []string
+	for i, line := range strings.Split(text, "\n") {
+		name, at := opens(line)
+		if name == "" {
+			continue
+		}
+		out = append(out, fmt.Sprintf(
+			`{"name":%q,"kind":12,
+			  "range":{"start":{"line":%d,"character":0},"end":{"line":%d,"character":%d}},
+			  "selectionRange":{"start":{"line":%d,"character":%d},
+			                    "end":{"line":%d,"character":%d}}}`,
+			name, i, i, len(line), i, at, i, at+len(name)))
+	}
+	return "[" + strings.Join(out, ",") + "]"
+}
+
+// opens is the name a line declares a function under, and where on the
+// line it is written.
+func opens(line string) (string, int) {
+	const keyword = "func "
+	if !strings.HasPrefix(line, keyword) {
+		return "", 0
+	}
+	rest := line[len(keyword):]
+	end := strings.Index(rest, "(")
+	if end <= 0 {
+		// A method, whose name is written after the receiver. The fake
+		// reports what it can read, as a server reports what it parses.
+		return "", 0
+	}
+	return rest[:end], len(keyword)
+}
+
+// wanted is the name a rename asks for.
+func wanted(params json.RawMessage) string {
+	var held struct {
+		NewName string `json:"newName"`
+	}
+	if err := json.Unmarshal(params, &held); err != nil {
+		return ""
+	}
+	return held.NewName
+}
+
+// naming renames the function the fake extracted, in the buffer it is
+// holding rather than in the file on disk. A client converting the range
+// against the file writes over something else.
+func naming(of, text, fresh string) string {
+	for i, line := range strings.Split(text, "\n") {
+		at := strings.Index(line, placeholder)
+		if at < 0 {
+			continue
+		}
+		return fmt.Sprintf(`{"changes":{%q:[
+		  {"range":{"start":{"line":%d,"character":%d},"end":{"line":%d,"character":%d}},
+		   "newText":%q}]}}`, of, i, at, i, at+len(placeholder), fresh)
+	}
+	return `{"changes":{}}`
+}
+
+// viewOf is what this server currently makes of a file: the buffer it
+// was given if it has one, and the file on disk otherwise. Every server
+// works this way, and it is why a buffer nobody refreshed hides a
+// change that is on disk.
+func viewOf(holding map[string]string, of string) string {
+	if buffer, given := holding[of]; given {
+		return buffer
+	}
+	content, err := os.ReadFile(strings.TrimPrefix(of, "file://"))
+	if err != nil {
+		return ""
+	}
+	return string(content)
+}
+
+// sibling is the second file in the workspace, named from the first:
+// the fake never learns the directory it is pointed at.
+func sibling(of string) string { return strings.Replace(of, "a.fake", "b.fake", 1) }
+
+// usedIn is one use of the declaration, in a second file.
+//
+// Read out of the buffer this server is holding for that file rather
+// than out of a fixed answer, because that is where a server reads it: a
+// file whose buffer no longer names the declaration holds no use of it
+// as far as the server is concerned, whatever is on disk.
+func usedIn(other, buffer string) string {
+	if !strings.Contains(buffer, "Store") {
+		return `[]`
+	}
+	return fmt.Sprintf(`[{"uri":%q,"range":{"start":{"line":0,"character":0},`+
+		`"end":{"line":0,"character":5}}}]`, other)
+}
+
+// rewriting is what a server that edits only open buffers answers: the
+// file it was asked about, and the second one only if the buffer it was
+// given for that one still names the declaration.
+func rewriting(of, other, buffer string) string {
+	edits := fmt.Sprintf(`%q:[{"range":%s,"newText":"Vault"}]`, of, at)
+	if strings.Contains(buffer, "Store") {
+		edits += fmt.Sprintf(`,%q:[{"range":{"start":{"line":0,"character":0},`+
+			`"end":{"line":0,"character":5}},"newText":"Vault"}]`, other)
+	}
+	return `{"changes":{` + edits + `}}`
 }
 
 // renamed is a workspace edit, in each of the two shapes. The map is
@@ -725,8 +1117,13 @@ func pretending(mode string) lsp.Server {
 		// wait out the figure a real one is given.
 		waits = time.Second
 	}
+	var lifts lsp.Refactor
+	if extracts(mode) {
+		lifts = lsp.Refactor{Kind: "refactor.extract", Titles: []string{"into function"}}
+	}
 	return lsp.Server{
 		Loading:    waits,
+		Extracts:   lifts,
 		Name:       "fake",
 		Command:    []string{os.Args[0]},
 		LanguageID: "fake",

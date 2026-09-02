@@ -28,6 +28,11 @@ type document struct {
 	// at is the offset each line begins at, so a line number indexes
 	// straight into the file.
 	at []int
+	// names is where each declaration writes its own name, keyed by the
+	// byte the declaration starts at. It is what the server said rather
+	// than what could be worked out from the text, and is empty for a
+	// document nobody has outlined.
+	names map[int]protocol.Position
 }
 
 // read loads a file for one call.
@@ -36,7 +41,13 @@ func (e *Engine) read(p source.Path) (document, error) {
 	if err != nil {
 		return document{}, fmt.Errorf("lsp: read %s: %w", p, err)
 	}
-	return document{path: p, content: content, at: lines(content)}, nil
+	return texted(p, content), nil
+}
+
+// texted is a file's bytes as a document, for text that is not on disk:
+// what a file would hold after a change nothing has written yet.
+func texted(p source.Path, content []byte) document {
+	return document{path: p, content: content, at: lines(content)}
 }
 
 // lines is where each line of a file starts.

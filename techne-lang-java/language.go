@@ -91,6 +91,9 @@ func Server() lsp.Server {
 		Loading:    importing,
 		LanguageID: lsp.IdentityJava,
 		Serves:     lsp.Binding(),
+		// jdtls offers one extraction under the kind, and calls it
+		// extracting to a method: Java has no function to extract to.
+		Extracts: lsp.Refactor{Kind: "refactor.extract.function"},
 	}
 }
 

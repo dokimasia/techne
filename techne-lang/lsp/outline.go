@@ -107,6 +107,8 @@ func (e *Engine) symbols(
 	}
 
 	unit := source.Path(e.declared.Namespace(string(p)))
+	doc.names = map[int]protocol.Position{}
+
 	var out []sema.Symbol
 	switch reported := answered.(type) {
 	case protocol.DocumentSymbolSlice:
@@ -138,6 +140,9 @@ func (e *Engine) flatten(
 		name := trimmed(one.Name)
 		id := sema.NewID(e.declared.Language, unit, name, kind)
 		span := doc.span(one.Range)
+		// Where the server says the name itself is written, which for a
+		// documented declaration is not where the declaration starts.
+		doc.names[span.Start.Offset] = one.SelectionRange.Start
 
 		*into = append(*into, sema.Symbol{
 			ID:         id,

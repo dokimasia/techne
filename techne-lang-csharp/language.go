@@ -84,6 +84,11 @@ func Server() lsp.Server {
 		Command:    []string{server},
 		LanguageID: lsp.IdentityCSharp,
 		Serves:     lsp.Binding(),
+		// csharp-ls sets no kind on any action it offers, so the
+		// wording is all there is. It offers extracting a local
+		// function beside a method, and a local function is not
+		// callable from anywhere else.
+		Extracts: lsp.Refactor{Titles: []string{"extract method"}},
 	}
 }
 

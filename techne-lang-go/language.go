@@ -86,6 +86,9 @@ func Server() lsp.Server {
 		Command:    []string{server, serves},
 		LanguageID: lsp.IdentityGo,
 		Serves:     lsp.Binding(),
+		// gopls offers extracting a function beside extracting a
+		// method, each under its own kind, so the kind alone picks one.
+		Extracts: lsp.Refactor{Kind: "refactor.extract.function"},
 	}
 }
 

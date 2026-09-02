@@ -633,9 +633,22 @@ func (e *Engine) declaring(
 //
 // A request about a declaration has to point at its name. A server asked
 // about the first byte of "type Store struct {" is asked about the
-// keyword and answers about nothing, so the name is found inside the
-// declaration's own text rather than assumed to be at its start.
+// keyword and answers about nothing.
+//
+// The server says where the name is, and that is taken: a declaration's
+// span starts at its documentation for the servers that count the
+// documentation as part of it, and a declaration documented with its own
+// name in the first line — which is what a doc comment is — would
+// otherwise have every request about it aimed at the comment. Driving a
+// rename over a documented Rust struct produced exactly that, and
+// rust-analyzer answered that there is nothing there.
+//
+// Searching the text is the fallback, for a server that answers the flat
+// shape and says only where the whole declaration is.
 func naming(doc document, of sema.Symbol) protocol.Position {
+	if at, said := doc.names[of.Span.Start.Offset]; said {
+		return at
+	}
 	if at := worded(doc.text(of.Span), of.Name); at >= 0 {
 		return doc.mark(source.Position{Offset: of.Span.Start.Offset + at})
 	}

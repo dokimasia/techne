@@ -85,6 +85,13 @@ func Server() lsp.Server {
 		Command:    []string{server, stdio},
 		LanguageID: lsp.IdentityJavaScript,
 		Serves:     lsp.Binding(),
+		// The same server as TypeScript, and the same menu: an inner
+		// function that cannot see the receiver, offered first, beside
+		// the method that can.
+		Extracts: lsp.Refactor{
+			Kind:   "refactor.extract.function",
+			Titles: []string{"method in class", "function in module scope"},
+		},
 	}
 }
 

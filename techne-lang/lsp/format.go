@@ -79,7 +79,7 @@ func (e *Engine) Format(ctx context.Context, paths []source.Path) (engine.Result
 			continue
 		}
 
-		change, err := e.rewrite(uri.File(e.fullPath(p)), edits)
+		change, err := e.rewriteAgainst(uri.File(e.fullPath(p)), edits, nil)
 		if err != nil {
 			return engine.Result[edit.Change]{}, err
 		}

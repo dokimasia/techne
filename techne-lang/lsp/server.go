@@ -53,6 +53,11 @@ type Server struct {
 	// at is told here rather than by whoever launches techne.
 	Env map[string]string
 
+	// Extracts is the code action this server offers for lifting a run
+	// of lines into a function, and is empty for a server that offers
+	// none.
+	Extracts Refactor
+
 	// Loading is how long a question waits for this server to finish
 	// reading the workspace before it is answered anyway. Zero takes the
 	// package default.
@@ -64,6 +69,40 @@ type Server struct {
 	// is partial rather than claiming to have seen everything.
 	Loading time.Duration
 }
+
+// Refactor names one of a server's code actions, so techne can ask for
+// it and take the right one back.
+//
+// # Why a name and not a kind
+//
+// The kind does not identify a refactoring. rust-analyzer offers
+// extracting a variable, a constant, a static and a function, all four
+// under refactor.extract. typescript-language-server offers a method on
+// the class beside an inner function that cannot see the receiver, both
+// under refactor.extract.function, and the inner one first. csharp-ls
+// sets no kind at all. No server marks any of them preferred.
+//
+// What tells them apart is the title, which is what an editor puts in
+// its menu and what a person picks from. techne has no menu, so the
+// language module declares which wording it means — a fact about that
+// server, established by asking it, rather than a guess made here.
+type Refactor struct {
+	// Kind is the code action kind to ask for, and narrows what a server
+	// computes. A server that sets no kind on its actions is matched on
+	// title alone.
+	Kind string
+
+	// Titles are the wordings to prefer, best first, matched
+	// case-insensitively as substrings. An action matching none of them
+	// is taken only when nothing else is offered, because a server
+	// wording an action differently in a context nobody probed is still
+	// offering the refactoring that was asked for.
+	Titles []string
+}
+
+// Offered reports whether the server was declared to offer this
+// refactoring at all.
+func (r Refactor) Offered() bool { return r.Kind != "" || len(r.Titles) > 0 }
 
 // Reaches is the tier this server claims for a role, and [trust.None]
 // for a role it does not serve.

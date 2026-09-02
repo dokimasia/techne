@@ -85,6 +85,12 @@ func Server() lsp.Server {
 		Command:    []string{server},
 		LanguageID: lsp.IdentityRust,
 		Serves:     lsp.Binding(),
+		// rust-analyzer offers extracting a variable, a constant, a
+		// static and a function, all four under refactor.extract, so
+		// the wording is what tells them apart.
+		Extracts: lsp.Refactor{
+			Kind: "refactor.extract", Titles: []string{"into function"},
+		},
 	}
 }
 

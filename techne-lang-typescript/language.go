@@ -87,6 +87,14 @@ func Server() lsp.Server {
 		Command:    []string{server, stdio},
 		LanguageID: lsp.IdentityTypeScript,
 		Serves:     lsp.Binding(),
+		// typescript-language-server offers an inner function beside a
+		// method on the class, both under the same kind and the inner
+		// one first. An inner function cannot see the receiver, so
+		// extracting to one produces code that parses and does not run.
+		Extracts: lsp.Refactor{
+			Kind:   "refactor.extract.function",
+			Titles: []string{"method in class", "function in module scope"},
+		},
 	}
 }
 

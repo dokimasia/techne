@@ -25,7 +25,9 @@
 //   - [Engine.Relate] over textDocument/references, the call hierarchy,
 //     textDocument/implementation and the type hierarchy, one per
 //     direction
-//   - [Engine.Plan] over textDocument/rename, for that operation alone
+//   - [Engine.Plan] over textDocument/rename for renaming a declaration,
+//     workspace/willRenameFiles for moving a file, and a code action for
+//     lifting a run of lines into a function
 //   - [Engine.Format] over textDocument/formatting, which is the
 //     language's own formatter rather than techne's opinion of it
 //   - [Engine.Verify] over textDocument/diagnostic, or over what a
@@ -40,8 +42,19 @@
 //
 // [Engine.Plan] returns the edits and touches no file. techne's own
 // write path reads, gates and applies them, which is why a server
-// offering to apply an edit itself is refused: an edit arriving that way
-// is previewed by nothing and checked by nothing.
+// offering an edit unprompted is refused: an edit arriving that way is
+// previewed by nothing and checked by nothing. An edit techne asked a
+// server to compute is kept and becomes the plan, and goes through the
+// same gate.
+//
+// # A server answers about the buffers it holds
+//
+// Not about the files. Every question re-sends what a file now holds
+// where it differs from what the server was given, and every question
+// refreshes all of them rather than the one it names: techne's own write
+// path rewrites files underneath the server, and a rename asks who uses
+// a declaration, which is answered out of files the question never
+// named.
 //
 // # A tier per role, declared by the language
 //
