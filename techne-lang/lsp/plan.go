@@ -61,11 +61,6 @@ func (e *Engine) Plan(
 		return engine.Result[edit.Change]{}, e.unsupported("textDocument/rename")
 	}
 
-	// A plan computed against a half-loaded workspace rewrites the
-	// references the server had found so far and leaves the rest, which
-	// is the one outcome worse than refusing.
-	e.working.settle(ctx, e.settling())
-
 	at, doc, known, err := e.aimed(ctx, held, req, target)
 	if err != nil {
 		return engine.Result[edit.Change]{}, err
@@ -73,6 +68,12 @@ func (e *Engine) Plan(
 	if !known {
 		return engine.Result[edit.Change]{Skipped: true, Completeness: trust.ScopeTotal}, nil
 	}
+
+	// A plan computed against a half-loaded workspace rewrites the
+	// references the server had found so far and leaves the rest, which
+	// is the one outcome worse than refusing. Waited on after the files
+	// are open, because opening them is what starts the work.
+	e.working.settle(ctx, e.settling())
 
 	// Asked first, where the server answers it: whether the thing at
 	// this position can be renamed at all. Skipping it turns a keyword

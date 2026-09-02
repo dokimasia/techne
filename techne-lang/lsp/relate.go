@@ -60,11 +60,6 @@ func (e *Engine) Relate(
 			"%w: %s: no request behind %s", engine.ErrDecline, e.server.Name, kind)
 	}
 
-	// Waited on before the question rather than after it: a server
-	// mid-load answers with nothing, and an answer worth marking partial
-	// is worth waiting a moment to make total.
-	e.working.settle(ctx, e.settling())
-
 	subject, doc, known, read, err := e.declaring(ctx, held, req, of)
 	switch {
 	case err != nil:
@@ -82,6 +77,12 @@ func (e *Engine) Relate(
 			"%w: %s: no declaration in %q matches %s",
 			engine.ErrDecline, e.server.Name, req.Scope, of)
 	}
+
+	// Waited on here rather than before the files were opened. Opening a
+	// document is what starts a server compiling it, so a wait that ran
+	// first waited on an idle server and the question that followed
+	// raced the work it had just asked for.
+	e.working.settle(ctx, e.settling())
 
 	at := naming(doc, subject)
 	pick := protocol.TextDocumentPositionParams{
@@ -123,19 +124,24 @@ func (e *Engine) Relate(
 	}, nil
 }
 
-// unresolved is the caveat on an answer from a server that did not
-// resolve the declaration it was asked about.
+// unresolved is the caveat on an empty answer nothing stands behind.
 //
-// A server with no project loaded answers every question with nothing,
-// in the same shape as a server that looked and found none. jdtls over a
-// directory it could not build a classpath for reported no references to
-// a method called two lines below it, and the answer said resolved
-// binding over total coverage — which is the claim a caller acts on by
-// deleting the method.
+// What it says and does not say matters. It does not say the server is
+// broken or that the declaration is unknown to it: metals answers
+// references for a trait whose implementations it reports as none. It
+// says only that nothing established the server had analysed the file,
+// so an empty answer may be one it has not looked at rather than one
+// with nothing in it — and those are the two an empty list cannot tell
+// apart.
+//
+// The caution is deliberate and it costs something: a server that
+// analysed a file, found nothing, and published nothing to say so is
+// reported as short when it was complete. That is the wrong way round to
+// be wrong, which is the only reason to prefer it.
 var unresolved = trust.Caveat{
 	Code: trust.CaveatIndexWarming,
-	Note: "the server did not resolve this declaration, so it was answering " +
-		"about nothing rather than finding nothing",
+	Note: "nothing established that the server had analysed this file, so an " +
+		"empty answer may be one it has not looked at",
 }
 
 // serves reports whether a direction has a request behind it.
