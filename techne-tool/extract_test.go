@@ -5,6 +5,7 @@ package tool_test
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -38,19 +39,23 @@ func TestExtract(t *testing.T) {
 			assert.Equal(t, writer.asked.Target.Span.End.Line, 11, "at both ends")
 		})
 
-		t.Run("passes a receiver only where the caller gave one", func(t *testing.T) {
+		t.Run("sends only what the operation declares", func(t *testing.T) {
 			t.Parallel()
-			// A key nobody set is an argument the operation would be
-			// validated against and refuse.
+			// An argument the spec does not declare is refused before
+			// any language is consulted, so a tool that offers a field
+			// and passes it on advertises something that always fails.
+			// extract.function took a receiver this way, and every call
+			// naming one was refused for naming it.
 			writer := &recorder{}
 			extracted(t, writer, `{"path":"a.fx","first_line":1,"last_line":2,"new_name":"parsed"}`)
-			_, held := writer.asked.Args[edit.ArgReceiver]
-			assert.False(t, held, "an unset receiver is absent rather than empty")
 
-			extracted(t, writer,
-				`{"path":"a.fx","first_line":1,"last_line":2,"new_name":"parsed","receiver":"Store"}`)
-			assert.Equal(t, writer.asked.Args[edit.ArgReceiver], "Store",
-				"and one the caller gave reaches the planner")
+			spec, declared := edit.SpecFor(edit.ExtractFunction)
+			assert.True(t, declared, "the operation is in the catalogue")
+			for key := range writer.asked.Args {
+				assert.True(t,
+					slices.Contains(spec.Required, key) || slices.Contains(spec.Optional, key),
+					"every argument sent is one the operation reads: "+string(key))
+			}
 		})
 
 		t.Run("refuses a selection counted from zero", func(t *testing.T) {

@@ -17,12 +17,17 @@ import (
 // FirstLine and LastLine count from one and are both inclusive, which is
 // how an editor reports a selection and how a caller reading a diff
 // counts.
+//
+// There is no receiver to name. Where a function hangs is the language's
+// answer and the engine's: a selection inside a class extracts to a
+// method on it, and one at the top level extracts to a function. A field
+// nothing reads is an operation that silently does something other than
+// what was asked.
 type ExtractInput struct {
 	Path      string `json:"path"               jsonschema:"the file the lines are in, workspace-relative"`
 	FirstLine int    `json:"first_line"         jsonschema:"first line to extract, counting from one"`
 	LastLine  int    `json:"last_line"          jsonschema:"last line to extract, inclusive"`
 	NewName   string `json:"new_name"           jsonschema:"what to call the new function"`
-	Receiver  string `json:"receiver,omitempty" jsonschema:"what to hang it on, where the language has receivers"`
 	Language  string `json:"language,omitempty" jsonschema:"language to assume"`
 	DryRun    *bool  `json:"dry_run,omitempty"  jsonschema:"preview without writing; true when omitted"`
 }
@@ -47,16 +52,12 @@ func Extract(writes Writer) (Tool, error) {
 					failure.Code, failure.Reason), nil
 			}
 
-			args := edit.Args{edit.ArgNewName: in.NewName}
-			if in.Receiver != "" {
-				args[edit.ArgReceiver] = in.Receiver
-			}
 			return asked(ctx, writes, edit.ExtractFunction, held, in.NewName, edit.Request{
 				Operation: edit.ExtractFunction,
 				Scope:     path,
 				Language:  source.Language(in.Language),
 				Target:    edit.Target{Kind: edit.TargetSpan, Span: span},
-				Args:      args,
+				Args:      edit.Args{edit.ArgNewName: in.NewName},
 				DryRun:    previewing(in.DryRun),
 			})
 		})
@@ -91,5 +92,6 @@ func selected(path source.Path, first, last int) (source.Span, *Failure) {
 
 const extractDescription = "PREFER OVER cutting lines out and writing a call by hand. " +
 	"Lifts a run of lines into a function, works out what it takes and returns, and " +
-	"leaves a call in their place. Give the lines as an editor numbers them, counting " +
-	"from one and including the last. Previews by default."
+	"leaves a call in their place. A selection inside a class becomes a method on it. " +
+	"Give the lines as an editor numbers them, counting from one and including the " +
+	"last. Previews by default."
