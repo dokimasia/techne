@@ -17,14 +17,17 @@
 //
 // # What it answers
 //
-// Six roles, each over the request the specification defines for it:
+// Seven roles, each over the request the specification defines for it:
 //
 //   - [Engine.Outline] over textDocument/documentSymbol
 //   - [Engine.Search] over workspace/symbol
 //   - [Engine.Resolve] over textDocument/definition
-//   - [Engine.Relate] over textDocument/references, the call hierarchy
-//     and textDocument/implementation, one per direction
+//   - [Engine.Relate] over textDocument/references, the call hierarchy,
+//     textDocument/implementation and the type hierarchy, one per
+//     direction
 //   - [Engine.Plan] over textDocument/rename, for that operation alone
+//   - [Engine.Format] over textDocument/formatting, which is the
+//     language's own formatter rather than techne's opinion of it
 //   - [Engine.Verify] over textDocument/diagnostic, or over what a
 //     server publishes unasked when it has no such request
 //

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/tool"
 )
 
@@ -63,6 +64,56 @@ func TestWritten(t *testing.T) {
 				"a preview that ran is not a failure")
 			assert.True(t, tool.Written{Error: &tool.Failure{Code: "refused"}}.Failed(),
 				"and a refusal a model can correct is")
+		})
+	})
+}
+
+// A caller told a file changed acts on it. An applied change must name
+// what it wrote and not what it planned, because the two differ where a
+// plan's result was already there: a rename to the same name, a comment
+// already written. A monkey run caught this as a change that said it
+// wrote a file whose bytes never moved.
+func TestTouchedAfterApplying(t *testing.T) {
+	t.Parallel()
+
+	planned := []edit.Change{
+		{Kind: edit.ChangeEdit, Path: "a.fx"},
+		{Kind: edit.ChangeEdit, Path: "b.fx"},
+	}
+	rewritten := []edit.Rewrite{
+		{Path: "a.fx", Line: 1, Was: "one", Now: "two"},
+		{Path: "b.fx", Line: 1, Was: "same", Now: "same"},
+	}
+
+	t.Run("an applied change", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("names the files it wrote and no other", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Touched(planned, rewritten, map[string]bool{"a.fx": true})
+
+			assert.Length(t, got, 1, "the file whose bytes moved")
+			assert.Equal(t, got[0].Path, "a.fx", "and it is the one that was written")
+		})
+
+		t.Run("names nothing where it wrote nothing", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Touched(planned, rewritten, map[string]bool{})
+
+			assert.Empty(t, got, "a plan whose result was already there wrote no file")
+		})
+	})
+
+	t.Run("a preview", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("names every file the change would touch", func(t *testing.T) {
+			t.Parallel()
+			// Nothing has been written, so what a caller reads is what
+			// would happen rather than what did.
+			got := tool.Touched(planned, rewritten, nil)
+
+			assert.Length(t, got, 2, "both files the plan names")
 		})
 	})
 }

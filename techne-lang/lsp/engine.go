@@ -325,11 +325,10 @@ func (e *Engine) pathOf(held uri.URI) source.Path {
 //
 // A role is declined by lacking a method rather than by returning an
 // error, so this list is the whole of what a catalogue can select this
-// engine for. [engine.Formatter], [engine.Checker] and [engine.Indexer]
-// are absent on purpose: formatting is a language's own tool rather than
-// its server, gating content the workspace does not hold has no request
-// in the protocol, and an index of a server's answers would be a second
-// copy of what the server already keeps.
+// engine for. [engine.Checker] and [engine.Indexer] are absent on
+// purpose: gating content the workspace does not hold has no request in
+// the protocol, and an index of a server's answers would be a second
+// copy of what the server already keeps and invalidates better.
 var (
 	_ engine.Engine    = (*Engine)(nil)
 	_ engine.Available = (*Engine)(nil)
@@ -338,5 +337,6 @@ var (
 	_ engine.Resolver  = (*Engine)(nil)
 	_ engine.Relator   = (*Engine)(nil)
 	_ engine.Planner   = (*Engine)(nil)
+	_ engine.Formatter = (*Engine)(nil)
 	_ engine.Verifier  = (*Engine)(nil)
 )

@@ -96,11 +96,50 @@ func TestRelate(t *testing.T) {
 				"what the one implementation request named")
 		})
 
+		t.Run("answers what a type incorporates", func(t *testing.T) {
+			t.Parallel()
+			// Every language spells it differently — an anonymous field
+			// in Go, extends in Java, with in Scala, include in Ruby —
+			// and the type hierarchy is the one request that answers all
+			// of them.
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
+			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
+				subject(t, e, "Store"), sema.Embeds)
+
+			assert.NoError(t, err, "asking what a type takes from succeeds")
+			assert.Equal(t, edges(got.Items), []string{"Store"},
+				"the supertype the hierarchy named")
+		})
+
+		t.Run("answers what incorporates a type", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
+			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
+				subject(t, e, "Store"), sema.EmbeddedBy)
+
+			assert.NoError(t, err, "asking what takes from a type succeeds")
+			assert.Equal(t, edges(got.Items), []string{"After"},
+				"the subtype the hierarchy named")
+		})
+
+		t.Run("declines the hierarchy where the server has none", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, modeThin, map[string]string{"a.fake": content})
+			_, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
+				subject(t, e, "Store"), sema.Embeds)
+
+			assert.ErrorIs(t, err, engine.ErrDecline,
+				"a request the server did not offer is passed on, not failed")
+		})
+
 		t.Run("declines a direction no request answers", func(t *testing.T) {
 			t.Parallel()
 			// Answering none would be a claim that there are none, and a
 			// language that has imports would be reported as having no
 			// imports rather than as not having been asked.
+			// Imports are written in the source rather than resolved
+			// from it, so the parser reads them and this declines. A
+			// caller asking gets the parser's answer rather than none.
 			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			_, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
 				subject(t, e, "Store"), sema.Imports)

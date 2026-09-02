@@ -35,13 +35,16 @@ import (
 //     The protocol has one request and the direction follows what it is
 //     pointed at: asked about an interface it names implementors, asked
 //     about a type it names what that type satisfies.
+//   - Embeds and embedded-by are the type hierarchy, which is what a
+//     type incorporates and what incorporates it. The languages spell it
+//     differently — an anonymous field, extends, with, include — and the
+//     hierarchy is the one request that answers all of them.
 //
 // # What it will not answer
 //
-// Imports, embeds and their inverses have no request behind them. They
-// are declined rather than answered with none, because none is a claim
-// that there are none, and a language that has imports would be reported
-// as having none of them.
+// Imports and their inverse, which are written in the source rather than
+// resolved from it and are the parser's to read. Declined rather than
+// answered with none, because none is a claim that there are none.
 func (e *Engine) Relate(
 	ctx context.Context,
 	req engine.Request,
@@ -100,6 +103,8 @@ func (e *Engine) Relate(
 		out, saw, err = e.calling(ctx, held, found, pick, kind)
 	case sema.Implements, sema.ImplementedBy:
 		out, saw, err = e.implementing(ctx, held, found, pick, kind)
+	case sema.Embeds, sema.EmbeddedBy:
+		out, saw, err = e.incorporating(ctx, held, found, pick, kind)
 	}
 	if err != nil {
 		return engine.Result[sema.Relation]{}, err
@@ -138,10 +143,124 @@ func serves(kind sema.RelationKind) bool {
 	switch kind {
 	case sema.ReferencedBy, sema.References,
 		sema.CalledBy, sema.Calls,
-		sema.Implements, sema.ImplementedBy:
+		sema.Implements, sema.ImplementedBy,
+		sema.Embeds, sema.EmbeddedBy:
 		return true
 	}
 	return false
+}
+
+// incorporating walks the type hierarchy, which is what one type takes
+// from another.
+//
+// Every language spells it differently and the protocol has one request
+// for all of them: an anonymous field in Go, extends in Java and
+// TypeScript, with in Scala, include in Ruby, a base class in Python.
+// Supertypes are what a type incorporates and subtypes are what
+// incorporates it.
+func (e *Engine) incorporating(
+	ctx context.Context,
+	held *session,
+	found *finder,
+	pick protocol.TextDocumentPositionParams,
+	kind sema.RelationKind,
+) ([]sema.Relation, bool, error) {
+	if !provides(held.capable.TypeHierarchyProvider) {
+		return nil, false, e.unsupported("the type hierarchy")
+	}
+	items, err := held.asks.PrepareTypeHierarchy(ctx, &protocol.TypeHierarchyPrepareParams{
+		TextDocumentPositionParams: pick,
+	})
+	if err != nil {
+		// A server refuses this for anything that is not a type, which
+		// is a question that does not apply rather than one with no
+		// answer.
+		return nil, false, fmt.Errorf("%w: %s: type hierarchy: %w",
+			engine.ErrDecline, e.server.Name, err)
+	}
+	// No item is the server saying it has no handle on this type, which
+	// is a different fact from the type incorporating nothing.
+	if len(items) == 0 {
+		return nil, false, nil
+	}
+
+	var out []sema.Relation
+	for _, item := range items {
+		related, err := e.hierarchical(ctx, held, item, kind)
+		if err != nil {
+			return nil, false, err
+		}
+		for _, one := range related {
+			edges, err := e.typed(ctx, found, one, kind)
+			if err != nil {
+				return nil, false, err
+			}
+			out = append(out, edges...)
+		}
+	}
+	return out, true, nil
+}
+
+// hierarchical reads one end of the hierarchy for one item.
+func (e *Engine) hierarchical(
+	ctx context.Context,
+	held *session,
+	item protocol.TypeHierarchyItem,
+	kind sema.RelationKind,
+) ([]protocol.TypeHierarchyItem, error) {
+	if kind == sema.Embeds {
+		out, err := held.asks.Supertypes(ctx,
+			&protocol.TypeHierarchySupertypesParams{Item: item})
+		if err != nil {
+			return nil, fmt.Errorf("lsp: %s: supertypes: %w", e.server.Name, err)
+		}
+		return out, nil
+	}
+	out, err := held.asks.Subtypes(ctx, &protocol.TypeHierarchySubtypesParams{Item: item})
+	if err != nil {
+		return nil, fmt.Errorf("lsp: %s: subtypes: %w", e.server.Name, err)
+	}
+	return out, nil
+}
+
+// typed turns one type-hierarchy item into an edge, naming it from an
+// outline where the file can be read and from the item where it cannot.
+func (e *Engine) typed(
+	ctx context.Context,
+	found *finder,
+	item protocol.TypeHierarchyItem,
+	kind sema.RelationKind,
+) ([]sema.Relation, error) {
+	p := e.pathOf(item.URI)
+	far, known, err := found.at(ctx, p, item.SelectionRange.Start)
+	if err != nil {
+		return nil, err
+	}
+	if !known {
+		far = e.itemised(hierarchyItem(item), p)
+	}
+
+	doc, err := found.file(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	span := source.Span{Path: p}
+	via := ""
+	if len(doc.doc.at) > 0 {
+		span = doc.doc.span(item.SelectionRange)
+		via = doc.doc.sourceLine(span)
+	}
+	return []sema.Relation{{Kind: kind, To: far, At: span, Via: via}}, nil
+}
+
+// hierarchyItem reads a type-hierarchy item as a call-hierarchy one, so
+// one conversion names both. The two carry the same fields under the
+// same names and differ only in which request produced them.
+func hierarchyItem(held protocol.TypeHierarchyItem) protocol.CallHierarchyItem {
+	return protocol.CallHierarchyItem{
+		Name: held.Name, Kind: held.Kind, Detail: held.Detail,
+		URI: held.URI, Range: held.Range, SelectionRange: held.SelectionRange,
+	}
 }
 
 // referring finds every use of a declaration.

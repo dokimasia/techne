@@ -153,10 +153,11 @@ func (s *Service) Apply(ctx context.Context, req edit.Request) (edit.Outcome, er
 		return out, nil
 	}
 
-	if written := s.write(plan, sealed, projected); written != nil {
-		return edit.Outcome{}, written
+	written, failed := s.write(plan, sealed, projected)
+	if failed != nil {
+		return edit.Outcome{}, failed
 	}
-	out.Applied, out.Changed = true, plan.Paths()
+	out.Applied, out.Changed = true, written
 	return out, nil
 }
 
@@ -206,14 +207,15 @@ func (s *Service) Commit(ctx context.Context, handle string) (edit.Outcome, erro
 		return out, nil
 	}
 
-	if written := s.write(plan, sealed, projected); written != nil {
-		return edit.Outcome{}, written
+	written, failed := s.write(plan, sealed, projected)
+	if failed != nil {
+		return edit.Outcome{}, failed
 	}
 	return edit.Outcome{
 		Operation:  plan.Operation,
 		Status:     trust.OK,
 		Applied:    true,
-		Changed:    plan.Paths(),
+		Changed:    written,
 		Changes:    plan.Changes,
 		Rewrites:   preview(plan, sealed),
 		Provenance: plan.Provenance,

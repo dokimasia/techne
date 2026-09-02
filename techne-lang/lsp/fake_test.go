@@ -282,6 +282,14 @@ func serve(mode string) int {
 			answer(out, held.ID, incoming(seen))
 		case "callHierarchy/outgoingCalls":
 			answer(out, held.ID, outgoing(seen))
+		case "textDocument/prepareTypeHierarchy":
+			answer(out, held.ID, hierarchy(seen))
+		case "typeHierarchy/supertypes":
+			answer(out, held.ID, supertypes(seen))
+		case "typeHierarchy/subtypes":
+			answer(out, held.ID, subtypes(seen))
+		case "textDocument/formatting":
+			answer(out, held.ID, formatted(mode))
 		case "workspace/symbol":
 			answer(out, held.ID, matches(mode, seen))
 		case "textDocument/prepareRename":
@@ -414,6 +422,7 @@ func capabilities(mode string) string {
 	return `{"capabilities":{"documentSymbolProvider":true,"definitionProvider":true,` +
 		`"referencesProvider":true,"implementationProvider":true,` +
 		`"callHierarchyProvider":true,"workspaceSymbolProvider":true,` +
+		`"typeHierarchyProvider":true,"documentFormattingProvider":true,` +
 		`"renameProvider":{"prepareProvider":true}` + pull + `}}`
 }
 
@@ -509,6 +518,30 @@ func incoming(of string) string {
 	  "range":{"start":{"line":8,"character":0},"end":{"line":8,"character":20}},
 	  "selectionRange":{"start":{"line":8,"character":5},"end":{"line":8,"character":10}}},
 	  "fromRanges":[{"start":{"line":8,"character":5},"end":{"line":8,"character":10}}]}]`, of)
+}
+
+// supertypes is what the subject takes from: one type it incorporates.
+func supertypes(of string) string {
+	return fmt.Sprintf(`[{"name":"Store","kind":23,"uri":%q,
+	  "range":{"start":{"line":2,"character":0},"end":{"line":4,"character":1}},
+	  "selectionRange":{"start":{"line":2,"character":5},"end":{"line":2,"character":10}}}]`, of)
+}
+
+// subtypes is what takes from the subject.
+func subtypes(of string) string {
+	return fmt.Sprintf(`[{"name":"After","kind":12,"uri":%q,
+	  "range":{"start":{"line":8,"character":0},"end":{"line":8,"character":20}},
+	  "selectionRange":{"start":{"line":8,"character":5},"end":{"line":8,"character":10}}}]`, of)
+}
+
+// formatted is what the language's own formatter would change, which for
+// a file already written that way is nothing.
+func formatted(mode string) string {
+	if mode == modeEmpty {
+		return `[]`
+	}
+	return `[{"range":{"start":{"line":2,"character":0},"end":{"line":2,"character":4}},
+	   "newText":"TYPE"}]`
 }
 
 func outgoing(of string) string {

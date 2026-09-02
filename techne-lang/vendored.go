@@ -51,8 +51,12 @@ var vendored = map[string]bool{
 	".bundle":       true,
 	"Pods":          true, // CocoaPods
 
-	// Tool state that mirrors sources into itself.
+	// Tool state that mirrors sources into itself. A language server
+	// writes its own bookkeeping into the workspace it was pointed at —
+	// ruby-lsp bootstraps a bundle, metals and jdtls keep an index —
+	// and none of it is the workspace's own code.
 	".bloop": true, ".metals": true, ".bsp": true, ".scala-build": true,
+	".ruby-lsp": true, ".jdtls": true, ".eclipse": true,
 	".gradle": true, ".mvn": true,
 	".tox": true, ".mypy_cache": true, ".pytest_cache": true, ".ruff_cache": true,
 }

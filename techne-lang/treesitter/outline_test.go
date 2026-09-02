@@ -31,6 +31,9 @@ func TestOutline(t *testing.T) {
 			assert.True(t, assertRelator(e),
 				"one direction is written in the source rather than resolved from it, "+
 					"and the relator declines every other")
+			assert.True(t, assertIndexer(e),
+				"an index can afford this engine, because a change to one file "+
+					"cannot stale its facts about another")
 			assert.True(t, assertPlanner(e),
 				"one operation writes a comment above a declaration and needs nothing bound, "+
 					"and the planner declines every other")
@@ -41,3 +44,4 @@ func TestOutline(t *testing.T) {
 func assertRelator(e engine.Engine) bool  { _, ok := e.(engine.Relator); return ok }
 func assertPlanner(e engine.Engine) bool  { _, ok := e.(engine.Planner); return ok }
 func assertVerifier(e engine.Engine) bool { _, ok := e.(engine.Verifier); return ok }
+func assertIndexer(e engine.Engine) bool  { _, ok := e.(engine.Indexer); return ok }

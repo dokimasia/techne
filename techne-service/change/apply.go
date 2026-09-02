@@ -4,6 +4,7 @@
 package change
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 
@@ -75,15 +76,20 @@ func rewritten(content []byte, edits []edit.TextEdit) ([]byte, error) {
 // refusing rather than the change being wrong. What makes it worth
 // undoing is that a change is all or nothing: half a rename compiles
 // about as often as none of it, and is far harder to find.
+// It reports the paths it wrote, which is not every path the plan
+// names: a plan whose result equals what is already there writes
+// nothing. Rewriting a file to itself moves its timestamp, which is what
+// every build and watcher in the workspace keys on, and reporting it as
+// changed tells a caller something happened that did not.
 func (s *Service) write(
 	plan edit.Plan,
 	sealed map[source.Path][]byte,
 	projected map[source.Path][]byte,
-) error {
+) ([]source.Path, error) {
 	var done []source.Path
 	for _, p := range plan.Paths() {
 		content, changed := projected[p]
-		if !changed {
+		if !changed || same(sealed[p], content) {
 			continue
 		}
 		var err error
@@ -96,9 +102,16 @@ func (s *Service) write(
 			done = append(done, p)
 			continue
 		}
-		return fmt.Errorf("change: write %s: %w (%s)", p, err, s.restore(done, sealed))
+		return nil, fmt.Errorf("change: write %s: %w (%s)", p, err, s.restore(done, sealed))
 	}
-	return nil
+	return done, nil
+}
+
+// same reports whether writing this content would leave the file as it
+// already is. A file the plan removes is never the same as one that is
+// there.
+func same(held, projected []byte) bool {
+	return projected != nil && bytes.Equal(held, projected)
 }
 
 // restore puts back the files a failed write had already changed, and

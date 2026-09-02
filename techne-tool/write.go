@@ -212,7 +212,7 @@ func reported(op edit.Operation, scope Scope, target string, done edit.Outcome) 
 		Operation:  string(op),
 		Target:     target,
 		Applied:    done.Applied,
-		Items:      touched(done.Changes, done.Rewrites),
+		Items:      Touched(done.Changes, done.Rewrites, applied(done)),
 		Handle:     done.Handle,
 		Provenance: provenance(done.Provenance),
 	}
@@ -237,13 +237,35 @@ func reported(op edit.Operation, scope Scope, target string, done edit.Outcome) 
 	return out
 }
 
-// touched names every file a change touches, and puts the ranges it
+// applied is the files a change actually wrote, or nil where it wrote
+// nothing because it was a preview.
+//
+// A preview describes what would happen and an applied change describes
+// what did. The two differ where a plan's result is already there: the
+// preview is right to show it and the applied answer is not, because
+// nothing was written.
+func applied(done edit.Outcome) map[string]bool {
+	if !done.Applied {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, p := range done.Changed {
+		out[string(p)] = true
+	}
+	return out
+}
+
+// Touched names every file a change touches, and puts the ranges it
 // rewrites under the one they are in.
 //
 // The changes come first, so a file that is moved, made or taken away is
 // named even though no text in it is rewritten. The rewrites then fill
 // in what a reader compares.
-func touched(changes []edit.Change, rewrites []edit.Rewrite) []Changed {
+//
+// Where the change was applied, only what it wrote is named. A caller
+// told a file changed acts on it, and a plan whose result was already
+// there wrote nothing.
+func Touched(changes []edit.Change, rewrites []edit.Rewrite, wrote map[string]bool) []Changed {
 	out := []Changed{}
 	at := map[string]int{}
 
@@ -257,7 +279,12 @@ func touched(changes []edit.Change, rewrites []edit.Rewrite) []Changed {
 		return i
 	}
 
+	kept := func(p string) bool { return wrote == nil || wrote[p] }
+
 	for _, c := range changes {
+		if !kept(string(c.Path)) && !kept(string(c.To)) {
+			continue
+		}
 		i := held(string(c.Path))
 		switch c.Kind {
 		case edit.ChangeMove:
@@ -270,6 +297,9 @@ func touched(changes []edit.Change, rewrites []edit.Rewrite) []Changed {
 		}
 	}
 	for _, r := range rewrites {
+		if !kept(string(r.Path)) {
+			continue
+		}
 		i := held(string(r.Path))
 		out[i].Sites++
 		out[i].Changes = append(out[i].Changes, Rewrite{Line: r.Line, Was: r.Was, Now: r.Now})

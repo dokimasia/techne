@@ -57,5 +57,9 @@ func Binding() map[engine.Role]trust.Fidelity {
 		engine.RoleRelate:  trust.Resolved,
 		engine.RolePlan:    trust.Resolved,
 		engine.RoleVerify:  trust.Resolved,
+		// Formatting is not a binding, and it is still the server's:
+		// what it returns is the language's own formatter, which no
+		// parser can reproduce and nothing else here has.
+		engine.RoleFormat: trust.Resolved,
 	}
 }

@@ -234,6 +234,16 @@ type held struct {
 	// refuse is the path this workspace will not take a write for, so a
 	// change that fails partway through can be driven.
 	refuse source.Path
+	// wrote counts the writes per path, so a case can see a file
+	// rewritten to itself rather than only the content that resulted.
+	wrote map[source.Path]int
+}
+
+// writes is how many times this workspace was asked to write a path.
+func (h *held) writes(p source.Path) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.wrote[p]
 }
 
 func (h *held) at(p source.Path) string {
@@ -258,6 +268,10 @@ func (h *held) Write(p source.Path, content []byte) error {
 	if p == h.refuse {
 		return fmt.Errorf("this workspace will not take a write to %s", p)
 	}
+	if h.wrote == nil {
+		h.wrote = map[source.Path]int{}
+	}
+	h.wrote[p]++
 	h.content[p] = string(content)
 	return nil
 }
@@ -289,6 +303,10 @@ type planner struct {
 	// makes is a file the plan creates, which is a change that reads
 	// back as nothing.
 	makes source.Path
+	// idle plans an edit whose result is what is already there, which
+	// is what a rename to the same name and a comment already written
+	// both produce.
+	idle bool
 }
 
 func (planner) Name() string                        { return "planner" }
@@ -312,6 +330,12 @@ func (p planner) Plan(
 		return engine.Result[edit.Change]{}, fmt.Errorf("the planner is broken")
 	}
 	written := []edit.TextEdit{{New: "// " + args[edit.ArgDoc] + "\n"}}
+	if p.idle {
+		// Replaces the first line with itself.
+		written = []edit.TextEdit{{
+			Span: source.Span{End: source.Position{Offset: 4}}, New: "one\n",
+		}}
+	}
 	out := []edit.Change{{Kind: edit.ChangeEdit, Path: req.Scope, Edits: written}}
 	if p.also != "" {
 		out = append(out, edit.Change{Kind: edit.ChangeEdit, Path: p.also, Edits: written})
@@ -370,4 +394,36 @@ func (c checker) Check(
 		}})
 	}
 	return engine.Result[edit.Finding]{Items: out, Completeness: trust.ScopeTotal}, nil
+}
+
+func TestIdleChange(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a plan whose result is already there", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("names no file as written", func(t *testing.T) {
+			t.Parallel()
+			// Reported as written, a caller believes something happened
+			// and acts on it. A monkey run caught this as a change that
+			// said it wrote a file whose bytes never moved.
+			files, s := serving(t, planner{idle: true}, clean())
+			got, err := s.Apply(t.Context(), asking(false))
+
+			assert.NoError(t, err, "a change that plans and gates cleanly is not a fault")
+			assert.Empty(t, got.Changed, "nothing differed, so nothing is named as written")
+			assert.Equal(t, files.at("a.fx"), original, "and the file is as it was")
+		})
+
+		t.Run("leaves the file untouched rather than rewriting it", func(t *testing.T) {
+			t.Parallel()
+			// Rewriting a file to itself moves its timestamp, which is
+			// what every build and watcher in the workspace keys on.
+			files, s := serving(t, planner{idle: true}, clean())
+			_, err := s.Apply(t.Context(), asking(false))
+
+			assert.NoError(t, err, "applying succeeds")
+			assert.Equal(t, files.writes("a.fx"), 0, "the write path did not touch it")
+		})
+	})
 }

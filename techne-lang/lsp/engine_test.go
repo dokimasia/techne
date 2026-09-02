@@ -141,7 +141,7 @@ func TestEngine(t *testing.T) {
 				{engine.RoleRelate, true},
 				{engine.RolePlan, true},
 				{engine.RoleVerify, true},
-				{engine.RoleFormat, false},
+				{engine.RoleFormat, true},
 				{engine.RoleCheck, false},
 				{engine.RoleIndex, false},
 			} {

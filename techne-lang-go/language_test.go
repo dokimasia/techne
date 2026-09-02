@@ -272,3 +272,64 @@ func ends(held []sema.Relation) []string {
 	}
 	return out
 }
+
+// An index asks per file and needs to know what a change to one costs.
+// The facts are the same ones Outline returns for that file, which the
+// conformance suite asserts; what this checks is that a real grammar
+// produces them one file at a time.
+func TestIndexOneFile(t *testing.T) {
+	t.Parallel()
+
+	indexing := func(t *testing.T) engine.Indexer {
+		t.Helper()
+		registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
+		held := lang.Workspace{FS: fstest.MapFS{
+			"a.go": {Data: []byte("package p\n\ntype Store struct{ n int }\n\nfunc Use() {}\n")},
+			"b.go": {Data: []byte("package p\n\ntype Other struct{}\n")},
+		}}
+		assert.NoError(t, golang.Register(held, registry, catalogue), "the module registers")
+
+		for _, e := range catalogue.For(t.Context(), golang.Declaration().Language, engine.RoleIndex) {
+			if indexer, serves := e.(engine.Indexer); serves {
+				return indexer
+			}
+		}
+		t.Fatal("no engine indexes")
+		return nil
+	}
+
+	t.Run("Index", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("reports one file's declarations and no other's", func(t *testing.T) {
+			t.Parallel()
+			got, err := indexing(t).Index(t.Context(), "a.go")
+
+			assert.NoError(t, err, "indexing a file this language claims succeeds")
+			assert.Equal(t, names(got.Items), []string{"Store", "n", "Use"},
+				"what that file declares, and nothing from beside it")
+			assert.False(t, got.Skipped, "the file was read")
+		})
+
+		t.Run("says it read nothing for a file of another language", func(t *testing.T) {
+			t.Parallel()
+			// An index storing an empty answer would record that the
+			// file declares none, which is a different fact from this
+			// engine not reading it.
+			got, err := indexing(t).Index(t.Context(), "notes.md")
+
+			assert.NoError(t, err, "a file this language does not claim is not a fault")
+			assert.True(t, got.Skipped, "and the engine says it read nothing")
+			assert.Empty(t, got.Items, "rather than that the file declares nothing")
+		})
+	})
+}
+
+// names is what an answer declared, in order.
+func names(held []sema.Symbol) []string {
+	out := make([]string, 0, len(held))
+	for _, one := range held {
+		out = append(out, one.Name)
+	}
+	return out
+}
