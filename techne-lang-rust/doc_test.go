@@ -61,8 +61,8 @@ impl Store {
 /**
  * Returns its argument.
  */
-pub fn helper<T>(v: T) -> T {
-    v
+pub fn helper<T>(v: T) -> Option<Box<T>> {
+    Some(Box::new(v))
 }
 
 pub mod inner {

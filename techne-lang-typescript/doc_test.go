@@ -56,8 +56,8 @@ export class Store implements Readable {
   }
 }
 
-export function make<T>(value: T): T {
-  return value;
+export function make<T>(value: T): Promise<T> {
+  return Promise.resolve(value);
 }
 `,
 		},
@@ -81,7 +81,10 @@ export function make<T>(value: T): T {
 			{Name: "counter", Kind: sema.KindVariable},
 			{Name: "get", Kind: sema.KindMethod},
 			{Name: "get", Kind: sema.KindMethod},
-			{Name: "make", Kind: sema.KindFunction},
+			{
+				Name: "make", Kind: sema.KindFunction,
+				Signature: "export function make<T>(value: T): Promise<T>",
+			},
 			{Name: "size", Kind: sema.KindField},
 			{Name: "size", Kind: sema.KindField},
 			{Name: "start", Kind: sema.KindField, Modifiers: []string{"private", "readonly"}},

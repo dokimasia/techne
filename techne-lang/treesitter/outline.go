@@ -102,6 +102,9 @@ func (e *Engine) declarations(p source.Path, content []byte) ([]sema.Symbol, err
 	names := e.tags.CaptureNames()
 
 	var out []sema.Symbol
+	// Where each symbol's declaration began, so a statement binding
+	// several names can be told from one binding a single name.
+	var from []uint
 	at := map[int]int{}
 	walk := tree.RootNode().Walk()
 	defer walk.Close()
@@ -131,12 +134,13 @@ func (e *Engine) declarations(p source.Path, content []byte) ([]sema.Symbol, err
 			}
 
 			marks := annotations(node, content, p)
-			signed := signature(node, content, marks)
+			signed := signature(node, content, marks, kind, e.declared.Comment)
 			if kind == sema.KindField {
 				marks = append(marks, tags(node, content, p)...)
 			}
 
 			at[one.at] = len(out)
+			from = append(from, node.StartByte())
 			out = append(out, sema.Symbol{
 				ID:          sema.NewID(e.declared.Language, unit, one.text, kind),
 				Name:        one.text,
@@ -152,8 +156,28 @@ func (e *Engine) declarations(p source.Path, content []byte) ([]sema.Symbol, err
 			})
 		}
 	}
+	named(out, from)
 	Parents(out)
 	return out, nil
+}
+
+// named replaces the signature of every symbol that shares its
+// declaration with another.
+//
+// One statement can bind many names: Python writes
+// `(A, B, C) = range(3)` and Go writes `const a, b = 1, 2`. The
+// statement is the signature of none of them on its own, and reporting
+// it once per name says the whole of it three times.
+func named(symbols []sema.Symbol, from []uint) {
+	shared := map[uint]int{}
+	for _, at := range from {
+		shared[at]++
+	}
+	for i := range symbols {
+		if i < len(from) && shared[from[i]] > 1 {
+			symbols[i].Signature = symbols[i].Name
+		}
+	}
 }
 
 // unquote strips the quotes from a name a grammar gives as a string

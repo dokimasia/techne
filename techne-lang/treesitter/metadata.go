@@ -351,7 +351,7 @@ func documentation(node *ts.Node, content []byte, style lang.CommentStyle, kind 
 //
 // A declaration with no body is its own signature, which is right for a
 // constant and for an alias.
-func signature(node *ts.Node, content []byte, marks []sema.Annotation) string {
+func signature(node *ts.Node, content []byte, marks []sema.Annotation, kind sema.Kind, style lang.CommentStyle) string {
 	from := enclosing(node, content)
 	start, end := int(from.StartByte()), int(from.EndByte())
 	if end > len(content) || start >= end {
@@ -366,43 +366,161 @@ func signature(node *ts.Node, content []byte, marks []sema.Annotation) string {
 
 	if body := bodyOf(from, 0); body != nil && int(body.StartByte()) > start {
 		// A body can begin after something written above it, as Ruby's
-		// does after a comment, so the text is taken back to the line
-		// the declaration closes on rather than to the body's start.
-		return trimmed(balanced(string(content[start:body.StartByte()])))
+		// does after a comment. What sits between is documentation for
+		// what follows, not part of this declaration.
+		return trimmed(uncommented(string(content[start:body.StartByte()]), style))
 	}
-	// A declaration whose body the grammar does not name ends where it
-	// opens the block, and a declaration with neither ends on its line.
+	// A named aggregate whose body the grammar does not name ends where
+	// it opens the brace: Go builds a struct from a struct_type holding
+	// an unnamed field list. Nothing else does, and applying the rule
+	// wider would cut a dictionary off at its own first brace.
 	text := string(content[start:end])
-	if at := strings.IndexByte(text, bodyOpen); at >= 0 {
-		text = text[:at]
-	}
-	if at := strings.IndexByte(text, '\n'); at >= 0 {
-		text = text[:at]
+	if aggregate(kind) {
+		if at := opens(text); at >= 0 {
+			text = text[:at]
+		}
+	} else if strings.ContainsRune(text, '\n') {
+		// A value spelled over several lines is a body by another name.
+		// What a caller wants is what the binding is, not every element
+		// of what it was set to.
+		if at := assigns(text); at >= 0 {
+			text = text[:at]
+		}
 	}
 	return trimmed(text)
 }
 
-// balanced returns the leading lines of a signature that close every
-// bracket they open, so a signature written across several lines stays
-// whole and one followed by anything else does not take it.
-func balanced(text string) string {
-	depth, taken := 0, 0
-	for _, line := range strings.SplitAfter(text, "\n") {
-		taken += len(line)
-		depth += strings.Count(line, "(") - strings.Count(line, ")")
-		depth += strings.Count(line, "[") - strings.Count(line, "]")
-		// A blank line closes nothing. Breaking on one would end the
-		// signature before it began, where a declaration is written
-		// under the annotations that were stripped from it.
-		if depth <= 0 && strings.TrimSpace(line) != "" {
-			break
+// aggregate reports whether a kind is one a language writes a body for
+// in braces.
+func aggregate(kind sema.Kind) bool {
+	switch kind {
+	case sema.KindStruct, sema.KindInterface, sema.KindUnion, sema.KindEnum,
+		sema.KindAnnotation, sema.KindModule, sema.KindImplementation:
+		return true
+	default:
+		return false
+	}
+}
+
+// opens finds where a declaration opens its own body, or -1.
+//
+// Only a brace the declaration itself opens counts. One inside a call or
+// a list belongs to a value being passed, and cutting there would end a
+// field halfway through its initialiser.
+func opens(text string) int {
+	depth := 0
+	for at := 0; at < len(text); at++ {
+		switch text[at] {
+		case '(', '[':
+			depth++
+		case ')', ']':
+			depth--
+		case bodyOpen:
+			if depth <= 0 {
+				return at
+			}
 		}
 	}
-	return text[:taken]
+	return -1
+}
+
+// assigns finds where a binding is given its value, or -1.
+//
+// Only an assignment the declaration itself makes counts, so a fat
+// arrow inside a type argument and a comparison inside a value are
+// passed over.
+func assigns(text string) int {
+	depth := 0
+	for at := 0; at < len(text); at++ {
+		switch text[at] {
+		case '(', '[', '{', '<':
+			depth++
+		case ')', ']', '}', '>':
+			depth--
+		case '=':
+			if depth > 0 {
+				continue
+			}
+			if at+1 < len(text) && (text[at+1] == '=' || text[at+1] == '>') {
+				at++
+				continue
+			}
+			if at > 0 && strings.ContainsRune("=!<>+-*/%&|^:", rune(text[at-1])) {
+				continue
+			}
+			return at
+		}
+	}
+	return -1
+}
+
+// uncommented drops the trailing lines of a signature that are comments.
+//
+// A grammar can put a body's start after a comment written inside it,
+// as Ruby does, and that comment documents what comes next rather than
+// what came before.
+func uncommented(text string, style lang.CommentStyle) string {
+	lines := strings.Split(text, "\n")
+	for len(lines) > 0 {
+		last := strings.TrimSpace(lines[len(lines)-1])
+		if last != "" && !comments(last, style) {
+			break
+		}
+		lines = lines[:len(lines)-1]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// comments reports whether a line opens a comment in this language.
+func comments(line string, style lang.CommentStyle) bool {
+	if open := strings.TrimSpace(style.Line); open != "" && strings.HasPrefix(line, open) {
+		return true
+	}
+	if style.BlockOpen != "" && strings.HasPrefix(line, style.BlockOpen) {
+		return true
+	}
+	for _, form := range style.Doc {
+		if form.Open != "" && strings.HasPrefix(line, form.Open) {
+			return true
+		}
+	}
+	return false
 }
 
 func trimmed(text string) string {
-	return strings.TrimRight(strings.TrimSpace(text), signatureTail)
+	out := oneLine(strings.TrimRight(strings.TrimSpace(text), signatureTail))
+	if len(out) <= signatureLimit {
+		return out
+	}
+	// A signature is read on one line. Past a point it is a value
+	// written out rather than a way to call something, and the whole of
+	// it is one read away.
+	return strings.TrimSpace(out[:signatureLimit]) + "…"
+}
+
+// oneLine collapses a signature written across several lines.
+//
+// A reader scanning an outline reads one declaration per line, and a
+// parameter list broken over five lines breaks that. The source keeps
+// its layout; what is reported does not need it.
+func oneLine(text string) string {
+	if !strings.ContainsAny(text, "\n\r\t") {
+		return text
+	}
+	out := strings.Join(strings.Fields(text), " ")
+	for _, tighten := range [][2]string{
+		{"( ", "("},
+		{" )", ")"},
+		{" ,", ","},
+		{",)", ")"},
+		{"[ ", "["},
+		{" ]", "]"},
+		{"< ", "<"},
+		{" >", ">"},
+	} {
+		out = strings.ReplaceAll(out, tighten[0], tighten[1])
+	}
+	return out
 }
 
 // enclosing returns the node a signature starts at.
@@ -418,29 +536,58 @@ func trimmed(text string) string {
 // because documentation is written above a whole declaration while a
 // signature is a part of one.
 //
-// It never climbs past an opening brace. A parent whose text reaches the
-// node through one has opened a body, so the node is a member of it
-// rather than the same declaration written wider: a Go interface holding
-// one method would otherwise give that method the interface's own text.
+// It never reads across a brace, a paren or a bracket. A parent whose
+// text reaches the node through one has opened something the node is
+// inside, so a Go interface holding one method would otherwise give that
+// method the interface's own text.
+//
+// A wrapper holding nothing but the declaration is climbed, because
+// `export` is part of what a caller writes. One holding a decorator
+// beside it is not, because the decorator reaches a caller as an
+// annotation and is not part of the signature.
 func enclosing(node *ts.Node, content []byte) *ts.Node {
 	out := node
 	for {
 		parent := out.Parent()
-		if parent == nil || parent.NamedChildCount() != 1 {
-			return out
-		}
-		if parent.StartPosition().Row != out.StartPosition().Row {
-			return out
-		}
-		if first := parent.NamedChild(0); first == nil || !first.Equals(*out) {
-			return out
-		}
-		gap := content[parent.StartByte():out.StartByte()]
-		if strings.ContainsAny(string(gap), blockOpen) {
+		if parent == nil || !declares(parent, out, content) {
 			return out
 		}
 		out = parent
 	}
+}
+
+// declares reports whether a parent's own text belongs to this node's
+// signature.
+//
+// It does when the parent writes nothing but keywords before the node
+// and nothing after it but a body. C spells a function that way, as a
+// return type and a declarator side by side, so a declarator alone is
+// half a signature.
+func declares(parent, node *ts.Node, content []byte) bool {
+	if strings.ContainsAny(string(content[parent.StartByte():node.StartByte()]), blockOpen) {
+		return false
+	}
+	// The parent's own body, not one found below it: a wrapper holding a
+	// class would otherwise be judged by the class's braces.
+	body := parent.ChildByFieldName(string(FieldNameBody))
+	if body == nil {
+		return parent.NamedChildCount() == 1
+	}
+	if node.EndByte() > body.StartByte() {
+		return false
+	}
+	for i := range parent.NamedChildCount() {
+		child := parent.NamedChild(i)
+		if child == nil || child.Equals(*node) || child.Equals(*body) {
+			continue
+		}
+		// Anything else written after the node is part of the parent
+		// rather than of this declaration.
+		if child.StartByte() > node.StartByte() && child.EndByte() <= body.StartByte() {
+			return false
+		}
+	}
+	return true
 }
 
 // bodyOf finds the field holding a declaration's body.

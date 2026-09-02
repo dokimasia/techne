@@ -35,6 +35,10 @@ trait Readable {
 /** Store holds items by name. */
 final class Store(val name: String) extends Readable {
   val limit = 10
+  val table: Map[String, Int] = Map(
+    "one" -> 1,
+    "two" -> 2,
+  )
   var counter = 0
 
   def get: Int = limit
@@ -60,6 +64,10 @@ object Store {
 			{Name: "get", Kind: sema.KindFunction},
 			{Name: "get", Kind: sema.KindFunction},
 			{Name: "limit", Kind: sema.KindConstant},
+			{
+				Name: "table", Kind: sema.KindConstant,
+				Signature: "val table: Map[String, Int]",
+			},
 			{Name: "make", Kind: sema.KindFunction},
 			{Name: "n", Kind: sema.KindParameter},
 			{Name: "name", Kind: sema.KindProperty},

@@ -28,6 +28,7 @@ func TestDoc(t *testing.T) {
 from typing import List
 
 LIMIT = 10
+FIRST, SECOND = 1, 2
 
 
 class Store:
@@ -54,7 +55,15 @@ def helper(a, b=1, *rest, **named):
 `,
 		},
 		Declares: []conformance.Declared{
+			{
+				Name: "FIRST", Kind: sema.KindVariable, Visibility: sema.Exported,
+				Signature: "FIRST",
+			},
 			{Name: "LIMIT", Kind: sema.KindVariable, Visibility: sema.Exported},
+			{
+				Name: "SECOND", Kind: sema.KindVariable, Visibility: sema.Exported,
+				Signature: "SECOND",
+			},
 			{Name: "List", Kind: sema.KindImport, Visibility: sema.Exported},
 			{
 				Name: "Store", Kind: sema.KindStruct, Visibility: sema.Exported,

@@ -218,13 +218,19 @@ const (
 	// bodyOpen is the brace a language opens a body with, and is where
 	// a declaration whose body the grammar does not name ends.
 	bodyOpen = '{'
+	// signatureLimit is how long a signature may run before it stops
+	// being one. A declaration written past it is a value spelled out,
+	// and the whole of it is one read away.
+	signatureLimit = 240
 	// bodyDepth bounds how far below a declaring node its body may sit.
 	// Go puts a struct's fields two levels down; past that the search
 	// would find the body of something nested inside the declaration.
 	bodyDepth = 2
-	// signatureTail is the punctuation a declaration opens its body
-	// with, left behind when the body is removed.
-	signatureTail = " \t\n\r{(=:->"
+	// signatureTail is the punctuation left dangling when a body is
+	// removed. It holds no > and no -, because those close a generic
+	// and Box<dyn Error>, Promise<any> and Map<String, Object> all end
+	// in one.
+	signatureTail = " \t\n\r{(=:"
 	// tagSeparator ends a Go struct tag's key.
 	tagSeparator = ":"
 	// tagQuote opens and closes a struct tag value, and tagEscape is
