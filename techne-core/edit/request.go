@@ -45,6 +45,11 @@ type Outcome struct {
 	// Rewrites is the same thing read back against the files, so a
 	// caller reviews text rather than byte ranges.
 	Rewrites []Rewrite
+	// Handle fetches this plan back to apply it, and is present on a
+	// preview that could be applied. It is a name rather than the plan
+	// because the plan goes to a caller and comes back, and a caller
+	// that had to reproduce it exactly would sometimes not.
+	Handle string
 	// Diagnostics are what the gate reported, and are the reason a
 	// change that planned cleanly was not applied. Each carries the
 	// change that resolves it where there is one obvious change.

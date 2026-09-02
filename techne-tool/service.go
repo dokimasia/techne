@@ -67,4 +67,9 @@ type (
 	Writer interface {
 		Apply(ctx context.Context, req edit.Request) (edit.Outcome, error)
 	}
+
+	// Committer applies a change a preview already computed.
+	Committer interface {
+		Commit(ctx context.Context, handle string) (edit.Outcome, error)
+	}
 )

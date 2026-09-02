@@ -101,7 +101,14 @@ func Build(fsys fs.FS, files change.Files) (*Server, error) {
 		offer(tool.Capabilities(catalogue)),
 	)
 	if files != nil {
-		err = errors.Join(err, offer(tool.Document(reads, change.New(catalogue, registry, files))))
+		writes := change.New(catalogue, registry, files)
+		err = errors.Join(err,
+			offer(tool.Document(reads, writes)),
+			offer(tool.Rename(reads, writes)),
+			offer(tool.Move(writes)),
+			offer(tool.Extract(writes)),
+			offer(tool.Apply(writes)),
+		)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("app: %w", err)

@@ -554,7 +554,7 @@ preview whose gate passed is guaranteed to apply.
 | `move.file` | path | `to` |
 | `document.symbol` | scope, name, kind | `doc` |
 | `extract.function` | scope, path, lines | `new_name`, `receiver` |
-| `apply.change` | — | the changes from a preview |
+| `apply.change` | — | `handle` |
 
 ```json
 { "name": "rename.symbol",
@@ -591,8 +591,20 @@ Structured:
 ```
 
 `extract.function` adds the new declaration to its item list.
-`apply.change` takes the `changes` from a preview verbatim, so a caller
-never rewrites them.
+
+`apply.change` takes the handle a preview returned, and the changes stay
+where they were computed. Sending them back would mean a caller
+reproducing several kilobytes exactly for a rename over thirty sites,
+and reproducing bytes exactly is the least reliable thing a model does.
+A handle is thirty-two characters.
+
+The plan is held for the session and fetched once. A handle that has been
+used, or that the service no longer holds, is refused with the
+instruction to preview again — which is the call the caller just made, so
+the cost of losing one is a turn. What the preview pinned is checked
+before anything is written: a file that changed in between describes code
+the plan was not computed against, and byte ranges over other bytes
+usually still compile.
 
 `document.symbol` answers the same way with one file and one site, and
 sends the documentation as prose with no comment markers: which markers

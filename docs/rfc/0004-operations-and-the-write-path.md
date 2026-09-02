@@ -444,6 +444,13 @@ projection is settled: it reports that nothing judged the change. The
 status is degraded and a caveat says so, because a language nothing can
 gate is one where refusing every change would be the only alternative.
 
+Preconditions are what a plan handed back is checked against. A preview
+keeps its plan and returns a handle; applying fetches it, reads the
+files as they are now, and refuses when a digest no longer matches. A
+handle is fetched once, so a change is not applied twice by accident,
+and the plans are bounded, so a session that previews and never applies
+does not grow without limit.
+
 Applying the edits a language server proposes through a command is not
 proposed. Those edits arrive outside the pipeline and would be the one
 path that bypasses policy, so capturing them as a proposal is where this

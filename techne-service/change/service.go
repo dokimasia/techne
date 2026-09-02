@@ -53,11 +53,12 @@ type Service struct {
 	files   Files
 	policy  edit.Policy
 	locks   *locks
+	held    *held
 }
 
 // New returns a service over a catalogue, a router and a workspace.
 func New(c *engine.Catalog, r Router, f Files) *Service {
-	return &Service{catalog: c, router: r, files: f, locks: newLocks()}
+	return &Service{catalog: c, router: r, files: f, locks: newLocks(), held: newHeld()}
 }
 
 // Apply runs one operation through the write path.
@@ -136,6 +137,14 @@ func (s *Service) Apply(ctx context.Context, req edit.Request) (edit.Outcome, er
 		})
 	}
 	if req.DryRun {
+		// The plan is kept so applying it costs no second planning run,
+		// and the preconditions sealed above are what say the files have
+		// not moved on when the caller comes back.
+		handle, err := s.held.keep(plan)
+		if err != nil {
+			return edit.Outcome{}, err
+		}
+		out.Handle = handle
 		return out, nil
 	}
 
@@ -144,6 +153,85 @@ func (s *Service) Apply(ctx context.Context, req edit.Request) (edit.Outcome, er
 	}
 	out.Applied, out.Changed = true, plan.Paths()
 	return out, nil
+}
+
+// Commit applies a plan a preview computed and kept.
+//
+// It runs the same checks the preview ran, over the files as they are
+// now rather than as they were: a plan whose file moved on describes
+// code that is no longer there, and byte ranges over other bytes usually
+// still compile.
+func (s *Service) Commit(ctx context.Context, handle string) (edit.Outcome, error) {
+	plan, kept := s.held.take(handle)
+	if !kept {
+		return refused("", "no preview is held under that handle: preview again to get one"), nil
+	}
+	spec, declared := edit.SpecFor(plan.Operation)
+	if !declared {
+		return refused(plan.Operation, fmt.Sprintf(
+			"no operation is named %q", plan.Operation)), nil
+	}
+
+	release := s.locks.hold(plan.Paths())
+	defer release()
+
+	sealed, drifted, err := s.unchanged(plan)
+	switch {
+	case err != nil:
+		return edit.Outcome{}, err
+	case drifted != "":
+		return refusedBy(plan, drifted), nil
+	}
+	if refusal := s.policy.Admit(spec, plan); refusal != nil {
+		return refusedBy(plan, refusal.Error()), nil
+	}
+
+	projected, err := project(plan, sealed)
+	if err != nil {
+		return refusedBy(plan, err.Error()), nil
+	}
+	gated, err := s.gate(ctx, edit.Request{Scope: plan.Paths()[0]}, sealed, projected)
+	if err != nil {
+		return edit.Outcome{}, err
+	}
+	if gated.worse {
+		out := refusedBy(plan, fmt.Sprintf(
+			"the change stops %s parsing, so it was not written", where(gated.found)))
+		out.Diagnostics, out.Rewrites = gated.found, preview(plan, sealed)
+		return out, nil
+	}
+
+	if written := s.write(plan, sealed, projected); written != nil {
+		return edit.Outcome{}, written
+	}
+	return edit.Outcome{
+		Operation:  plan.Operation,
+		Status:     trust.OK,
+		Applied:    true,
+		Changed:    plan.Paths(),
+		Changes:    plan.Changes,
+		Rewrites:   preview(plan, sealed),
+		Provenance: plan.Provenance,
+	}, nil
+}
+
+// unchanged reads the files a plan depends on and reports which of them
+// moved on since it was computed.
+func (s *Service) unchanged(plan edit.Plan) (map[source.Path][]byte, string, error) {
+	sealed := map[source.Path][]byte{}
+	for _, pinned := range plan.Preconditions {
+		content, err := s.files.Read(pinned.Path)
+		if err != nil {
+			return nil, "", fmt.Errorf("change: read %s: %w", pinned.Path, err)
+		}
+		if sha256.Sum256(content) != pinned.Digest {
+			return nil, fmt.Sprintf(
+				"%s changed since it was previewed, so the change describes code that "+
+					"is no longer there: preview again", pinned.Path), nil
+		}
+		sealed[pinned.Path] = content
+	}
+	return sealed, "", nil
 }
 
 // plan asks the languages a request could be about for the edits it

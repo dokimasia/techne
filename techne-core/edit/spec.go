@@ -42,11 +42,20 @@ type Spec struct {
 	RewritesReferences bool
 }
 
+// pointed is what an operation aimed at a declaration accepts.
+//
+// A span as readily as an identity, because an identity is a language, a
+// unit, a name and a kind, and a unit declaring two methods called Get
+// satisfies one twice. A caller that has already resolved which
+// declaration it means says so by position, which is also what a
+// language server takes for these operations.
+var pointed = []TargetKind{TargetSymbol, TargetSpan}
+
 // specs is the table Operations is checked against. Adding an operation
 // without adding a row here fails the package's tests.
 var specs = map[Operation]Spec{
 	RenameSymbol: {
-		Operation: RenameSymbol, Accepts: []TargetKind{TargetSymbol},
+		Operation: RenameSymbol, Accepts: pointed,
 		Required: []ArgKey{ArgNewName}, MinFidelity: trust.Resolved, RewritesReferences: true,
 	},
 	RenameFile: {
@@ -58,7 +67,7 @@ var specs = map[Operation]Spec{
 		Required: []ArgKey{ArgDestination}, MinFidelity: trust.Resolved, RewritesReferences: true,
 	},
 	MoveSymbol: {
-		Operation: MoveSymbol, Accepts: []TargetKind{TargetSymbol},
+		Operation: MoveSymbol, Accepts: pointed,
 		Required: []ArgKey{ArgDestination}, MinFidelity: trust.Resolved, RewritesReferences: true,
 	},
 	ExtractFunction: {
@@ -70,37 +79,31 @@ var specs = map[Operation]Spec{
 		Required: []ArgKey{ArgNewName}, MinFidelity: trust.Resolved,
 	},
 	ExtractInterface: {
-		Operation: ExtractInterface, Accepts: []TargetKind{TargetSymbol},
+		Operation: ExtractInterface, Accepts: pointed,
 		Required: []ArgKey{ArgNewName}, MinFidelity: trust.Resolved,
 	},
 	InlineVariable: {
-		Operation: InlineVariable, Accepts: []TargetKind{TargetSymbol},
+		Operation: InlineVariable, Accepts: pointed,
 		MinFidelity: trust.Resolved, RewritesReferences: true,
 	},
 	InlineConstant: {
-		Operation: InlineConstant, Accepts: []TargetKind{TargetSymbol},
+		Operation: InlineConstant, Accepts: pointed,
 		MinFidelity: trust.Resolved, RewritesReferences: true,
 	},
 	ChangeSignature: {
-		Operation: ChangeSignature, Accepts: []TargetKind{TargetSymbol},
+		Operation: ChangeSignature, Accepts: pointed,
 		Required: []ArgKey{ArgSignature}, MinFidelity: trust.Resolved, RewritesReferences: true,
 	},
 	ImplementInterface: {
-		Operation: ImplementInterface, Accepts: []TargetKind{TargetSymbol},
+		Operation: ImplementInterface, Accepts: pointed,
 		Optional: []ArgKey{ArgReceiver}, MinFidelity: trust.Resolved,
 	},
 	// document.symbol writes a comment above a declaration and touches
 	// nothing else, which is why a parser can serve it correctly. It is
 	// the one operation whose minimum is not resolved, and the reason
 	// the minimum is a property of the operation rather than a setting.
-	//
-	// It is also the one that takes a span as readily as a symbol. A
-	// name and a kind do not pick out one declaration — a package with
-	// two Get methods has two symbols under one identity — and the text
-	// to write is the caller's, so a caller that has already resolved
-	// which declaration it means says so by its position.
 	DocumentSymbol: {
-		Operation: DocumentSymbol, Accepts: []TargetKind{TargetSymbol, TargetSpan},
+		Operation: DocumentSymbol, Accepts: pointed,
 		Required: []ArgKey{ArgDoc}, MinFidelity: trust.Syntactic,
 	},
 }

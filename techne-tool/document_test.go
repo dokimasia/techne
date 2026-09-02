@@ -116,8 +116,8 @@ func TestDocument(t *testing.T) {
 
 		t.Run("writes a preview as a diff and says what to call next", func(t *testing.T) {
 			t.Parallel()
-			out := tool.DocumentOutput{
-				Symbol: "Store",
+			out := tool.Written{
+				Operation: "document.symbol", Target: "Store",
 				Items: []tool.Changed{{
 					Path: "a.fx", Sites: 1,
 					Changes: []tool.Rewrite{{Line: 2, Was: "// Old.", Now: "// New."}},
@@ -125,15 +125,15 @@ func TestDocument(t *testing.T) {
 				Verified: &tool.Gate{Gate: "parse", Engine: "treesitter/fx", Result: "pass"},
 			}
 			assert.ContainsInOrder(t, out.Render(), []string{
-				"document Store — preview", "a.fx:2", "- // Old.", "+ // New.",
+				"document.symbol Store — preview", "a.fx:2", "- // Old.", "+ // New.",
 				"parses (treesitter/fx)", "dry_run false",
 			}, "a change is read as a diff, and a passing preview is one call from being real")
 		})
 
 		t.Run("says nothing about a next call once it has been applied", func(t *testing.T) {
 			t.Parallel()
-			out := tool.DocumentOutput{
-				Symbol: "Store", Applied: true,
+			out := tool.Written{
+				Operation: "document.symbol", Target: "Store", Applied: true,
 				Verified: &tool.Gate{Gate: "parse", Engine: "e", Result: "pass"},
 			}
 			assert.Contains(t, out.Render(), "applied", "the caller is told it happened")
@@ -144,8 +144,8 @@ func TestDocument(t *testing.T) {
 			t.Parallel()
 			// "It parses" and "it builds" are different promises, and a
 			// caller told only "pass" cannot tell which one it was given.
-			out := tool.DocumentOutput{
-				Symbol: "S", Applied: true,
+			out := tool.Written{
+				Operation: "document.symbol", Target: "S", Applied: true,
 				Verified: &tool.Gate{Gate: "parse", Engine: "treesitter/fx", Result: "pass"},
 			}
 			assert.Contains(t, out.Render(), "parses", "the gate says what it checked")
@@ -153,7 +153,7 @@ func TestDocument(t *testing.T) {
 
 		t.Run("says so when nothing judged the change", func(t *testing.T) {
 			t.Parallel()
-			out := tool.DocumentOutput{Symbol: "S", Applied: true}
+			out := tool.Written{Operation: "document.symbol", Target: "S", Applied: true}
 			assert.Contains(t, out.Render(), "nothing checked",
 				"a change nobody verified is not a change that passed")
 		})
@@ -162,7 +162,7 @@ func TestDocument(t *testing.T) {
 
 // documenting runs the document tool over one fixture file and decodes what
 // came back.
-func documenting(t *testing.T, writer *recorder, input string) tool.DocumentOutput {
+func documenting(t *testing.T, writer *recorder, input string) tool.Written {
 	t.Helper()
 	built, err := tool.Document(addressable(), writer)
 	assert.NoError(t, err, "the tool's schemas derive from its own types")
@@ -170,7 +170,7 @@ func documenting(t *testing.T, writer *recorder, input string) tool.DocumentOutp
 	result, err := built.Execute(t.Context(), json.RawMessage(input))
 	assert.NoError(t, err, "a well-formed call reaches the service")
 
-	var out tool.DocumentOutput
+	var out tool.Written
 	assert.NoError(t, json.Unmarshal(result.Payload, &out), "the answer is JSON a caller can read")
 	return out
 }
