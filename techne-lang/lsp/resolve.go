@@ -36,6 +36,9 @@ func (e *Engine) Resolve(
 		return engine.Result[sema.Symbol]{Skipped: !ok, Completeness: trust.ScopeTotal}, err
 	}
 
+	if !provides(held.capable.DefinitionProvider) {
+		return engine.Result[sema.Symbol]{}, e.unsupported("textDocument/definition")
+	}
 	e.working.settle(ctx, e.settling())
 
 	answered, err := held.asks.Definition(ctx, &protocol.DefinitionParams{

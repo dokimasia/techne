@@ -124,6 +124,9 @@ func (e *Engine) referring(
 	pick protocol.TextDocumentPositionParams,
 	kind sema.RelationKind,
 ) ([]sema.Relation, error) {
+	if !provides(held.capable.ReferencesProvider) {
+		return nil, e.unsupported("textDocument/references")
+	}
 	sites, err := held.asks.References(ctx, &protocol.ReferenceParams{
 		TextDocumentPositionParams: pick,
 		Context:                    protocol.ReferenceContext{IncludeDeclaration: false},
@@ -142,6 +145,9 @@ func (e *Engine) implementing(
 	pick protocol.TextDocumentPositionParams,
 	kind sema.RelationKind,
 ) ([]sema.Relation, error) {
+	if !provides(held.capable.ImplementationProvider) {
+		return nil, e.unsupported("textDocument/implementation")
+	}
 	answered, err := held.asks.Implementation(ctx, &protocol.ImplementationParams{
 		TextDocumentPositionParams: pick,
 	})
@@ -170,15 +176,18 @@ func (e *Engine) sited(
 		if err != nil {
 			return nil, err
 		}
-		if !known {
-			// A use at the top level of a file, outside every
-			// declaration: an import, a package-level initialiser. It is
-			// a use, and the file is what holds it.
-			continue
-		}
 		held, err := found.file(ctx, p)
 		if err != nil {
 			return nil, err
+		}
+		if !known {
+			// The site falls outside every declaration the outline
+			// reports: an import, a package-level initialiser, an impl
+			// block a server does not report as a symbol. It is still a
+			// site, so it is named by the file that holds it rather than
+			// dropped — an edge that exists and is not reported is the
+			// same false answer as one that was never found.
+			within = at(e, held, one.Range)
 		}
 		span := held.doc.span(one.Range)
 		out = append(out, sema.Relation{
@@ -186,6 +195,23 @@ func (e *Engine) sited(
 		})
 	}
 	return out, nil
+}
+
+// at names a site by where it is written, for a site no declaration
+// encloses.
+//
+// Worse than an outline and better than silence: it carries the file,
+// the line and the source, which is what a caller reading a list of
+// sites acts on.
+func at(e *Engine, held outlined, over protocol.Range) sema.Symbol {
+	span := held.doc.span(over)
+	return sema.Symbol{
+		Name:     held.doc.sourceLine(span),
+		Kind:     sema.KindUnknown,
+		Language: e.declared.Language,
+		Span:     span,
+		Snippet:  held.doc.text(span),
+	}
 }
 
 // calling walks the call hierarchy, which is narrower than references
@@ -200,6 +226,9 @@ func (e *Engine) calling(
 	// The hierarchy is prepared before it is walked, because the item a
 	// call is reported against is the server's own handle on the
 	// declaration and not a position.
+	if !provides(held.capable.CallHierarchyProvider) {
+		return nil, e.unsupported("the call hierarchy")
+	}
 	items, err := held.asks.PrepareCallHierarchy(ctx, &protocol.CallHierarchyPrepareParams{
 		TextDocumentPositionParams: pick,
 	})

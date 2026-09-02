@@ -24,6 +24,10 @@ import (
 // as "this directory declares nothing", which is a different fact from
 // "there is no such directory".
 //
+// A directory holding code the workspace did not write is not walked;
+// see [Vendored] for which and why. The scope itself is never skipped,
+// so a caller that names one is answered about it.
+//
 // Every engine reading files needs this, so it lives here rather than in
 // one of them.
 func FilesIn(fsys fs.FS, scope source.Path, extensions []string) ([]source.Path, error) {
@@ -49,7 +53,15 @@ func FilesIn(fsys fs.FS, scope source.Path, extensions []string) ([]source.Path,
 		switch {
 		case err != nil:
 			return err
-		case d.IsDir(), !Claims(p, extensions):
+		case d.IsDir():
+			// The scope itself is never skipped. A caller that named a
+			// dependency directory asked about it, and answering nothing
+			// would report it as empty.
+			if p != name && Vendored(path.Base(p)) {
+				return fs.SkipDir
+			}
+			return nil
+		case !Claims(p, extensions):
 			return nil
 		}
 		out = append(out, source.Path(p))

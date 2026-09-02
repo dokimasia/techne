@@ -38,6 +38,16 @@ import (
 // A server has one analysis and no notion of which linter or test runner
 // to run. A caller naming suites is answered from the same analysis, and
 // the caveat says so.
+// reporting is how long one file waits for a server that publishes
+// diagnostics rather than answering for them.
+//
+// A different wait from the one a workspace gets: that one is asked once
+// and covers reading the whole project, this one is asked per file and
+// covers analysing that file after it was opened. Charging a scope of
+// fifty files the workspace figure fifty times over is what conflating
+// them costs.
+const reporting = 2 * time.Second
+
 func (e *Engine) Verify(
 	ctx context.Context,
 	req engine.Request,
@@ -78,7 +88,7 @@ func (e *Engine) Verify(
 			}
 		} else {
 			var settled bool
-			reported, settled = e.pushed.wait(ctx, uri.File(e.fullPath(p)), settling)
+			reported, settled = e.pushed.wait(ctx, uri.File(e.fullPath(p)), reporting)
 			waited = waited || !settled
 		}
 

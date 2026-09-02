@@ -98,6 +98,10 @@ const (
 	modeLoading = "loading"
 	// modeStuck begins that job and never finishes it.
 	modeStuck = "stuck"
+	// modeThin answers document symbols and renames, and says at
+	// initialise that it answers nothing else — which is most servers
+	// for most of the protocol.
+	modeThin = "thin"
 )
 
 // loading is how long the loading mode takes to read its workspace.
@@ -383,6 +387,12 @@ func document(params json.RawMessage) string {
 // the engine has to choose between the two the way it would against a
 // real server of each kind.
 func capabilities(mode string) string {
+	if mode == modeThin {
+		// Rename without prepare, and nothing else at all. A client that
+		// asks anyway is answered with an error, which is
+		// indistinguishable from the question having no answer.
+		return `{"capabilities":{"documentSymbolProvider":true,"renameProvider":true}}`
+	}
 	pull := `,"diagnosticProvider":{"interFileDependencies":false,"workspaceDiagnostics":false}`
 	if mode == modePushes {
 		pull = ""

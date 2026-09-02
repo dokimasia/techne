@@ -91,6 +91,9 @@ func (e *Engine) symbols(
 		return nil, document{}, err
 	}
 
+	if !provides(held.capable.DocumentSymbolProvider) {
+		return nil, document{}, e.unsupported("textDocument/documentSymbol")
+	}
 	answered, err := held.asks.DocumentSymbol(ctx, &protocol.DocumentSymbolParams{
 		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(p))},
 	})

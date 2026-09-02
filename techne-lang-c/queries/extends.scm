@@ -4,9 +4,15 @@
 ;; nothing else: no struct, no union, no enum, no enumerator, no field,
 ;; no variable, no parameter and no macro.
 
-(struct_specifier name: (type_identifier) @name) @definition.struct
-(union_specifier name: (type_identifier) @name) @definition.union
-(enum_specifier name: (type_identifier) @name) @definition.enum
+;; A struct, union or enum specifier is both how one is declared and how
+;; one is named afterwards: `struct Store { int size; }` declares it and
+;; `struct Store *held` refers to it, and the two differ only by the
+;; body. Matching the name alone reports a parameter's type as a second
+;; declaration of it, which makes the name ambiguous and leaves nothing
+;; able to address either.
+(struct_specifier name: (type_identifier) @name body: (field_declaration_list)) @definition.struct
+(union_specifier name: (type_identifier) @name body: (field_declaration_list)) @definition.union
+(enum_specifier name: (type_identifier) @name body: (enumerator_list)) @definition.enum
 (enumerator name: (identifier) @name) @definition.enum_member
 (field_declaration declarator: (field_identifier) @name) @definition.field
 

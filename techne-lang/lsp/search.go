@@ -40,6 +40,9 @@ func (e *Engine) Search(
 		return engine.Result[sema.Symbol]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
 
+	if !provides(held.capable.WorkspaceSymbolProvider) {
+		return engine.Result[sema.Symbol]{}, e.unsupported("workspace/symbol")
+	}
 	answered, err := held.asks.Symbols(ctx, &protocol.WorkspaceSymbolParams{Query: q.Text})
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, fmt.Errorf("lsp: %s: search: %w", e.server.Name, err)

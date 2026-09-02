@@ -53,6 +53,11 @@ static int helper(int a) {
     int local = a;
     return local;
 }
+
+/// Reads a store, which names its type without declaring it.
+static int read_store(struct Store *held, enum Colour tint) {
+    return held->n + tint;
+}
 `,
 		},
 		Declares: []conformance.Declared{
@@ -77,7 +82,14 @@ static int helper(int a) {
 				Doc:       "Returns its argument.",
 				Modifiers: []string{"static"},
 			},
+			{Name: "held", Kind: sema.KindParameter},
 			{Name: "local", Kind: sema.KindVariable},
+			{
+				Name: "read_store", Kind: sema.KindFunction,
+				Doc:       "Reads a store, which names its type without declaring it.",
+				Modifiers: []string{"static"},
+			},
+			{Name: "tint", Kind: sema.KindParameter},
 			{Name: "n", Kind: sema.KindField},
 			{Name: "raw", Kind: sema.KindField},
 		},

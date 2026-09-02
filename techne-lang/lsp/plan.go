@@ -57,6 +57,10 @@ func (e *Engine) Plan(
 		return engine.Result[edit.Change]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
 
+	if !provides(held.capable.RenameProvider) {
+		return engine.Result[edit.Change]{}, e.unsupported("textDocument/rename")
+	}
+
 	// A plan computed against a half-loaded workspace rewrites the
 	// references the server had found so far and leaves the rest, which
 	// is the one outcome worse than refusing.
@@ -70,22 +74,29 @@ func (e *Engine) Plan(
 		return engine.Result[edit.Change]{Skipped: true, Completeness: trust.ScopeTotal}, nil
 	}
 
-	// Asked first because a server answers it cheaply and definitely:
-	// whether the thing at this position can be renamed at all. Skipping
-	// it turns a keyword or a literal into a rename that reports no edits
-	// and reads as a rename that had nothing to do.
-	ready, err := held.asks.PrepareRename(ctx, &protocol.PrepareRenameParams{
-		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(doc.path))},
-		Position:     at,
-	})
-	if err != nil {
-		return engine.Result[edit.Change]{}, fmt.Errorf("lsp: %s: prepare rename: %w",
-			e.server.Name, err)
-	}
-	if ready == nil {
-		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"%w: %s: nothing at %s:%d:%d can be renamed",
-			engine.ErrRefuse, e.server.Name, doc.path, at.Line+1, at.Character+1)
+	// Asked first, where the server answers it: whether the thing at
+	// this position can be renamed at all. Skipping it turns a keyword
+	// or a literal into a rename that reports no edits and reads as a
+	// rename that had nothing to do.
+	//
+	// Not every server answers it, and one that does not refuses with an
+	// error indistinguishable from the position being unrenameable. So
+	// it is asked only where it was offered, and the rename goes ahead
+	// without it otherwise.
+	if prepares(held.capable.RenameProvider) {
+		ready, refused := held.asks.PrepareRename(ctx, &protocol.PrepareRenameParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(doc.path))},
+			Position:     at,
+		})
+		if refused != nil {
+			return engine.Result[edit.Change]{}, fmt.Errorf("lsp: %s: prepare rename: %w",
+				e.server.Name, refused)
+		}
+		if ready == nil {
+			return engine.Result[edit.Change]{}, fmt.Errorf(
+				"%w: %s: nothing at %s:%d:%d can be renamed",
+				engine.ErrRefuse, e.server.Name, doc.path, at.Line+1, at.Character+1)
+		}
 	}
 
 	answered, err := held.asks.Rename(ctx, &protocol.RenameParams{
