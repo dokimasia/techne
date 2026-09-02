@@ -60,6 +60,21 @@ func TestOutline(t *testing.T) {
 			assert.True(t, found, "the method is named Get rather than (*Store).Get")
 		})
 
+		t.Run("reads a name the server signed", func(t *testing.T) {
+			t.Parallel()
+			// jdtls writes a method as After(), and its call hierarchy as
+			// After() : void. Every question a caller asks names the
+			// declaration, so a name carrying the parameters matches
+			// nothing — which is how a Java method came to report no
+			// callers while its caller sat two lines below it.
+			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
+				Outline(t.Context(), engine.Request{Scope: "a.fake"})
+
+			assert.NoError(t, err, "outlining succeeds")
+			_, found := named(got.Items, "After")
+			assert.True(t, found, "the method is named After rather than After() : void")
+		})
+
 		t.Run("drops a kind that declares nothing", func(t *testing.T) {
 			t.Parallel()
 			// The same request outlines a JSON document, so the protocol

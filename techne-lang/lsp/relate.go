@@ -62,14 +62,22 @@ func (e *Engine) Relate(
 	// is worth waiting a moment to make total.
 	e.working.settle(ctx, e.settling())
 
-	subject, doc, known, err := e.declaring(ctx, held, req, of)
-	if err != nil {
+	subject, doc, known, read, err := e.declaring(ctx, held, req, of)
+	switch {
+	case err != nil:
 		return engine.Result[sema.Relation]{}, err
-	}
-	if !known {
+	case !read:
 		// The scope holds no file this engine reads, so it says nothing
 		// about the declaration rather than that it has no edges.
 		return engine.Result[sema.Relation]{Skipped: true, Completeness: trust.ScopeTotal}, nil
+	case !known:
+		// Read the files and found no such declaration. Declined rather
+		// than answered with none: an engine that cannot find what it
+		// was asked about has no view of its edges either, and none of
+		// them over total coverage is a claim that it has none.
+		return engine.Result[sema.Relation]{}, fmt.Errorf(
+			"%w: %s: no declaration in %q matches %s",
+			engine.ErrDecline, e.server.Name, req.Scope, of)
 	}
 
 	at := naming(doc, subject)
@@ -80,13 +88,18 @@ func (e *Engine) Relate(
 
 	found := newFinder(e, held)
 	var out []sema.Relation
+	// saw reports whether the server resolved the declaration at all.
+	// An empty answer from a server that did not is not a claim that
+	// there are no edges; it is a server with nothing loaded to answer
+	// from, and the two are indistinguishable in the answer itself.
+	saw := true
 	switch kind {
 	case sema.ReferencedBy, sema.References:
-		out, err = e.referring(ctx, held, found, pick, kind)
+		out, saw, err = e.referring(ctx, held, found, pick, kind)
 	case sema.CalledBy, sema.Calls:
-		out, err = e.calling(ctx, held, found, pick, kind)
+		out, saw, err = e.calling(ctx, held, found, pick, kind)
 	case sema.Implements, sema.ImplementedBy:
-		out, err = e.implementing(ctx, held, found, pick, kind)
+		out, saw, err = e.implementing(ctx, held, found, pick, kind)
 	}
 	if err != nil {
 		return engine.Result[sema.Relation]{}, err
@@ -94,11 +107,30 @@ func (e *Engine) Relate(
 
 	slices.SortFunc(out, order)
 	covered, caveats := e.settled(ctx)
+	if !saw {
+		covered = trust.ScopePartial
+		caveats = append(caveats, unresolved)
+	}
 	return engine.Result[sema.Relation]{
 		Items:        out,
 		Completeness: covered,
 		Caveats:      caveats,
 	}, nil
+}
+
+// unresolved is the caveat on an answer from a server that did not
+// resolve the declaration it was asked about.
+//
+// A server with no project loaded answers every question with nothing,
+// in the same shape as a server that looked and found none. jdtls over a
+// directory it could not build a classpath for reported no references to
+// a method called two lines below it, and the answer said resolved
+// binding over total coverage — which is the claim a caller acts on by
+// deleting the method.
+var unresolved = trust.Caveat{
+	Code: trust.CaveatIndexWarming,
+	Note: "the server did not resolve this declaration, so it was answering " +
+		"about nothing rather than finding nothing",
 }
 
 // serves reports whether a direction has a request behind it.
@@ -123,18 +155,50 @@ func (e *Engine) referring(
 	found *finder,
 	pick protocol.TextDocumentPositionParams,
 	kind sema.RelationKind,
-) ([]sema.Relation, error) {
+) ([]sema.Relation, bool, error) {
 	if !provides(held.capable.ReferencesProvider) {
-		return nil, e.unsupported("textDocument/references")
+		return nil, false, e.unsupported("textDocument/references")
 	}
+	// Asked with the declaration included, and it is dropped here. A
+	// server that resolved the declaration returns at least the
+	// declaration; one that returns nothing at all did not resolve it,
+	// and its silence says nothing about how many uses there are.
 	sites, err := held.asks.References(ctx, &protocol.ReferenceParams{
 		TextDocumentPositionParams: pick,
-		Context:                    protocol.ReferenceContext{IncludeDeclaration: false},
+		Context:                    protocol.ReferenceContext{IncludeDeclaration: true},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("lsp: %s: references: %w", e.server.Name, err)
+		return nil, false, fmt.Errorf("lsp: %s: references: %w", e.server.Name, err)
 	}
-	return e.sited(ctx, found, sites, kind)
+	if len(sites) == 0 {
+		return nil, false, nil
+	}
+
+	uses := make([]protocol.Location, 0, len(sites))
+	for _, one := range sites {
+		if declaring(one, pick) {
+			continue
+		}
+		uses = append(uses, one)
+	}
+	edges, err := e.sited(ctx, found, uses, kind)
+	return edges, true, err
+}
+
+// declaring reports whether a location is the declaration the question
+// was about, rather than a use of it.
+func declaring(one protocol.Location, pick protocol.TextDocumentPositionParams) bool {
+	if one.URI != pick.TextDocument.URI {
+		return false
+	}
+	at, from, to := pick.Position, one.Range.Start, one.Range.End
+	if at.Line < from.Line || at.Line > to.Line {
+		return false
+	}
+	if at.Line == from.Line && at.Character < from.Character {
+		return false
+	}
+	return at.Line != to.Line || at.Character <= to.Character
 }
 
 // implementing finds what a type satisfies, or what satisfies it.
@@ -144,17 +208,27 @@ func (e *Engine) implementing(
 	found *finder,
 	pick protocol.TextDocumentPositionParams,
 	kind sema.RelationKind,
-) ([]sema.Relation, error) {
+) ([]sema.Relation, bool, error) {
 	if !provides(held.capable.ImplementationProvider) {
-		return nil, e.unsupported("textDocument/implementation")
+		return nil, false, e.unsupported("textDocument/implementation")
 	}
 	answered, err := held.asks.Implementation(ctx, &protocol.ImplementationParams{
 		TextDocumentPositionParams: pick,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("lsp: %s: implementations: %w", e.server.Name, err)
+		return nil, false, fmt.Errorf("lsp: %s: implementations: %w", e.server.Name, err)
 	}
-	return e.sited(ctx, found, definitions(answered), kind)
+
+	sites := definitions(answered)
+	edges, err := e.sited(ctx, found, sites, kind)
+	if err != nil || len(sites) > 0 {
+		return edges, true, err
+	}
+	// Nothing came back, and for a concrete type that is the right
+	// answer. Whether it is depends on the server having a view of the
+	// file at all, which the empty list cannot say and which resolving a
+	// definition does not establish: a syntactic index resolves one.
+	return edges, e.analysed(ctx, held, e.pathOf(pick.TextDocument.URI)), nil
 }
 
 // sited turns locations into edges, naming the declaration each one
@@ -222,12 +296,12 @@ func (e *Engine) calling(
 	found *finder,
 	pick protocol.TextDocumentPositionParams,
 	kind sema.RelationKind,
-) ([]sema.Relation, error) {
+) ([]sema.Relation, bool, error) {
 	// The hierarchy is prepared before it is walked, because the item a
 	// call is reported against is the server's own handle on the
 	// declaration and not a position.
 	if !provides(held.capable.CallHierarchyProvider) {
-		return nil, e.unsupported("the call hierarchy")
+		return nil, false, e.unsupported("the call hierarchy")
 	}
 	items, err := held.asks.PrepareCallHierarchy(ctx, &protocol.CallHierarchyPrepareParams{
 		TextDocumentPositionParams: pick,
@@ -238,18 +312,24 @@ func (e *Engine) calling(
 		// because the question does not apply here and may apply to
 		// whatever answers next — and because answering none would be a
 		// claim that nothing calls it.
-		return nil, fmt.Errorf("%w: %s: call hierarchy: %w", engine.ErrDecline, e.server.Name, err)
+		return nil, false, fmt.Errorf("%w: %s: call hierarchy: %w",
+			engine.ErrDecline, e.server.Name, err)
+	}
+	// No item is the server saying it has no handle on this declaration,
+	// which is a different fact from the declaration having no calls.
+	if len(items) == 0 {
+		return nil, false, nil
 	}
 
 	var out []sema.Relation
 	for _, item := range items {
 		edges, err := e.calls(ctx, held, found, item, kind)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		out = append(out, edges...)
 	}
-	return out, nil
+	return out, true, nil
 }
 
 // calls reads one end of the hierarchy for one item.
@@ -368,31 +448,60 @@ func (e *Engine) itemised(item protocol.CallHierarchyItem, p source.Path) sema.S
 
 // declaring finds the declaration a question is about, and the file it
 // is written in.
+// The last result reports whether there was anything to read at all,
+// which is a different answer from having read it and found no such
+// declaration: the first says nothing about the language, and the second
+// says this engine cannot answer about this name.
 func (e *Engine) declaring(
 	ctx context.Context,
 	held *session,
 	req engine.Request,
 	of sema.ID,
-) (sema.Symbol, document, bool, error) {
+) (found sema.Symbol, doc document, known, read bool, err error) {
 	paths, err := e.files(req)
 	if err != nil {
-		return sema.Symbol{}, document{}, false, err
+		return sema.Symbol{}, document{}, false, false, err
 	}
+	// Collected rather than returned on the first match, because the
+	// fallback below has to know whether a name picks out one
+	// declaration or several.
+	var named []sema.Symbol
+	var where []document
 	for _, p := range paths {
 		if err := ctx.Err(); err != nil {
-			return sema.Symbol{}, document{}, false, err
+			return sema.Symbol{}, document{}, false, false, err
 		}
+		if !req.Tests && e.declared.IsTest(string(p)) {
+			continue
+		}
+		read = true
+
 		symbols, doc, err := e.symbols(ctx, held, p)
 		if err != nil {
-			return sema.Symbol{}, document{}, false, err
+			return sema.Symbol{}, document{}, false, read, err
 		}
 		for _, one := range symbols {
 			if one.ID == of {
-				return one, doc, true, nil
+				return one, doc, true, read, nil
+			}
+			if one.Name == of.Name() {
+				named = append(named, one)
+				where = append(where, doc)
 			}
 		}
 	}
-	return sema.Symbol{}, document{}, false, nil
+
+	// No identity matched. An identity carries a kind, and the parser
+	// that built the one being asked about and the server answering here
+	// need not agree on it: metals calls a method in a Scala object what
+	// the parser calls a function, and the two identities differ in that
+	// one field alone. Falling back to the name settles it wherever the
+	// name picks out one declaration, and refuses to guess where it does
+	// not.
+	if len(named) == 1 {
+		return named[0], where[0], true, read, nil
+	}
+	return sema.Symbol{}, document{}, false, read, nil
 }
 
 // naming is where a declaration's own name is written.

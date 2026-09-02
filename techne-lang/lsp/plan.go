@@ -190,9 +190,17 @@ func (e *Engine) aimed(
 		return doc.mark(target.Span.Start), doc, true, nil
 
 	case edit.TargetSymbol:
-		subject, doc, known, err := e.declaring(ctx, held, req, target.Symbol)
-		if err != nil || !known {
+		subject, doc, known, read, err := e.declaring(ctx, held, req, target.Symbol)
+		if err != nil || !read {
 			return protocol.Position{}, document{}, false, err
+		}
+		if !known {
+			// Read the files and found no such declaration. A plan
+			// computed from a position nothing was found at rewrites
+			// whatever happens to be there.
+			return protocol.Position{}, document{}, false, fmt.Errorf(
+				"%w: %s: no declaration in %q matches %s",
+				engine.ErrRefuse, e.server.Name, req.Scope, target.Symbol)
 		}
 		return naming(doc, subject), doc, true, nil
 	}

@@ -66,3 +66,34 @@ func TestID(t *testing.T) {
 		})
 	})
 }
+
+func TestIDName(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Name", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("is the qualified name inside an identity", func(t *testing.T) {
+			t.Parallel()
+			// Two engines answering about one declaration need not agree
+			// on its kind, and an identity differing in that field alone
+			// still names the same declaration. Matching on the name is
+			// what settles it, and this is how the name is reached.
+			held := sema.NewID("go", "internal/fsx", "Digest", sema.KindFunction)
+			assert.Equal(t, held.Name(), "Digest", "the name the identity was built from")
+		})
+
+		t.Run("keeps a name a language qualified", func(t *testing.T) {
+			t.Parallel()
+			held := sema.NewID("java", ".", "Store.read", sema.KindMethod)
+			assert.Equal(t, held.Name(), "Store.read",
+				"the qualifier is part of the name rather than a separator")
+		})
+
+		t.Run("is empty for a value that is not an identity", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, sema.ID("").Name(), "the zero value names nothing")
+			assert.Empty(t, sema.ID("not an identity").Name(), "and neither does a stray string")
+		})
+	})
+}

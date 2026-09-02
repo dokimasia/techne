@@ -134,3 +134,61 @@ func grades(held []edit.Finding) []diag.Severity {
 	}
 	return out
 }
+
+// A gate saying a file is clean is the claim a caller acts on by
+// shipping it. It may only be made about a file the server analysed:
+// one that never reported is a file nothing looked at, and nothing
+// looked at is not nothing wrong.
+//
+// The fake's stuck mode publishes for no file, which is what a server
+// with no compiler view does — metals before it has imported a build,
+// tsserver over a file outside its project.
+func TestVerifyCoverage(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a file the server never reported on", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("is not reported as clean", func(t *testing.T) {
+			t.Parallel()
+			// The server has finished starting and has nothing
+			// outstanding, so nothing else marks this answer short. What
+			// makes it short is that no report ever arrived for the file.
+			got, err := serving(t, modeUngated, map[string]string{"a.fake": content}).
+				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+
+			assert.NoError(t, err, "a server with nothing to say is not a fault")
+			assert.Empty(t, got.Items, "and it said nothing")
+			assert.Equal(t, got.Completeness, trust.ScopePartial,
+				"which is not the same as there being nothing to say")
+			assert.False(t, trust.SupportsNegativeClaim(trust.Resolved, got.Completeness),
+				"so no caller may read a clean bill of health out of it")
+		})
+
+		t.Run("says why the answer may be short", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, modeUngated, map[string]string{"a.fake": content}).
+				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+
+			assert.NoError(t, err, "verifying succeeds")
+			assert.True(t, carries(got.Caveats, trust.CaveatIndexWarming),
+				"the caveat names a file nothing has looked at yet")
+		})
+	})
+
+	t.Run("a file the server did report on", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("is answered at total coverage", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, modePushes, map[string]string{"a.fake": content}).
+				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+
+			assert.NoError(t, err, "verifying succeeds")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal,
+				"a server that reported analysed the file")
+			assert.False(t, carries(got.Caveats, trust.CaveatIndexWarming),
+				"so there is nothing to warn about")
+		})
+	})
+}

@@ -101,10 +101,18 @@ func (e *Engine) Verify(
 		}
 	}
 
+	// A gate that says a file is clean is the claim a caller acts on by
+	// shipping it. It may only be made about a file the server actually
+	// analysed: one that never reported is a file nothing looked at, and
+	// nothing looked at is not nothing wrong.
+	covered, caveats := e.settled(ctx)
+	if waited {
+		covered = trust.ScopePartial
+	}
 	return engine.Result[edit.Finding]{
 		Items:        out,
-		Completeness: trust.ScopeTotal,
-		Caveats:      caveats(suites, waited),
+		Completeness: covered,
+		Caveats:      append(caveats, reasons(suites, waited)...),
 	}, nil
 }
 
@@ -131,9 +139,10 @@ func (e *Engine) pull(
 	return nil, nil
 }
 
-// caveats states what this answer is not.
-func caveats(suites []string, waited bool) []trust.Caveat {
-	out := []trust.Caveat{dynamic}
+// reasons states what this answer is not, beyond what every answer
+// already says.
+func reasons(suites []string, waited bool) []trust.Caveat {
+	var out []trust.Caveat
 	if len(suites) > 0 {
 		out = append(out, trust.Caveat{
 			Code: trust.CaveatUnsupported,
@@ -144,8 +153,8 @@ func caveats(suites []string, waited bool) []trust.Caveat {
 	if waited {
 		out = append(out, trust.Caveat{
 			Code: trust.CaveatIndexWarming,
-			Note: "this server reports when it finishes rather than when asked, " +
-				"and a file it had not finished is reported as it stood",
+			Note: "this server had not reported on every file in the scope, so a file " +
+				"with nothing against it may be one nothing has looked at yet",
 		})
 	}
 	return out
@@ -211,6 +220,36 @@ func coded(held protocol.ProgressToken) string {
 	return ""
 }
 
+// analysed reports whether a server has produced a view of one file.
+//
+// It is the evidence behind every empty semantic answer. A server that
+// has not analysed a file resolves a definition inside it from a
+// syntactic index and answers every other question with nothing — metals
+// before it has imported a build does exactly that, reporting no
+// implementation of a trait a class two lines below extends. Nothing in
+// the answer itself tells the two apart.
+//
+// Diagnostics are what tells them apart, because producing them is what
+// having a compiler view means. A server that answers a diagnostic
+// request has one; a server that publishes unasked has one once it has
+// published; a server that has done neither has not looked.
+// A server that refuses the request has no view to report, which is the
+// answer rather than a fault: this is asked to find out what an empty
+// answer is worth, and a refusal settles that as surely as a reply does.
+func (e *Engine) analysed(ctx context.Context, held *session, p source.Path) bool {
+	if held.capable.DiagnosticProvider == nil {
+		return e.pushed.seen(uri.File(e.fullPath(p)))
+	}
+	answered, err := held.asks.Diagnostic(ctx, &protocol.DocumentDiagnosticParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(p))},
+	})
+	if err != nil {
+		return false
+	}
+	_, full := answered.(*protocol.RelatedFullDocumentDiagnosticReport)
+	return full
+}
+
 // published is where the diagnostics a server sends unasked are kept.
 //
 // A server publishes when it has finished analysing rather than when
@@ -243,6 +282,18 @@ func (p *published) keep(of uri.URI, held []protocol.Diagnostic) {
 		close(waking)
 		delete(p.waking, of)
 	}
+}
+
+// seen reports whether a server has said anything about a file yet,
+// without waiting for it to.
+func (p *published) seen(of uri.URI) bool {
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, said := p.held[of]
+	return said
 }
 
 // wait returns what a server said about a file, waiting a bounded time

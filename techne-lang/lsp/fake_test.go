@@ -98,6 +98,11 @@ const (
 	modeLoading = "loading"
 	// modeStuck begins that job and never finishes it.
 	modeStuck = "stuck"
+	// modeUngated has finished loading and answers no diagnostic
+	// request and publishes nothing, which is a server with no compiler
+	// view of the file: tsserver over one outside its project, metals
+	// before it has imported a build.
+	modeUngated = "ungated"
 	// modeThin answers document symbols and renames, and says at
 	// initialise that it answers nothing else — which is most servers
 	// for most of the protocol.
@@ -258,6 +263,12 @@ func serve(mode string) int {
 			}
 			answer(out, held.ID, references(where(mode, seen)))
 		case "textDocument/implementation":
+			if mode == modeUngated {
+				// What a server with no compiler view answers: nothing,
+				// in the same shape as having looked and found none.
+				answer(out, held.ID, `[]`)
+				continue
+			}
 			answer(out, held.ID, implementations(seen))
 		case "textDocument/prepareCallHierarchy":
 			if mode == modeUncallable {
@@ -393,8 +404,11 @@ func capabilities(mode string) string {
 		// indistinguishable from the question having no answer.
 		return `{"capabilities":{"documentSymbolProvider":true,"renameProvider":true}}`
 	}
+	// A server that reports when it finishes rather than when asked, and
+	// one that never finishes, both answer no diagnostic request: they
+	// publish, or they would publish if they ever got that far.
 	pull := `,"diagnosticProvider":{"interFileDependencies":false,"workspaceDiagnostics":false}`
-	if mode == modePushes {
+	if mode == modePushes || mode == modeStuck || mode == modeUngated {
 		pull = ""
 	}
 	return `{"capabilities":{"documentSymbolProvider":true,"definitionProvider":true,` +
@@ -443,7 +457,7 @@ func symbols(mode string) string {
 	  {"name":"(*Store).Get","kind":6,"detail":"func() int",
 	   "range":{"start":{"line":6,"character":0},"end":{"line":6,"character":40}},
 	   "selectionRange":{"start":{"line":6,"character":17},"end":{"line":6,"character":20}}},
-	  {"name":"After","kind":12,"detail":"func()",
+	  {"name":"After() : void","kind":12,"detail":"func()",
 	   "range":{"start":{"line":8,"character":0},"end":{"line":8,"character":20}},
 	   "selectionRange":{"start":{"line":8,"character":5},"end":{"line":8,"character":10}}},
 	  {"name":"a string in a document","kind":15,

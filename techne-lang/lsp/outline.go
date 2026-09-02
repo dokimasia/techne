@@ -217,16 +217,26 @@ func detail(held *string) string {
 	return *held
 }
 
-// trimmed reads a name a server qualified.
+// trimmed reads a name a server decorated.
 //
-// gopls writes a method as (*Store).Get, which is the whole of how it is
-// declared and not the name it is declared under. The name is what a
-// caller searches for; the container reaches it through the parent.
+// Servers do not agree on what a declaration is called. gopls writes a
+// method as (*Store).Get, which is how it is declared rather than what
+// it is called. jdtls writes it as helper(), and its call hierarchy
+// writes helper() : int. A caller searches for the name, and a name
+// carrying either decoration matches nothing it asks about — which is
+// how a Java method came to have no callers.
+//
+// The qualifier goes first, then the parameters: cutting at the bracket
+// first would take the whole of (*Store).Get, whose bracket opens the
+// name.
 func trimmed(name string) string {
 	if at := strings.LastIndex(name, "."); at >= 0 {
-		return name[at+1:]
+		name = name[at+1:]
 	}
-	return name
+	if at := strings.Index(name, "("); at > 0 {
+		name = name[:at]
+	}
+	return strings.TrimSpace(name)
 }
 
 // files is the paths in a scope this language claims.

@@ -212,3 +212,57 @@ func TestDeclared(t *testing.T) {
 		})
 	})
 }
+
+// hidden is a declaration not visible outside its unit.
+func hidden(name string, kind sema.Kind, start, end int) sema.Symbol {
+	held := covering(name, kind, start, end)
+	held.Visibility = sema.Unexported
+	return held
+}
+
+func TestNarrowAcrossDetail(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Private", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("is honoured at every level, including the cheapest", func(t *testing.T) {
+			t.Parallel()
+			// Visibility is what the filter reads, and the cheapest level
+			// once returned before setting it: every other level narrowed
+			// and that one answered with the declarations a caller had
+			// asked it to leave out. The level an agent reaches for first
+			// was the one that leaked.
+			items := []sema.Symbol{
+				covering("Store", sema.KindStruct, 0, 100),
+				hidden("helper", sema.KindFunction, 200, 300),
+			}
+			for _, level := range tool.Levels() {
+				got := tool.Narrow{}.Apply(tool.Declared(items, level, nil))
+				assert.Equal(t, names(got), []string{"Store"},
+					"the unexported declaration is left out at "+string(level))
+			}
+		})
+
+		t.Run("keeps what it was asked for at every level", func(t *testing.T) {
+			t.Parallel()
+			items := []sema.Symbol{
+				covering("Store", sema.KindStruct, 0, 100),
+				hidden("helper", sema.KindFunction, 200, 300),
+			}
+			for _, level := range tool.Levels() {
+				got := tool.Narrow{Private: true}.Apply(tool.Declared(items, level, nil))
+				assert.Length(t, got, 2, "asked for both, at "+string(level))
+			}
+		})
+	})
+}
+
+// names is what an answer declared, at the top level.
+func names(in []tool.Declaration) []string {
+	out := make([]string, 0, len(in))
+	for _, one := range in {
+		out = append(out, one.Name)
+	}
+	return out
+}

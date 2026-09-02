@@ -9,6 +9,7 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
+	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/lang/lsp"
 )
 
@@ -156,4 +157,64 @@ func edges(held []sema.Relation) []string {
 		out = append(out, one.To.Name)
 	}
 	return out
+}
+
+// A server that has not analysed a file resolves a definition inside it
+// from a syntactic index and answers every other question with nothing.
+// metals before it has imported a build does exactly that, reporting no
+// implementation of a trait a class two lines below extends — over
+// resolved binding and total coverage, which is the claim a caller acts
+// on by deleting the trait.
+//
+// What tells the two apart is whether the server produced a view of the
+// file at all, which is what producing diagnostics means.
+func TestRelateEvidence(t *testing.T) {
+	t.Parallel()
+
+	t.Run("an empty answer from a server with no view of the file", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("supports no claim that there are none", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, modeUngated, map[string]string{"a.fake": content})
+			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
+				subject(t, e, "Store"), sema.Implements)
+
+			assert.NoError(t, err, "a server with no view is not a fault")
+			assert.Empty(t, got.Items, "and it had nothing to say")
+			assert.Equal(t, got.Completeness, trust.ScopePartial,
+				"which is not the same as there being nothing to find")
+			assert.False(t, trust.SupportsNegativeClaim(trust.Resolved, got.Completeness),
+				"so nothing may be read out of its silence")
+		})
+
+		t.Run("says the server was answering about nothing", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, modeUngated, map[string]string{"a.fake": content})
+			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
+				subject(t, e, "Store"), sema.Implements)
+
+			assert.NoError(t, err, "relating succeeds")
+			assert.True(t, carries(got.Caveats, trust.CaveatIndexWarming),
+				"the caveat names why the answer is worth nothing")
+		})
+	})
+
+	t.Run("an empty answer from a server that did analyse the file", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("means there are none", func(t *testing.T) {
+			t.Parallel()
+			// The other half. A gate that doubted every empty answer
+			// would never let a caller conclude anything, which is the
+			// same uselessness from the other end.
+			e := serving(t, modePushes, map[string]string{"a.fake": content})
+			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
+				subject(t, e, "Store"), sema.Implements)
+
+			assert.NoError(t, err, "relating succeeds")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal,
+				"a server that analysed the file and found none has found none")
+		})
+	})
 }

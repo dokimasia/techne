@@ -281,15 +281,20 @@ func project(s sema.Symbol, d Detail) Declaration {
 		Line: s.Span.Start.Line + 1,
 		Path: string(s.Span.Path),
 	}
+	// Set before the cheapest level returns, because it is what
+	// [Narrow] reads to honour a request for exported declarations
+	// alone. Left until after, every level but this one narrowed and
+	// this one answered with the unexported declarations the caller had
+	// asked it to leave out.
+	if s.Visibility != sema.Exported {
+		out.Visibility = s.Visibility
+	}
 	if d == Names {
 		return out
 	}
 
 	out.Signature = s.Signature
 	out.Modifiers = s.Modifiers
-	if s.Visibility != sema.Exported {
-		out.Visibility = s.Visibility
-	}
 	for _, a := range s.Annotations {
 		out.Annotations = append(out.Annotations, a.Name)
 	}
