@@ -20,12 +20,27 @@ import (
 //
 // A path the plan deletes is present with no content, so a caller can
 // tell "this file goes" from "this file was not touched".
+//
+// Content is settled before anything is relocated, so a file the plan
+// both rewrites and moves arrives at its destination rewritten. One
+// operation produces exactly that: moving a Java file renames the class
+// inside it, because the language ties the two together. Reading the
+// sealed content at the move would carry the file over as it was and
+// drop the rename, silently and in the one language where it matters.
+//
+// The relocations are read off the plan rather than performed as they
+// are met, because a plan may name one move more than once: ruby-lsp
+// answers a rename of a class with the file rename repeated once per
+// site it found. Performed in turn, the second reads what the first left
+// behind — a path with nothing at it — and the move becomes a deletion
+// with the file's content nowhere. Driving a rename over a Ruby class
+// lost the file.
 func project(plan edit.Plan, sealed map[source.Path][]byte) (map[source.Path][]byte, error) {
 	out := map[source.Path][]byte{}
 	for _, c := range plan.Changes {
 		switch c.Kind {
 		case edit.ChangeEdit:
-			applied, err := rewritten(sealed[c.Path], c.Edits)
+			applied, err := edit.Apply(sealed[c.Path], c.Edits)
 			if err != nil {
 				return nil, fmt.Errorf("%s: %w", c.Path, err)
 			}
@@ -35,38 +50,56 @@ func project(plan edit.Plan, sealed map[source.Path][]byte) (map[source.Path][]b
 		case edit.ChangeDelete:
 			out[c.Path] = nil
 		case edit.ChangeMove:
-			out[c.To] = sealed[c.Path]
-			out[c.Path] = nil
+			// Below, once every path holds what the plan leaves in it.
 		case edit.ChangeUnset:
 			return nil, fmt.Errorf("%s names no kind", c.Path)
 		}
 	}
+
+	moves, err := relocations(plan)
+	if err != nil {
+		return nil, err
+	}
+	for from, to := range moves {
+		content, rewritten := out[from]
+		if !rewritten {
+			content = sealed[from]
+		}
+		out[to] = content
+	}
+	// Second, so the order the map is walked in cannot decide whether a
+	// destination is written before its source is cleared.
+	for from := range moves {
+		out[from] = nil
+	}
 	return out, nil
 }
 
-// rewritten applies an edit list to one file in a single pass.
+// relocations is where each moved path goes.
 //
-// The policy has already established that the edits are sorted and do
-// not meet, so the walk copies what lies between them and never looks
-// back.
-func rewritten(content []byte, edits []edit.TextEdit) ([]byte, error) {
-	var out strings.Builder
-	out.Grow(len(content))
-
-	at := 0
-	for _, e := range edits {
-		start, end := e.Span.Start.Offset, e.Span.End.Offset
-		if start < at || end > len(content) {
-			return nil, fmt.Errorf(
-				"the edit at %d..%d is outside the %d bytes it was computed against",
-				start, end, len(content))
+// One entry per path, so a move named twice is the one move it
+// describes. A plan that cannot mean one thing is refused rather than
+// resolved: a path with two destinations names two different results,
+// and a move onto a path that moves on again describes a file passing
+// through somewhere, which no operation means and which the order of
+// this map would otherwise decide.
+func relocations(plan edit.Plan) (map[source.Path]source.Path, error) {
+	out := map[source.Path]source.Path{}
+	for _, c := range plan.Changes {
+		if c.Kind != edit.ChangeMove {
+			continue
 		}
-		out.Write(content[at:start])
-		out.WriteString(e.New)
-		at = end
+		if to, named := out[c.Path]; named && to != c.To {
+			return nil, fmt.Errorf("%s is moved to both %s and %s", c.Path, to, c.To)
+		}
+		out[c.Path] = c.To
 	}
-	out.Write(content[at:])
-	return []byte(out.String()), nil
+	for from, to := range out {
+		if _, on := out[to]; on {
+			return nil, fmt.Errorf("%s moves to %s, which the same change moves on again", from, to)
+		}
+	}
+	return out, nil
 }
 
 // write puts the projection on disk, and puts the workspace back as it

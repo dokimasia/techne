@@ -49,6 +49,15 @@
 // stops parsing. Locks are held from the seal to the write, so nothing
 // in this process can open that window.
 //
+// # What a plan may say, and what it may not
+//
+// A plan is a planner's claim and is checked here rather than trusted.
+// Content is settled before anything is relocated, so a file the plan
+// both rewrites and moves arrives at its destination rewritten. A move
+// named twice is the one move it describes, because a server may repeat
+// it once per site it found; one path moved to two destinations names
+// two results and is refused rather than resolved.
+//
 // # Dependency position
 //
 // Imports core/diag, core/edit, core/engine, core/source and

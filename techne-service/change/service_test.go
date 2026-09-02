@@ -307,6 +307,17 @@ type planner struct {
 	// is what a rename to the same name and a comment already written
 	// both produce.
 	idle bool
+	// moves is where the plan takes the file it edits. One change list
+	// that both rewrites a file and relocates it is what moving a Java
+	// file produces, because the language ties a class's name to the
+	// file holding it.
+	moves source.Path
+	// twice repeats the move, which ruby-lsp does once per site it
+	// found when a rename of a class renames the file too.
+	twice bool
+	// astray moves the file somewhere else as well, which is a plan
+	// that does not describe one result.
+	astray source.Path
 }
 
 func (planner) Name() string                        { return "planner" }
@@ -344,6 +355,15 @@ func (p planner) Plan(
 		out = append(out, edit.Change{
 			Kind: edit.ChangeCreate, Path: p.makes, Content: []byte("made\n"),
 		})
+	}
+	if p.moves != "" {
+		out = append(out, edit.Change{Kind: edit.ChangeMove, Path: req.Scope, To: p.moves})
+	}
+	if p.twice {
+		out = append(out, edit.Change{Kind: edit.ChangeMove, Path: req.Scope, To: p.moves})
+	}
+	if p.astray != "" {
+		out = append(out, edit.Change{Kind: edit.ChangeMove, Path: req.Scope, To: p.astray})
 	}
 	return engine.Result[edit.Change]{Items: out, Completeness: trust.ScopeTotal}, nil
 }

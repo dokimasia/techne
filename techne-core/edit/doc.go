@@ -27,6 +27,14 @@
 // well. The spec rules out the tiers that can never be enough, and the
 // coverage an engine reports decides the rest.
 //
+// # One rule for what a change produces
+//
+// [Apply] rewrites content with an edit list and lives here rather than
+// in the write path, because two places need the same answer from it: a
+// planner working out what a file would become, and the write path
+// working out what to put on disk. Two implementations would let a
+// preview promise something an apply does not deliver.
+//
 // # Naming
 //
 // An operation is named family.subject. [Operation.Family] returns the
