@@ -246,7 +246,9 @@ func TestRelateEvidence(t *testing.T) {
 			t.Parallel()
 			// The other half. A gate that doubted every empty answer
 			// would never let a caller conclude anything, which is the
-			// same uselessness from the other end.
+			// same uselessness from the other end. A server that
+			// publishes a moment after being asked counts as having
+			// analysed the file, because that is what publishing is.
 			e := serving(t, modePushes, map[string]string{"a.fake": content})
 			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
 				subject(t, e, "Store"), sema.Implements)

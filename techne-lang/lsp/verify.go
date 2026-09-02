@@ -238,7 +238,13 @@ func coded(held protocol.ProgressToken) string {
 // answer is worth, and a refusal settles that as surely as a reply does.
 func (e *Engine) analysed(ctx context.Context, held *session, p source.Path) bool {
 	if held.capable.DiagnosticProvider == nil {
-		return e.pushed.seen(uri.File(e.fullPath(p)))
+		// Waited for rather than looked at. A server publishes when it
+		// finishes, and a file it found nothing wrong with is published
+		// as an empty list a moment later — looked at instantly, every
+		// clean file reads as one nothing analysed, and every correct
+		// empty answer is reported short.
+		_, said := e.pushed.wait(ctx, uri.File(e.fullPath(p)), reporting)
+		return said
 	}
 	answered, err := held.asks.Diagnostic(ctx, &protocol.DocumentDiagnosticParams{
 		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(p))},
@@ -282,18 +288,6 @@ func (p *published) keep(of uri.URI, held []protocol.Diagnostic) {
 		close(waking)
 		delete(p.waking, of)
 	}
-}
-
-// seen reports whether a server has said anything about a file yet,
-// without waiting for it to.
-func (p *published) seen(of uri.URI) bool {
-	if p == nil {
-		return false
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	_, said := p.held[of]
-	return said
 }
 
 // wait returns what a server said about a file, waiting a bounded time
