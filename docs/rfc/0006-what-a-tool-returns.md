@@ -409,15 +409,15 @@ Adds `line`, `column`.
 
 ```json
 { "name": "resolve",
-  "arguments": { "scope": "core/tool/outline.go", "line": 123, "column": 14 } }
+  "arguments": { "scope": "tool/outline.go", "line": 123, "column": 14 } }
 ```
 
 Text:
 
 ```text
-core/tool/outline.go:123:14 — "Fit" denotes 1 declaration
+tool/outline.go:123:14 — "Fit" denotes 1 declaration
 
-core/tool/budget.go:66
+tool/budget.go:66
   func Fit(a engine.Answer[sema.Symbol], b Budget) engine.Answer[sema.Symbol]
 
 resolved, whole workspace. reflection, string-keyed dispatch and struct
@@ -568,7 +568,7 @@ rename Kind → Category — preview, 4 files, 31 sites
 
 core/sema/kind.go           18 sites
 core/sema/symbol.go          4 sites
-core/tool/tool.go            2 sites
+tool/tool.go                 2 sites
 lang/treesitter/capture.go   7 sites
 
 build passes. apply with dry_run false.
@@ -584,16 +584,66 @@ Structured:
       "changes": [ { "line": 18, "was": "type Kind uint8",
                      "now": "type Category uint8" } ] }
   ],
-  "verified": { "build": "pass" },
+  "verified": { "gate": "build", "engine": "go build", "result": "pass" },
   "provenance": { "engine": "gopls", "fidelity": "resolved",
                   "completeness": "total", "supportsNegativeClaim": true }
 }
 ```
 
-`document.symbol` answers the same way with one file and one site.
 `extract.function` adds the new declaration to its item list.
 `apply.change` takes the `changes` from a preview verbatim, so a caller
 never rewrites them.
+
+`document.symbol` answers the same way with one file and one site, and
+sends the documentation as prose with no comment markers: which markers
+the language writes, how they are indented and whether they go above the
+declaration or inside its body are what the tool is for.
+
+```json
+{ "name": "document.symbol",
+  "arguments": { "scope": "src/store.rs", "name": "Store", "kind": "struct",
+                 "doc": "Store holds items by name.\n\nIt is safe to share." } }
+```
+
+Text, where a change is read as a diff because that is how a change is
+read:
+
+```text
+document Store — preview
+
+src/store.rs:41
+- /// Holds things.
++ /// Store holds items by name.
++ ///
++ /// It is safe to share.
+
+parses (treesitter/rust). apply by calling again with dry_run false
+```
+
+Structured:
+
+```json
+{
+  "scope": { "language": "rust", "path": "src/store.rs" },
+  "symbol": "Store",
+  "applied": false,
+  "items": [
+    { "path": "src/store.rs", "sites": 1,
+      "changes": [ { "line": 41, "was": "/// Holds things.",
+                     "now": "/// Store holds items by name.\n///\n/// It is safe to share." } ] }
+  ],
+  "verified": { "gate": "parse", "engine": "treesitter/rust", "result": "pass" },
+  "provenance": { "engine": "treesitter/rust", "fidelity": "syntactic",
+                  "completeness": "total", "supportsNegativeClaim": false }
+}
+```
+
+`verified` names the gate that ran and not only its verdict. A parser
+says the file is still the language it was; a build says it still
+compiles. A caller told "pass" and nothing else cannot tell which promise
+it was given, and the two are worth different amounts. A change nothing
+could gate carries no `verified` at all rather than one saying it
+passed.
 
 ## Alternatives considered
 

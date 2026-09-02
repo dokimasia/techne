@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/techne/core/tool"
+	"go.dokimi.dev/techne/tool"
 )
 
 func TestRegistry(t *testing.T) {

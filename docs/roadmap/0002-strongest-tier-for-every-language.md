@@ -19,8 +19,8 @@ and can tell from the answer which tier produced it.
 
 ## Done when
 
-- [ ] With its usual server on `PATH`, each of the five languages answers
-      resolve and relations above `syntactic`
+- [ ] With its usual server on `PATH`, each language that declares one
+      answers resolve and relations above `syntactic`
 - [ ] With the server absent, the same request returns `syntactic` and
       names the server it could not run
 - [ ] Go answers above `syntactic` with no server running

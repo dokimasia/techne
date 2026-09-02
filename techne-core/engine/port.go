@@ -6,7 +6,6 @@ package engine
 import (
 	"context"
 
-	"go.dokimi.dev/techne/core/diag"
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
@@ -55,8 +54,30 @@ type Formatter interface {
 
 // Verifier reports what a compiler or linter says about a scope, in this
 // process rather than through a subprocess.
+//
+// Suites names what to run, in the language's own words: the linters, the
+// test runners, the type checker. An engine that has one gate ignores it.
+// Empty means whatever that language runs by default.
 type Verifier interface {
-	Verify(ctx context.Context, req Request) (Result[diag.Diagnostic], error)
+	Verify(ctx context.Context, req Request, suites []string) (Result[edit.Finding], error)
+}
+
+// Checker reports what is wrong with content the workspace does not
+// hold.
+//
+// A dry run gates a plan against a projection of it, and a projection
+// exists only in memory, so a gate that can only read the workspace
+// cannot serve one. The write path gates before it writes for the same
+// reason: a change refused after the files are on disk has to be undone,
+// and one refused before them never touches the workspace at all.
+//
+// [Verifier] answers the same question about what is on disk, through
+// the language's own toolchain. The two are separate ports because an
+// engine can serve either without the other: a parser gates content and
+// cannot build it, a build tool gates the workspace and does not read
+// bytes it was handed.
+type Checker interface {
+	Check(ctx context.Context, files map[source.Path][]byte) (Result[edit.Finding], error)
 }
 
 // Indexer produces the facts an index stores, and says how far a change

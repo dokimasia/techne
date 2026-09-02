@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"strings"
 
-	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
 )
 
@@ -86,13 +85,13 @@ func (o CapabilitiesOutput) Render() string {
 }
 
 // Capabilities builds the tool that reports what the system can answer.
-func Capabilities(c *engine.Catalog) (Tool, error) {
+func Capabilities(catalogue Catalogue) (Tool, error) {
 	return New("capabilities", capabilitiesDescription,
 		func(ctx context.Context, in CapabilitiesInput) (CapabilitiesOutput, error) {
 			wanted := source.Language(in.Language)
 
 			out := CapabilitiesOutput{Items: []Capability{}}
-			for _, capability := range c.Capabilities(ctx) {
+			for _, capability := range catalogue.Capabilities(ctx) {
 				if wanted != "" && capability.Language != wanted {
 					continue
 				}

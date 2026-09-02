@@ -4,25 +4,14 @@
 package tool_test
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/techne/core/engine"
-	"go.dokimi.dev/techne/core/query"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
-	"go.dokimi.dev/techne/core/tool"
-	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/tool"
 )
-
-// finder answers a search with what a case gave it, in that order.
-type finder struct{ parser }
-
-func (f finder) Search(context.Context, engine.Request, engine.Query) (engine.Result[sema.Symbol], error) {
-	return engine.Result[sema.Symbol]{Items: f.found, Completeness: trust.ScopeTotal}, nil
-}
 
 func declaration(name, doc string) sema.Symbol {
 	return sema.Symbol{
@@ -33,10 +22,8 @@ func declaration(name, doc string) sema.Symbol {
 
 func searchTool(t *testing.T, found ...sema.Symbol) tool.Tool {
 	t.Helper()
-	c := engine.NewCatalog()
-	assert.NoError(t, c.Add(finder{parser{found: found}}), "the case needs an engine registered")
-	built, err := tool.Search(query.New(c, router{"a.fx": fixture}))
-	assert.NoError(t, err, "the search tool builds from a service")
+	built, err := tool.Search(serving(found...))
+	assert.NoError(t, err, "the search tool builds from a read service")
 	return built
 }
 

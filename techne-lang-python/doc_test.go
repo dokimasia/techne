@@ -46,6 +46,7 @@ class Store:
 
     @property
     def name(self):
+        """Name the store answers to."""
         return "store"
 
 
@@ -85,6 +86,7 @@ def helper(a, b=1, *rest, **named):
 			{Name: "local", Kind: sema.KindVariable, Visibility: sema.Exported},
 			{
 				Name: "name", Kind: sema.KindMethod, Visibility: sema.Exported,
+				Doc:         "Name the store answers to.",
 				Annotations: []conformance.Annotated{{Name: "property", Text: "@property"}},
 			},
 			{Name: "named", Kind: sema.KindParameter, Visibility: sema.Exported},

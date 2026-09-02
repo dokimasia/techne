@@ -93,6 +93,109 @@ func (c CommentStyle) Documentation(text string) (string, bool) {
 	return c.Doc[best].read(trimmed), true
 }
 
+// Document renders documentation in the language's preferred form, at
+// one indentation.
+//
+// It is the other half of [CommentStyle.Documentation]: what that reads,
+// this writes. Reading a comment and writing the text back returns the
+// comment, which is what makes a tool that rewrites documentation leave
+// the rest of the file alone.
+//
+// The result carries no trailing newline. Where the comment goes relative
+// to the declaration is the caller's business, and a language whose
+// documentation sits inside the body puts it somewhere a line above the
+// declaration is wrong.
+func (c CommentStyle) Document(text, indent string) string {
+	return c.Documents().write(text, indent)
+}
+
+// write renders text in this form.
+func (d DocStyle) write(text, indent string) string {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], " \t")
+	}
+	lines = bounded(lines)
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+
+	switch {
+	case d.Close == "":
+		return d.lineForm(lines, indent)
+	case d.Continuation == "":
+		return d.blockForm(lines, indent)
+	default:
+		return d.markedForm(lines, indent)
+	}
+}
+
+// lineForm writes one comment per line, as Go, Rust, C# and Ruby
+// document with.
+func (d DocStyle) lineForm(lines []string, indent string) string {
+	// A form written as the language's plain line comment carries the
+	// space that separates it from the text; one written as a
+	// documentation marker does not.
+	open := d.Open
+	if !strings.HasSuffix(open, " ") {
+		open += " "
+	}
+	bare := strings.TrimRight(open, " ")
+
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		if line == "" {
+			out[i] = indent + bare
+			continue
+		}
+		out[i] = indent + open + line
+	}
+	return strings.Join(out, "\n")
+}
+
+// blockForm writes a delimited comment whose inner lines carry no
+// marker, which is how a Python docstring is laid out: the summary on
+// the opening line, the closing delimiter on its own.
+func (d DocStyle) blockForm(lines []string, indent string) string {
+	if len(lines) == 1 {
+		return indent + d.Open + lines[0] + d.Close
+	}
+
+	out := make([]string, 0, len(lines)+1)
+	out = append(out, indent+d.Open+lines[0])
+	for _, line := range lines[1:] {
+		if line == "" {
+			out = append(out, "")
+			continue
+		}
+		out = append(out, indent+line)
+	}
+	return strings.Join(append(out, indent+d.Close), "\n")
+}
+
+// markedForm writes a delimited comment whose inner lines carry a
+// marker, as Javadoc and its imitators do.
+func (d DocStyle) markedForm(lines []string, indent string) string {
+	out := make([]string, 0, len(lines)+2)
+	out = append(out, indent+d.Open)
+	for _, line := range lines {
+		if line == "" {
+			out = append(out, indent+strings.TrimRight(d.Continuation, " \t"))
+			continue
+		}
+		out = append(out, indent+d.Continuation+line)
+	}
+	// The closing delimiter aligns under the marker, so it is written at
+	// whatever the continuation puts before it.
+	return strings.Join(append(out, indent+aligned(d.Continuation)+d.Close), "\n")
+}
+
+// aligned returns the whitespace a continuation writes before its
+// marker, which is what puts a closing delimiter under it.
+func aligned(continuation string) string {
+	return continuation[:len(continuation)-len(strings.TrimLeft(continuation, " \t"))]
+}
+
 // read strips one comment down to the text it documents with.
 func (d DocStyle) read(text string) string {
 	body := strings.TrimPrefix(text, d.Open)
@@ -101,6 +204,10 @@ func (d DocStyle) read(text string) string {
 	}
 
 	lines := strings.Split(body, "\n")
+	bare := d.Close != "" && d.Continuation == ""
+	if bare {
+		dedent(lines)
+	}
 	for i := range lines {
 		if i > 0 && d.Continuation != "" {
 			lines[i] = unprefixed(lines[i], strings.TrimSpace(d.Continuation))
@@ -109,9 +216,62 @@ func (d DocStyle) read(text string) string {
 		// is not part of it. Anything beyond that is the author's
 		// indentation, which a code block in the documentation depends
 		// on, so it stays.
-		lines[i] = strings.TrimRight(strings.TrimPrefix(lines[i], " "), " \t\r")
+		//
+		// A marker-less block form writes no delimiter on the lines
+		// after the first, so there is no separating space to take off
+		// them and taking one would eat the author's first level of
+		// indentation.
+		if !bare || i == 0 {
+			lines[i] = strings.TrimPrefix(lines[i], " ")
+		}
+		lines[i] = strings.TrimRight(lines[i], " \t\r")
 	}
 	return strings.Join(bounded(lines), "\n")
+}
+
+// dedent removes the indentation a marker-less block form carries from
+// the code it sits in.
+//
+// A form whose inner lines carry no marker carries that indentation
+// instead: a Python docstring inside a method is indented to the body,
+// on every line, and none of that is the author's. What every line
+// shares goes and what one line has more of stays, so a code block
+// inside the documentation keeps its shape.
+//
+// The first line is left alone. It is written against the opening
+// delimiter rather than against the margin, so it carries no
+// indentation to share.
+func dedent(lines []string) {
+	common := ""
+	first := true
+	for _, line := range lines[min(1, len(lines)):] {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		margin := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+		if first {
+			common, first = margin, false
+			continue
+		}
+		common = common[:shared(common, margin)]
+	}
+	if common == "" {
+		return
+	}
+	for i := 1; i < len(lines); i++ {
+		lines[i] = strings.TrimPrefix(lines[i], common)
+	}
+}
+
+// shared returns how many leading bytes two margins have in common.
+func shared(a, b string) int {
+	n := min(len(a), len(b))
+	for i := range n {
+		if a[i] != b[i] {
+			return i
+		}
+	}
+	return n
 }
 
 // unprefixed removes a continuation marker and the one space after it,

@@ -26,32 +26,50 @@ import it. The tables below are the same information collected in one
 place; the `doc.go` copy is the one a reader meets first and the one that
 has to stay true.
 
-Positions run 0 to 3. A package may import anything at a lower position
-and nothing at a higher one. Packages at the same position may import
-each other only where the table says so.
+Positions run 0 to 2 and are scoped to a module. A package may import
+anything at a lower position and nothing at a higher one. Packages at the
+same position may import each other only where the table says so. Across
+modules the seven rules in RFC-0001 apply instead, and a linter enforces
+them.
 
 ## techne-core
+
+Everything an engine implements, and the vocabulary those ports speak.
+Nothing that consumes a port: the services are `techne-service` and the
+surface an agent calls is `techne-tool`.
 
 ### Position 0: vocabulary
 
 | Package | Holds | Imports |
 |---|---|---|
 | `source` | Where code lives: `Language`, `Path`, `Position`, `Span` | stdlib |
-| `sema` | What it means: `Symbol`, `ID`, `Kind`, `Relation`, `RelationKind`, `Unit`, `Ref` | `source` |
+| `sema` | What it means: `Symbol`, `ID`, `Kind`, `Relation`, `RelationKind`, `Unit`, `Visibility`, `Annotation` | `source` |
 | `trust` | How sure we are: `Fidelity`, `Completeness`, `Status`, `Caveat`, `Provenance` | `source` |
-| `edit` | How it changes: `Operation`, `Family`, `Target`, `Spec`, `Plan`, `Change` | `source`, `sema` |
-| `diag` | What is wrong with it: `Diagnostic`, `Severity`, `Fix` | `source` |
+| `edit` | How it changes: `Operation`, `Family`, `Target`, `Spec`, `Change`, `Plan`, `Policy`, `Request`, `Outcome` | `source`, `sema`, `trust`, `diag` |
+| `diag` | What is wrong with it: `Diagnostic`, `Severity` | `source` |
 
-Belongs here: a type more than one package needs to name. Does not:
-anything that *does* something. These packages depend on the standard
-library and on each other. If a type here needs a service, it is not
-vocabulary.
+Belongs here: a type a port signature names. Does not: anything that
+*does* something. These packages depend on the standard library and on
+each other. If a type here needs a service, it is not vocabulary.
+
+`edit` holds one thing that is not a type: `Policy.Admit`, the rule
+deciding whether a plan may be applied. It is a pure decision over the
+vocabulary with no I/O, and RFC-0004 requires it be reviewable in one
+place rather than repeated per language.
 
 ### Position 1: the plug-in contract
 
 | Package | Holds | Imports |
 |---|---|---|
-| `engine` | `Role`, `Cost`, `Availability`, the port interfaces, `Catalog`, `Capability` | position 0 |
+| `engine` | `Role`, `Cost`, `Available`, the port interfaces, `Catalog`, `Capability`, `Router`, and the one place an engine is selected and asked | position 0 |
+
+Selection lives here rather than with the services that do it. The rule
+deciding which language owns a path was written twice while it lived in
+the services, once in the read path and once in the write path; a read
+and a write that disagree about who owns a file plan a change with one
+engine and gate it with another. `Languages`, `Ask`, `AskEach` and
+`AskAny` are that rule and the loop around it, and `Publish` is where a
+tier is stamped.
 
 Roles are separate interfaces so an engine declines a capability by not
 having the method rather than by returning an error. Selection is by type
@@ -64,51 +82,63 @@ fidelity and return per-answer caveats, and the services stamp the rest.
 An engine therefore cannot overstate its evidence, and a service cannot
 discard a limit only the engine knows about.
 
-### Position 2: services and the environment
+## techne-service
+
+The paths that drive the ports, and the workspace they run over. It
+imports `core` and nothing else in the repository.
 
 | Package | Holds | Imports |
 |---|---|---|
-| `query` | the read path: one dispatcher per role, strongest engine first | `engine`, position 0 |
-| `change` | the write pipeline: validate, plan, seal, admit, lock, apply, format, gate | `engine`, `gate`, `workspace/files`, position 0 |
-| `gate` | verification: an in-process verifier, or the language's declared argv | `engine`, `diag` |
-| `workspace/index` | `Store` and `Source` ports, boot scan, staleness | `engine`, `sema`, `source` |
-| `workspace/files` | filesystem operations, produced as `edit.Plan` so they cross the one write path | `edit`, `source` |
-| `workspace/project` | which workspace a path belongs to | `source` |
+| `query` | the read path: one dispatcher per role, strongest engine first | `core/engine`, core position 0 |
+| `change` | the write pipeline: validate, plan, seal, admit, project, gate, lock, apply | `core/engine`, `workspace/files`, core position 0 |
+| `gate` | verification: an in-process verifier, or the language's declared argv | `core/engine`, `core/diag` |
+| `workspace/index` | `Store` and `Source` ports, boot scan, staleness | `core/engine`, `core/sema`, `core/source` |
+| `workspace/files` | reading and writing one rooted directory | `core/source` |
+| `workspace/project` | which workspace a path belongs to | `core/source` |
 
 `gate` sits below `change` because `change` runs it, not beside it.
-`workspace/files` produces plans rather than writing, so there is one
-place that touches disk and no second path around the policy check.
+`workspace/files` is the only package here that touches disk, and the
+write path reaches it through a port declared in `change`, so a second
+path around the policy check would have to be written on purpose.
 
 `workspace/` keeps its group because without it a reader meets `files`
 beside `query` and `change` and has to work out that one of the three is
 not a service.
 
-### Position 3: the tool interface
+## techne-tool
+
+The surface an agent calls. It imports `core` and nothing else in the
+repository.
 
 | Package | Holds | Imports |
 |---|---|---|
-| `tool` | the tool interface, the registry, and the tool set over the services | positions 0 to 2 |
+| `tool` | the tool interface, the registry, the answer shape, the size budget, and the tools | `core/engine`, core position 0 |
 
-This is where `core` stops. A tool declares its name, its summary and the
-schemas derived from its Go types; carrying it over a wire is the
-presenter module's job.
+A tool is given a service through an interface `tool` declares itself,
+one per question asked, so this module names no service. A tool that
+could name a service would be tested against one, and what a tool does
+with an answer would stop being separable from how the answer was
+assembled.
+
+A tool declares its name, its summary and the schemas derived from its Go
+types; carrying it over a wire is the presenter module's job.
 
 ## techne-presenter
 
 | Package | Holds | Imports |
 |---|---|---|
-| `presenter` | `Transport`, and the loop that drives a tool call | `core/tool` |
-| `presenter/mcp` | JSON-RPC over stdio | `presenter`, `core/tool` |
+| `presenter` | `Transport`, and the loop that drives a tool call | `tool` |
+| `presenter/mcp` | JSON-RPC over stdio | `presenter`, `tool` |
 
 MCP is the only transport. A presenter carries no domain knowledge: it
 translates between one transport and `tool.Tool.Execute`, and nothing
 else. A presenter that knew about individual tools would be N×M pieces of
 code for N tools and M transports, and the two would drift.
 
-The module exists so that `core` does not carry the MCP SDK. Embedding
+The module exists so that nothing below it carries the MCP SDK. Embedding
 `query` and `change` as Go APIs then costs nothing extra, and a second
 transport, if one is ever wanted, is a package here rather than a change
-to the module holding the services.
+to the module holding the tools.
 
 ## techne-lang
 
@@ -168,9 +198,13 @@ Deleting the directory and its line in `go.work` removes the language.
 
 | Package | Holds | Imports |
 |---|---|---|
-| `internal/app` | the composition root: build the catalog, register every language, choose a presenter | `core/tool`, `presenter/...`, every language module |
+| `internal/app` | the composition root: build the catalog, register every language, offer the tools, choose a presenter | `core`, `service`, `tool`, `presenter`, every language module |
 | `internal/version` | build metadata stamped at link time | stdlib |
 | `cmd/techne` | a shim that forwards an exit code | `internal/app` |
+
+It holds no logic. Opening a directory, applying an edit and rendering
+an answer all live in the modules whose job they are; what is left here
+is a list of what this binary offers and the wiring that joins it.
 
 This is the only module that names a language, and it names all of them.
 Registration is an explicit call, never an `init` with a blank import:

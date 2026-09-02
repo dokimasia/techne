@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/techne/core/tool"
+	"go.dokimi.dev/techne/tool"
 )
 
 // TestDoc covers the claims the package comment makes about an answer

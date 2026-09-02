@@ -5,13 +5,37 @@ package app_test
 
 import (
 	"encoding/json"
+	"io/fs"
 	"strings"
 	"testing"
 	"testing/fstest"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/internal/app"
 )
+
+// held is the workspace as something that can be written to, so a test
+// drives the write path without a directory and reads back what landed.
+type held struct{ files fstest.MapFS }
+
+func (h held) Read(p source.Path) ([]byte, error) {
+	one, there := h.files[string(p)]
+	if !there {
+		return nil, fs.ErrNotExist
+	}
+	return one.Data, nil
+}
+
+func (h held) Write(p source.Path, content []byte) error {
+	h.files[string(p)] = &fstest.MapFile{Data: content}
+	return nil
+}
+
+func (h held) Remove(p source.Path) error {
+	delete(h.files, string(p))
+	return nil
+}
 
 // workspace holds one file per language techne ships with, plus one it
 // serves for no language.
@@ -28,9 +52,17 @@ func workspace() fstest.MapFS {
 
 func built(t *testing.T) *app.Server {
 	t.Helper()
-	s, err := app.Build(workspace())
-	assert.NoError(t, err, "every language techne ships with registers into one workspace")
+	s, _ := over(t, workspace())
 	return s
+}
+
+// over builds a server on one workspace and hands back the files, so a
+// test that writes can read what it wrote.
+func over(t *testing.T, files fstest.MapFS) (*app.Server, fstest.MapFS) {
+	t.Helper()
+	s, err := app.Build(files, held{files: files})
+	assert.NoError(t, err, "every language techne ships with registers into one workspace")
+	return s, files
 }
 
 func run(t *testing.T, name, input string) map[string]any {

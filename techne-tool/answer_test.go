@@ -10,7 +10,7 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/sema"
-	"go.dokimi.dev/techne/core/tool"
+	"go.dokimi.dev/techne/tool"
 )
 
 // answered builds an answer over one struct holding one field.

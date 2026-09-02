@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"go.dokimi.dev/techne/core/engine"
-	"go.dokimi.dev/techne/core/query"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 )
@@ -63,7 +62,7 @@ func (m Matches) Render() string {
 }
 
 // Search builds the tool that finds a declaration by name.
-func Search(s *query.Service) (Tool, error) {
+func Search(reads Searcher) (Tool, error) {
 	return New("search", searchDescription,
 		func(ctx context.Context, in SearchInput) (Matches, error) {
 			scope, err := relative(in.Scope)
@@ -71,7 +70,7 @@ func Search(s *query.Service) (Tool, error) {
 				return Matches{}, err
 			}
 
-			answered, err := s.Search(ctx,
+			answered, err := reads.Search(ctx,
 				engine.Request{
 					Scope:     scope,
 					Language:  source.Language(in.Language),

@@ -713,6 +713,29 @@ func outermost(node *ts.Node) *ts.Node {
 	}
 }
 
+// bodied returns the body documentation would be written inside.
+//
+// A grammar wraps a decorated definition in a node of its own, and the
+// body belongs to the definition inside that. Descending only through a
+// wrapper is what keeps this from finding the body of something that
+// merely has one: a Python comprehension names its element expression
+// body, and a variable bound to one is not a declaration with a body.
+func bodied(node *ts.Node) *ts.Node {
+	held := node
+	for wrapperNodes[NodeKind(held.Kind())] {
+		count := held.NamedChildCount()
+		if count == 0 {
+			break
+		}
+		inner := held.NamedChild(count - 1)
+		if inner == nil {
+			break
+		}
+		held = inner
+	}
+	return held.ChildByFieldName(string(FieldNameBody))
+}
+
 // detached reports whether a blank line separates two nodes.
 func detached(above, below *ts.Node) bool {
 	return below.StartPosition().Row > above.EndPosition().Row+1
@@ -721,7 +744,7 @@ func detached(above, below *ts.Node) bool {
 // inside reads the documentation written as the first statement of a
 // declaration's body, which is how Python documents.
 func inside(node *ts.Node, content []byte, style lang.CommentStyle) string {
-	body := node.ChildByFieldName(string(FieldNameBody))
+	body := bodied(node)
 	if body == nil {
 		return ""
 	}

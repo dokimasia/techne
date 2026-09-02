@@ -17,6 +17,8 @@ require (
 	go.dokimi.dev/techne/lang/scala v0.0.0
 	go.dokimi.dev/techne/lang/typescript v0.0.0
 	go.dokimi.dev/techne/presenter v0.0.0
+	go.dokimi.dev/techne/service v0.0.0
+	go.dokimi.dev/techne/tool v0.0.0
 )
 
 require (
@@ -69,3 +71,7 @@ replace go.dokimi.dev/techne/lang/scala => ./techne-lang-scala
 replace go.dokimi.dev/techne/lang/typescript => ./techne-lang-typescript
 
 replace go.dokimi.dev/techne/presenter => ./techne-presenter
+
+replace go.dokimi.dev/techne/service => ./techne-service
+
+replace go.dokimi.dev/techne/tool => ./techne-tool

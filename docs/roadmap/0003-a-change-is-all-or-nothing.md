@@ -50,10 +50,16 @@ across every language.
 
 ## Scope
 
-The edit plan and operation specs, the policy check, content
-preconditions, per-path locking, the snapshot and atomic apply, the
-format step, the build gate, rollback, and one rename planner per
-language that can meet the minimum.
+One rename planner per language that can meet the minimum, the refusal
+for the languages that cannot, the build gate, and the batch.
+
+The pipeline itself was built ahead of this milestone to ship
+`document.symbol`, which needs no type checker: the edit plan, the
+operation specs, the policy check, content preconditions, per-path
+locking, the projection, the parse gate, the atomic apply and the
+rollback all exist and are driven by a shipped tool. What is untested is
+everything the parser cannot reach, which is every claim about references
+this milestone is about.
 
 ## Not in this milestone
 
@@ -74,5 +80,6 @@ language that can meet the minimum.
 
 | Date | What changed | Why |
 |---|---|---|
+| 2026-09-02 | Narrowed the scope to the rename | The pipeline landed early behind `document.symbol`, the one operation a parser can serve, so what is left here is what needs a type checker |
 | 2026-09-01 | Renumbered from 0004 and widened past Go | Nothing was committed, and the write path covers every language that meets the minimum |
 | 2026-09-01 | Created | First milestone that changes a file |

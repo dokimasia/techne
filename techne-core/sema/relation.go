@@ -88,14 +88,32 @@ func (r RelationKind) Inverse() RelationKind {
 	return inverses[r]
 }
 
-// Relation is one edge and where in the source it was found.
+// Relation is one edge found from the declaration a caller asked about.
+//
+// It names one end. The other is the declaration the question was about,
+// which is the same for every edge in an answer and is already in the
+// request; carrying it on each of five hundred callers states one fact
+// five hundred times.
+//
+// That end is a whole [Symbol] rather than an identity. An engine that
+// found the edge knows what it points at: the name, the kind, the file
+// and the line are in front of it. Reducing that to an identity makes
+// whoever renders the answer look every one of them up again, and an
+// identity does not pick out one declaration in the first place, because
+// a unit declaring two methods called Get satisfies one twice.
 type Relation struct {
+	// Kind is the direction as the caller asked for it, not as an
+	// engine happens to store it.
 	Kind RelationKind `json:"kind"`
-	From ID           `json:"from"`
-	To   ID           `json:"to"`
+	// To is the declaration at the far end.
+	To Symbol `json:"to"`
 	// At is where the edge was written, which is the reference site
 	// rather than either declaration.
 	At source.Span `json:"at"`
+	// Via is the source line the edge was written on. A caller asking
+	// who calls this wants to read the call, and fetching each one
+	// costs a turn per caller.
+	Via string `json:"via,omitempty"`
 }
 
 // MarshalJSON writes the wire form rather than the number.

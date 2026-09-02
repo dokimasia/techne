@@ -4,10 +4,15 @@
 package engine_test
 
 import (
+	"context"
 	"testing"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
+	"go.dokimi.dev/techne/core/sema"
+	"go.dokimi.dev/techne/core/source"
+	"go.dokimi.dev/techne/core/trust"
 )
 
 func TestRole(t *testing.T) {
@@ -28,6 +33,7 @@ func TestRole(t *testing.T) {
 				engine.RoleRelate:  "relate",
 				engine.RolePlan:    "plan",
 				engine.RoleFormat:  "format",
+				engine.RoleCheck:   "check",
 				engine.RoleVerify:  "verify",
 				engine.RoleIndex:   "index",
 			} {
@@ -46,13 +52,19 @@ func TestRole(t *testing.T) {
 	t.Run("Roles", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("names a role for every port", func(t *testing.T) {
+		t.Run("names a role every engine can be selected for", func(t *testing.T) {
 			t.Parallel()
-			// Eight ports, eight roles. A port added without a role
-			// cannot be selected for, and a role without a port can be
-			// asked for and never served.
-			assert.Length(t, engine.Roles(), 8,
-				"a port with no role cannot be selected for, and a role with no port can be asked for and never served")
+			// An engine that serves every port must be selectable for
+			// every role. Selection is by type assertion in one switch,
+			// so a role added without a case there can be asked for and
+			// is served by nothing, whatever engine is registered.
+			c := engine.NewCatalog()
+			assert.NoError(t, c.Add(complete{}), "an engine serving every port registers")
+
+			for _, role := range engine.Roles() {
+				assert.Length(t, c.For(t.Context(), whole, role), 1,
+					"a role nothing can be selected for is one a caller asks for and nothing serves")
+			}
 		})
 
 		t.Run("excludes the unset role", func(t *testing.T) {
@@ -108,4 +120,65 @@ func TestRole(t *testing.T) {
 				"a server is expensive once and cheap after, so pricing it per call would hide the fastest engine")
 		})
 	})
+}
+
+// whole is the language the all-ports engine answers about.
+const whole = source.Language("whole")
+
+// complete serves every port, so a role no engine can be selected for
+// is a gap in the selection switch rather than a gap in this engine.
+type complete struct{}
+
+func (complete) Name() string                        { return "complete" }
+func (complete) Language() source.Language           { return whole }
+func (complete) Fidelity(engine.Role) trust.Fidelity { return trust.Resolved }
+func (complete) Cost(engine.Role) engine.Cost        { return engine.CostMemory }
+func (complete) Granularity() engine.Invalidation    { return engine.InvalidateFile }
+func (complete) Affected(source.Path) []source.Path  { return nil }
+
+func (complete) Outline(context.Context, engine.Request) (engine.Result[sema.Symbol], error) {
+	return engine.Result[sema.Symbol]{}, nil
+}
+
+func (complete) Search(context.Context, engine.Request, engine.Query) (engine.Result[sema.Symbol], error) {
+	return engine.Result[sema.Symbol]{}, nil
+}
+
+func (complete) Resolve(context.Context, engine.Request, source.Position) (engine.Result[sema.Symbol], error) {
+	return engine.Result[sema.Symbol]{}, nil
+}
+
+func (complete) Relate(
+	context.Context,
+	engine.Request,
+	sema.ID,
+	sema.RelationKind,
+) (engine.Result[sema.Relation], error) {
+	return engine.Result[sema.Relation]{}, nil
+}
+
+func (complete) Plan(
+	context.Context,
+	engine.Request,
+	edit.Operation,
+	edit.Target,
+	edit.Args,
+) (engine.Result[edit.Change], error) {
+	return engine.Result[edit.Change]{}, nil
+}
+
+func (complete) Format(context.Context, []source.Path) (engine.Result[edit.Change], error) {
+	return engine.Result[edit.Change]{}, nil
+}
+
+func (complete) Check(context.Context, map[source.Path][]byte) (engine.Result[edit.Finding], error) {
+	return engine.Result[edit.Finding]{}, nil
+}
+
+func (complete) Verify(context.Context, engine.Request, []string) (engine.Result[edit.Finding], error) {
+	return engine.Result[edit.Finding]{}, nil
+}
+
+func (complete) Index(context.Context, source.Path) (engine.Result[sema.Symbol], error) {
+	return engine.Result[sema.Symbol]{}, nil
 }

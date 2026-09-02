@@ -17,6 +17,7 @@ const (
 	RoleRelate
 	RolePlan
 	RoleFormat
+	RoleCheck
 	RoleVerify
 	RoleIndex
 )
@@ -32,6 +33,7 @@ var roleNames = map[Role]string{
 	RoleRelate:  "relate",
 	RolePlan:    "plan",
 	RoleFormat:  "format",
+	RoleCheck:   "check",
 	RoleVerify:  "verify",
 	RoleIndex:   "index",
 }
@@ -49,7 +51,7 @@ func (r Role) String() string {
 func Roles() []Role {
 	return []Role{
 		RoleOutline, RoleSearch, RoleResolve, RoleRelate,
-		RolePlan, RoleFormat, RoleVerify, RoleIndex,
+		RolePlan, RoleFormat, RoleCheck, RoleVerify, RoleIndex,
 	}
 }
 

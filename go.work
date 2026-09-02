@@ -18,4 +18,6 @@ use (
 	./techne-lang-scala
 	./techne-lang-typescript
 	./techne-presenter
+	./techne-service
+	./techne-tool
 )

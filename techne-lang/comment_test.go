@@ -4,11 +4,15 @@
 package lang_test
 
 import (
+	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/lang"
 )
+
+func split(text string) []string { return strings.Split(text, "\n") }
+func join(lines []string) string { return strings.Join(lines, "\n") }
 
 // The styles below are the ones the language modules ship, repeated
 // here so the rules that make them work are checked against the forms
@@ -233,6 +237,111 @@ func TestDocStyle(t *testing.T) {
 				"Rust documents what follows with /// and /**, and what encloses with //! and /*!")
 			assert.Equal(t, inner, 2,
 				"Rust documents what follows with /// and /**, and what encloses with //! and /*!")
+		})
+	})
+}
+
+func TestDocument(t *testing.T) {
+	t.Parallel()
+
+	t.Run("the preferred form", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("is what each language writes", func(t *testing.T) {
+			t.Parallel()
+			// The marker is not a detail. Go writing /// and Rust writing
+			// // both produce a comment neither language's own
+			// documentation tool reads.
+			for _, one := range []struct {
+				style lang.CommentStyle
+				want  string
+			}{
+				{goStyle, "// Store holds items by name."},
+				{rustStyle, "/// Store holds items by name."},
+				{rubyStyle, "# Store holds items by name."},
+				{javaStyle, "/**\n * Store holds items by name.\n */"},
+				{typescriptStyle, "/**\n * Store holds items by name.\n */"},
+				{pythonStyle, `"""Store holds items by name."""`},
+			} {
+				assert.Equal(t, one.style.Document("Store holds items by name.", ""), one.want,
+					"a comment in a form the language does not read is not documentation")
+			}
+		})
+
+		t.Run("carries a paragraph break in its own form", func(t *testing.T) {
+			t.Parallel()
+			for _, one := range []struct {
+				style lang.CommentStyle
+				want  string
+			}{
+				{goStyle, "// One.\n//\n// Two."},
+				{javaStyle, "/**\n * One.\n *\n * Two.\n */"},
+				{pythonStyle, "\"\"\"One.\n\nTwo.\n\"\"\""},
+			} {
+				assert.Equal(t, one.style.Document("One.\n\nTwo.", ""), one.want,
+					"a blank line inside a comment is written as the form writes one")
+			}
+		})
+
+		t.Run("leaves no trailing space on a blank line", func(t *testing.T) {
+			t.Parallel()
+			assert.NotContains(t, javaStyle.Document("One.\n\nTwo.", ""), "* \n",
+				"a marker followed by nothing is written without the space that separates it from text")
+		})
+	})
+
+	t.Run("indentation", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("is written on every line", func(t *testing.T) {
+			t.Parallel()
+			// A comment indented on its first line only is a comment
+			// half in the margin.
+			for _, line := range split(javaStyle.Document("One.\n\nTwo.", "    ")) {
+				assert.HasPrefix(t, line, "    ", "a declaration's comment sits where the declaration does")
+			}
+		})
+
+		t.Run("is not written into a blank documentation line", func(t *testing.T) {
+			t.Parallel()
+			assert.Contains(t, pythonStyle.Document("One.\n\nTwo.", "    "), "\n\n",
+				"a paragraph break carries no indentation, because it carries no text")
+		})
+	})
+
+	t.Run("round trip", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("reads back what it wrote", func(t *testing.T) {
+			t.Parallel()
+			// This is what makes a tool that rewrites documentation
+			// leave the rest of the file alone: what the reader takes
+			// out is what the writer put in.
+			for _, style := range []lang.CommentStyle{javaStyle, typescriptStyle, pythonStyle} {
+				for _, text := range []string{"One.", "One.\n\nTwo.", "One.\n    indented\nTwo."} {
+					for _, indent := range []string{"", "    ", "\t\t"} {
+						got, isDoc := style.Documentation(style.Document(text, indent))
+						assert.True(t, isDoc, "a form the language writes is a form it reads")
+						assert.Equal(t, got, text,
+							"reading a comment and writing the text back returns the comment")
+					}
+				}
+			}
+		})
+
+		t.Run("reads back a line form one comment at a time", func(t *testing.T) {
+			t.Parallel()
+			// A line form documents one line, so a grammar hands each
+			// one over as its own node and the parser joins them.
+			for _, style := range []lang.CommentStyle{goStyle, rustStyle, rubyStyle} {
+				var read []string
+				for _, line := range split(style.Document("One.\n\nTwo.", "  ")) {
+					got, isDoc := style.Documentation(line)
+					assert.True(t, isDoc, "every line of the comment is documentation")
+					read = append(read, got)
+				}
+				assert.Equal(t, join(read), "One.\n\nTwo.", "the lines join back into what was written")
+			}
 		})
 	})
 }

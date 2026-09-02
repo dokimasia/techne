@@ -34,4 +34,8 @@ type Diagnostic struct {
 	// Source names the tool that reported it, so a broken build can be
 	// told from a linter's objection.
 	Source string
+	// Snippet is the source the diagnostic is about. Whoever renders it
+	// has no filesystem, and a message without the line it is about
+	// costs a read per diagnostic to make sense of.
+	Snippet string
 }

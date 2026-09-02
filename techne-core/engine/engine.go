@@ -19,6 +19,16 @@ import (
 // hides the breakage.
 var ErrDecline = errors.New("engine: decline")
 
+// ErrRefuse reports that an engine will not serve a request it
+// understands, for a reason the caller can act on.
+//
+// A service stops looking and passes the reason back. It is separate
+// from [ErrDecline] because the two lead somewhere different: a decline
+// says another engine may do better, and a refusal says no engine will
+// until the request changes. Both are separate from an error, which says
+// something is broken and the caller did nothing wrong.
+var ErrRefuse = errors.New("engine: refuse")
+
 // Engine is what every adapter implements, on top of whichever roles it
 // serves.
 type Engine interface {

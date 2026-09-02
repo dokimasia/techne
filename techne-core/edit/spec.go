@@ -16,6 +16,7 @@ const (
 	ArgDestination ArgKey = "destination"
 	ArgSignature   ArgKey = "signature"
 	ArgReceiver    ArgKey = "receiver"
+	ArgDoc         ArgKey = "doc"
 )
 
 // Args are the parameters of one request.
@@ -92,9 +93,15 @@ var specs = map[Operation]Spec{
 	// nothing else, which is why a parser can serve it correctly. It is
 	// the one operation whose minimum is not resolved, and the reason
 	// the minimum is a property of the operation rather than a setting.
+	//
+	// It is also the one that takes a span as readily as a symbol. A
+	// name and a kind do not pick out one declaration — a package with
+	// two Get methods has two symbols under one identity — and the text
+	// to write is the caller's, so a caller that has already resolved
+	// which declaration it means says so by its position.
 	DocumentSymbol: {
-		Operation: DocumentSymbol, Accepts: []TargetKind{TargetSymbol},
-		MinFidelity: trust.Syntactic,
+		Operation: DocumentSymbol, Accepts: []TargetKind{TargetSymbol, TargetSpan},
+		Required: []ArgKey{ArgDoc}, MinFidelity: trust.Syntactic,
 	},
 }
 

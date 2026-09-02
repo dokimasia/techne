@@ -13,7 +13,8 @@ proposals that are withdrawn.
 | [0005](0005-turn-cost.md) | Turn cost | Accepted |
 | [0006](0006-what-a-tool-returns.md) | What a tool returns | Draft |
 
-RFC-0001 fixes which module each thing lives in. The next three fix what
+RFC-0001 fixes which module each thing lives in; ADR-0004 records why
+the services and the tool surface are not among the things in `core`. The next three fix what
 those things are: 0002 the types and ports every engine speaks, 0003 what
 an agent sees, 0004 what changes a file. RFC-0005 cuts across all three
 and treats the number of round trips an agent spends as a cost the design

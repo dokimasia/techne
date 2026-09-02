@@ -77,6 +77,11 @@ linters:
     # enforce. The root module has no rule and may import anything.
     depguard:
       rules:
+        # core declares what an engine implements and the vocabulary the
+        # ports speak. It consumes none of it: the services that drive
+        # the ports are techne-service, and the surface an agent calls is
+        # techne-tool. Neither may be imported here, and the list below
+        # is what stops one being.
         core:
           files: ["**/techne-core/**"]
           list-mode: strict
@@ -84,8 +89,35 @@ linters:
             - $gostd
             - go.dokimi.dev/assert
             - go.dokimi.dev/techne/core
-            # Schema derivation for the tool surface. Standalone rather
-            # than the MCP SDK's own, so core carries no transport.
+
+        # The read path, the write path and the workspace they run over.
+        # It imports core and nothing else here: a service reaching for
+        # the tool surface would put presentation behind the thing that
+        # applies changes.
+        service:
+          files: ["**/techne-service/**"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - go.dokimi.dev/assert
+            - go.dokimi.dev/techne/core
+            - go.dokimi.dev/techne/service
+
+        # The surface an agent calls. It takes a service through an
+        # interface it declares itself, so techne-service is absent from
+        # this list on purpose: a tool that could name a service would
+        # be tested against one.
+        tool:
+          files: ["**/techne-tool/**"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - go.dokimi.dev/assert
+            - go.dokimi.dev/techne/core
+            - go.dokimi.dev/techne/tool
+            # Schema derivation from the handler's own types. Standalone
+            # rather than the MCP SDK's own, so the tool surface carries
+            # no transport and a second transport needs no second schema.
             - github.com/google/jsonschema-go
 
         lang:
@@ -112,10 +144,11 @@ linters:
             - $gostd
             - go.dokimi.dev/assert
             - go.dokimi.dev/techne/core
+            - go.dokimi.dev/techne/tool
             - go.dokimi.dev/techne/presenter
             # The transport itself. This is the only module allowed it,
             # which is the reason presenter is a module rather than a
-            # package in core.
+            # package beside the tool surface.
             - github.com/modelcontextprotocol/go-sdk
 
         language-module:

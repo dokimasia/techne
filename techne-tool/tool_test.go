@@ -12,7 +12,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/sema"
-	"go.dokimi.dev/techne/core/tool"
+	"go.dokimi.dev/techne/tool"
 )
 
 type greetIn struct {

@@ -6,39 +6,21 @@ package tool_test
 import (
 	"context"
 	"encoding/json"
-	"slices"
 	"testing"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
-	"go.dokimi.dev/techne/core/query"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
-	"go.dokimi.dev/techne/core/tool"
 	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/tool"
 )
 
 const fixture = source.Language("fixture")
 
-// router answers which language claims a path.
-type router map[string]source.Language
-
-func (r router) LanguageOf(p source.Path) (source.Language, bool) {
-	l, claimed := r[string(p)]
-	return l, claimed
-}
-
-// Languages is what a directory scope is asked of.
-func (r router) Languages() []source.Language {
-	out := make([]source.Language, 0, len(r))
-	for _, l := range r {
-		out = append(out, l)
-	}
-	slices.Sort(out)
-	return slices.Compact(out)
-}
-
-// parser is an engine that answers with what a case gave it.
+// parser is the engine a read service would have selected, and is here
+// so an answer carries a real name and a real tier rather than ones a
+// case wrote down.
 type parser struct{ found []sema.Symbol }
 
 func (parser) Name() string                        { return "parser" }
@@ -46,16 +28,61 @@ func (parser) Language() source.Language           { return fixture }
 func (parser) Fidelity(engine.Role) trust.Fidelity { return trust.Syntactic }
 func (parser) Cost(engine.Role) engine.Cost        { return engine.CostParse }
 
+// Outline is what makes this serve a role, which is what the capability
+// report is about. Nothing calls it: a tool is given a service, and the
+// service that would have called this lives in another module.
 func (p parser) Outline(context.Context, engine.Request) (engine.Result[sema.Symbol], error) {
 	return engine.Result[sema.Symbol]{Items: p.found, Completeness: trust.ScopeTotal}, nil
 }
 
+// reads stands in for the read service, which lives in another module.
+//
+// What is under test here is what a tool does with an answer, not how
+// one is assembled, so the answer is stamped by [engine.Publish] and
+// withheld by [engine.Unsupported] exactly as a service would do it.
+// Building the real service instead would make every case in this file
+// depend on selection and merging as well.
+type reads struct {
+	engine parser
+	claims map[source.Path]bool
+}
+
+func (r reads) Outline(_ context.Context, req engine.Request) (engine.Answer[sema.Symbol], error) {
+	if !r.claims[req.Scope] {
+		return engine.Unsupported[sema.Symbol](
+			"no engine serves " + string(req.Scope) + " for this role"), nil
+	}
+	return engine.Publish(
+		engine.Result[sema.Symbol]{Items: r.engine.found, Completeness: trust.ScopeTotal},
+		r.engine, engine.RoleOutline, req.Preferred), nil
+}
+
+func (r reads) Search(
+	_ context.Context,
+	req engine.Request,
+	_ engine.Query,
+) (engine.Answer[sema.Symbol], error) {
+	if !r.claims[req.Scope] {
+		return engine.Unsupported[sema.Symbol](
+			"no engine serves " + string(req.Scope) + " for this role"), nil
+	}
+	return engine.Publish(
+		engine.Result[sema.Symbol]{Items: r.engine.found, Completeness: trust.ScopeTotal},
+		r.engine, engine.RoleSearch, req.Preferred), nil
+}
+
+// serving is a read service over the declarations a case gave it.
+func serving(found ...sema.Symbol) reads {
+	return reads{
+		engine: parser{found: found},
+		claims: map[source.Path]bool{"a.fx": true},
+	}
+}
+
 func outlineTool(t *testing.T, found ...sema.Symbol) tool.Tool {
 	t.Helper()
-	c := engine.NewCatalog()
-	assert.NoError(t, c.Add(parser{found: found}), "the case needs an engine registered")
-	built, err := tool.Outline(query.New(c, router{"a.fx": fixture}))
-	assert.NoError(t, err, "the outline tool builds from a service")
+	built, err := tool.Outline(serving(found...))
+	assert.NoError(t, err, "the outline tool builds from a read service")
 	return built
 }
 

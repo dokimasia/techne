@@ -4,7 +4,7 @@ title: Operations and the write path
 author: Roy Klopper
 status: Accepted
 created: 2026-09-01
-updated: 2026-09-01
+updated: 2026-09-02
 discussion: none
 supersedes: none
 superseded-by: none
@@ -23,9 +23,10 @@ others.
 
 ## Motivation
 
-RFC-0001 drew the write pipeline and named none of its types. Milestone
-0000 delivers the operation specs and milestone 0003 delivers the
-pipeline, so both are blocked on this.
+RFC-0001 drew the write pipeline and named none of its types. Nothing can
+be built against a pipeline whose stages have no names, and nothing can
+be refused consistently against operations that declare nothing about
+themselves.
 
 The pipeline is also where a mistake is expensive in a way a read is not.
 A wrong read wastes a turn. A rename that updates nine of ten references
@@ -58,13 +59,20 @@ Twelve operations across seven families, named `family.subject`.
 | `inline.constant` | symbol | yes | resolved |
 | `change.signature` | symbol | yes | resolved |
 | `implement.interface` | symbol | no | resolved |
-| `document.symbol` | symbol | no | syntactic |
+| `document.symbol` | symbol or span | no | syntactic |
 
 `document.symbol` writes a comment above a declaration and touches
 nothing else, which is why it is the one operation a parser can serve
 correctly. It is in the table to show that the minimum is a property of
 the operation rather than a global setting. Every other operation either
 rewrites references or needs a type to be correct.
+
+It is also the one operation that takes a span as readily as a symbol. A
+name and a kind do not pick out one declaration, because a unit
+declaring two methods called `Get` satisfies one identity twice, and the
+prose to write is the caller's rather than something derived from the
+target. A caller that has already resolved which declaration it means
+says so by position.
 
 The family exists so a caller can ask what extractions there are, and so
 a language module can advertise or refuse a family as a unit.
@@ -123,6 +131,7 @@ const (
 	ArgDestination ArgKey = "destination"
 	ArgSignature   ArgKey = "signature"
 	ArgReceiver    ArgKey = "receiver"
+	ArgDoc         ArgKey = "doc"
 )
 
 type Args map[ArgKey]string
@@ -178,6 +187,18 @@ type Change struct {
 	Content []byte      // ChangeCreate only
 }
 
+// Request is one change a caller asked for. It is vocabulary rather than
+// the write path's own type, so a tool can name a change without
+// depending on the thing that applies one.
+type Request struct {
+	Operation Operation
+	Scope     source.Path
+	Language  source.Language
+	Target    Target
+	Args      Args
+	DryRun    bool
+}
+
 type TextEdit struct {
 	Span source.Span
 	New  string
@@ -225,12 +246,36 @@ said so.
 
 RFC-0001 draws the stages. Three rules govern them and are settled here.
 
-**Locks are held across apply, gate and rollback.** Per-path, in-process,
+**The gate runs before the write, where the gate can read content.** A
+gate that judges bytes rather than the workspace needs nothing on disk,
+so it runs against the projection and a refused change never touches a
+file. That is a separate port from the one that runs a build:
+
+```go
+// Checker reports what is wrong with content the workspace does not
+// hold. A dry run gates a projection, and a projection exists only in
+// memory, so a gate that can only read the workspace cannot serve one.
+type Checker interface {
+	Check(ctx context.Context, files map[source.Path][]byte) (Result[diag.Diagnostic], error)
+}
+```
+
+A build gate still needs files on disk and still runs after the write,
+with the rollback behind it. Both report which of them answered, because
+"it parses" and "it builds" are different promises and a caller told only
+that a gate passed cannot tell which one it was given.
+
+**A gate judges what a change replaces as well as what it produces.** A
+file that did not parse before is not made worse by a comment written
+into it, and refusing on inherited faults would make the code that most
+wants fixing the code nothing may touch.
+
+**Locks are held from the seal to the write.** Per-path, in-process,
 acquired in sorted path order so two changes touching the same files in
 different orders cannot deadlock, plus one advisory workspace lock for a
-second process. Releasing after the write but before the gate would let
-another change be written while this one is unverified, and a rollback
-would then discard both.
+second process. Releasing between pinning the content and writing it back
+would let another change land in between, and the byte ranges would then
+describe a file nobody computed them against.
 
 **Formatting touches only what the plan named.** The format step runs
 over the paths in `plan.Changes` and no others. If any other file
@@ -296,13 +341,31 @@ two languages sends two batches.
 ### What a caller gets back
 
 ```go
-type Result struct {
-	Status     trust.Status
-	Applied    bool
-	Changed    []source.Path
-	Diagnostics []diag.Diagnostic // when the gate failed
-	Provenance trust.Provenance
-	Reason     string // when Status is Refused or Unsupported
+// Outcome is what the write path did, or would have done. It is named
+// for what it is rather than called a result, because an engine returns
+// what it found and a tool returns what it encoded, and those are three
+// different things.
+type Outcome struct {
+	Operation   Operation
+	Status      trust.Status
+	Applied     bool
+	Changed     []source.Path     // empty for a dry run
+	Changes     []Change          // what was done, or would be
+	Rewrites    []Rewrite         // the same, read back as text
+	Diagnostics []diag.Diagnostic // when the gate objected
+	Provenance  trust.Provenance
+	Reason      string // when Status is Refused or Unsupported
+}
+
+// Rewrite is one range a change replaces, with the text on both sides.
+// A plan says which bytes move; a caller reviewing a change reads what
+// goes and what arrives. The write path fills these in because it has
+// read the file and the planner has not.
+type Rewrite struct {
+	Path source.Path
+	Line int // counting from one, as an editor reports it
+	Was  string
+	Now  string
 }
 ```
 
@@ -371,12 +434,15 @@ the other's work. Locks are cheaper than the failure they prevent.
 
 ## Unresolved and future work
 
-Three questions wait for the write path to exist. Whether
+Two questions wait for more of the write path to exist. Whether
 `extract.variable` can be correct on a parser's evidence in a language
-with type inference; whether the second-process lock is a file in the
-workspace or something the caller supplies; and what a dry run reports
-for a language whose toolchain has no in-memory projection to gate
-against.
+with type inference, and whether the second-process lock is a file in the
+workspace or something the caller supplies.
+
+What a dry run reports for a language whose toolchain has no in-memory
+projection is settled: it reports that nothing judged the change. The
+status is degraded and a caveat says so, because a language nothing can
+gate is one where refusing every change would be the only alternative.
 
 Applying the edits a language server proposes through a command is not
 proposed. Those edits arrive outside the pipeline and would be the one

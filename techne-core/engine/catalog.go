@@ -153,6 +153,9 @@ func serves(e Engine, role Role) bool {
 	case RoleFormat:
 		_, ok := e.(Formatter)
 		return ok
+	case RoleCheck:
+		_, ok := e.(Checker)
+		return ok
 	case RoleVerify:
 		_, ok := e.(Verifier)
 		return ok

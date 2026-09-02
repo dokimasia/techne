@@ -70,7 +70,7 @@ the name alone matches more than one declaration.
 
 ```json
 { "symbol": "Status", "package": "core/trust" }
-{ "symbol": "kind", "file": "core/query/dispatch.go", "line": 42 }
+{ "symbol": "kind", "file": "service/query/service.go", "line": 42 }
 ```
 
 A position-first interface would make the agent read the file before it
@@ -226,8 +226,10 @@ An operation nothing implements anywhere is not a tool. It appears in
 `capabilities` with `available: false`, so an agent is told the operation
 exists and cannot run rather than that no such operation exists.
 
-That rule keeps the list proportional to what works. Eight tools serve
-ten languages today.
+That rule keeps the list proportional to what works. Four tools serve ten
+languages: `outline`, `search`, `capabilities` and `document`. The rest
+of the catalogue is declared and unimplemented, which `capabilities`
+reports rather than hides.
 
 `verify` runs a language's gate without changing anything, so an agent
 can check its own work before asking for a change. It is the same

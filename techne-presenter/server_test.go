@@ -11,8 +11,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/techne/core/tool"
 	"go.dokimi.dev/techne/presenter"
+	"go.dokimi.dev/techne/tool"
 )
 
 type answerIn struct {

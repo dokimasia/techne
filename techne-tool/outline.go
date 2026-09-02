@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"go.dokimi.dev/techne/core/engine"
-	"go.dokimi.dev/techne/core/query"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
@@ -41,7 +40,7 @@ type OutlineInput struct {
 }
 
 // Outline builds the tool that reports what a scope declares.
-func Outline(s *query.Service) (Tool, error) {
+func Outline(reads Outliner) (Tool, error) {
 	return New("outline", outlineDescription,
 		func(ctx context.Context, in OutlineInput) (Answer, error) {
 			scope, err := relative(in.Scope)
@@ -49,7 +48,7 @@ func Outline(s *query.Service) (Tool, error) {
 				return Answer{}, err
 			}
 
-			answered, err := s.Outline(ctx, engine.Request{
+			answered, err := reads.Outline(ctx, engine.Request{
 				Scope:     scope,
 				Language:  source.Language(in.Language),
 				Preferred: fidelity(in.Preferred),

@@ -70,6 +70,25 @@ type Caveat struct {
 	Paths []source.Path `json:"paths,omitempty"`
 }
 
+// provenance turns what stood behind an answer into the form a caller
+// reads, where every tier is a word rather than a number.
+//
+// One conversion, whatever produced the answer. A read and a write that
+// spelled the same evidence differently would leave a caller comparing
+// two answers it cannot compare.
+func provenance(p trust.Provenance) Provenance {
+	out := Provenance{
+		Engine:                p.Engine,
+		Fidelity:              p.Fidelity.String(),
+		Completeness:          p.Completeness.String(),
+		SupportsNegativeClaim: p.SupportsNegativeClaim(),
+	}
+	for _, c := range p.Caveats {
+		out.Caveats = append(out.Caveats, Caveat{Code: string(c.Code), Note: c.Note, Paths: c.Paths})
+	}
+	return out
+}
+
 // published turns what an engine returned into what a caller reads,
 // where every tier is a word rather than a number.
 //
@@ -78,28 +97,17 @@ type Caveat struct {
 // what was found and how it was bound, the other says why there is
 // nothing to say.
 func published(a engine.Answer[sema.Symbol], scope Scope, d Detail, include []string) Answer {
-	caveats := make([]Caveat, 0, len(a.Provenance.Caveats))
-	for _, c := range a.Provenance.Caveats {
-		caveats = append(caveats, Caveat{Code: string(c.Code), Note: c.Note, Paths: c.Paths})
-	}
-
 	out := Answer{
-		Scope: scope,
-		Items: Declared(a.Items, d, include),
-		Provenance: Provenance{
-			Engine:                a.Provenance.Engine,
-			Fidelity:              a.Provenance.Fidelity.String(),
-			Completeness:          a.Provenance.Completeness.String(),
-			SupportsNegativeClaim: a.Provenance.SupportsNegativeClaim(),
-			Caveats:               caveats,
-		},
+		Scope:      scope,
+		Items:      Declared(a.Items, d, include),
+		Provenance: provenance(a.Provenance),
 	}
 
 	switch a.Status {
 	case trust.Unsupported:
-		out.Error = &Failure{Code: trust.Unsupported.String(), Reason: reasonFrom(caveats)}
+		out.Error = &Failure{Code: trust.Unsupported.String(), Reason: reasonFrom(out.Provenance.Caveats)}
 	case trust.Refused:
-		out.Error = &Failure{Code: trust.Refused.String(), Reason: reasonFrom(caveats)}
+		out.Error = &Failure{Code: trust.Refused.String(), Reason: reasonFrom(out.Provenance.Caveats)}
 	case trust.Unset, trust.OK, trust.Degraded, trust.Partial:
 	}
 	return out

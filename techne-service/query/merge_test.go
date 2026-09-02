@@ -9,10 +9,10 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
-	"go.dokimi.dev/techne/core/query"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/service/query"
 )
 
 const other = source.Language("other")

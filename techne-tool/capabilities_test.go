@@ -13,8 +13,8 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
-	"go.dokimi.dev/techne/core/tool"
 	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/tool"
 )
 
 // server stands for an engine whose language server is not installed.

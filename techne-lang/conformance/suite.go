@@ -4,6 +4,7 @@
 package conformance
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	"testing/fstest"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/techne/core/diag"
+	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
@@ -305,6 +308,69 @@ func Run(t *testing.T, s Suite) {
 		})
 	})
 
+	t.Run("document", func(t *testing.T) {
+		t.Parallel()
+		// One engine over one mutable workspace, restored after each
+		// declaration. Compiling a query per declaration would cost more
+		// than every other check in this suite put together.
+		files := fstest.MapFS{}
+		for path, content := range s.Files {
+			files[path] = &fstest.MapFile{Data: []byte(content)}
+		}
+		e := build(t, files, s)
+		before := outline(t, e, ".")
+
+		t.Run("writes documentation this parser reads back", func(t *testing.T) {
+			for _, sym := range before.Items {
+				documenting(t, e, files, s, before, sym)
+			}
+		})
+	})
+
+	t.Run("check", func(t *testing.T) {
+		t.Parallel()
+		e := build(t, fsys, s)
+
+		t.Run("finds nothing wrong with the source the module supplied", func(t *testing.T) {
+			t.Parallel()
+			got, err := e.Check(t.Context(), content(s))
+			assert.NoError(t, err, "checking content this engine claims succeeds")
+			assert.Empty(t, got.Items,
+				"a fixture that does not parse would make every other check here meaningless")
+		})
+
+		t.Run("reports content that stopped being this language", func(t *testing.T) {
+			t.Parallel()
+			spoiled := content(s)
+			for path := range spoiled {
+				spoiled[path] = append(spoiled[path], []byte(garbage)...)
+			}
+			got, err := e.Check(t.Context(), spoiled)
+			assert.NoError(t, err, "content that does not parse is an answer, not a fault")
+			assert.NotEmpty(t, got.Items,
+				"the gate exists to stop a change being written, so it has to notice one that broke a file")
+			for _, one := range got.Items {
+				assert.Equal(t, one.Diagnostic.Severity, diag.SeverityError,
+					"a file that stopped parsing is an error rather than something to note")
+				assert.NotEmpty(t, one.Diagnostic.Message,
+					"a caller acts on what is wrong, not on that something is")
+				assert.NotEmpty(t, string(one.Diagnostic.Span.Path), "a fault says which file it is in")
+				assert.NotEmpty(t, one.Diagnostic.Snippet,
+					"whoever reads a fault has no filesystem, so the line comes with it")
+				assert.Empty(t, one.Fix,
+					"a file that stopped parsing has no one obvious change that resumes it")
+			}
+		})
+
+		t.Run("declines content it claims none of", func(t *testing.T) {
+			t.Parallel()
+			_, err := e.Check(t.Context(),
+				map[source.Path][]byte{"a.no-language-claims-this": []byte("x")})
+			assert.ErrorIs(t, err, engine.ErrDecline,
+				"one change can touch several languages, and each engine judges its own")
+		})
+	})
+
 	t.Run("refuses a query naming a capture no kind carries", func(t *testing.T) {
 		t.Parallel()
 		// A capture the vocabulary does not know would match and then be
@@ -329,6 +395,110 @@ func Run(t *testing.T, s Suite) {
 			"a directory holding several languages is normal, so another language's file yields nothing")
 	})
 }
+
+// documenting writes documentation onto one declaration and reads it
+// back through the same parser.
+//
+// It is the check that a language module's comment forms are usable
+// rather than merely stated. Writing a comment the language's own
+// documentation tool would not read, at the wrong indentation, or in a
+// place that turns the declaration below it into part of the comment,
+// all fail here: the text does not come back, or the declaration set
+// does.
+//
+// A refusal is not a failure. No language documents a parameter as a
+// declaration of its own, and one that writes documentation inside a
+// body has nothing to write it in for a declaration with no body.
+func documenting(
+	t *testing.T,
+	e *treesitter.Engine,
+	files fstest.MapFS,
+	s Suite,
+	before engine.Result[sema.Symbol],
+	sym sema.Symbol,
+) {
+	t.Helper()
+
+	t.Run(fmt.Sprintf("%s %s", sym.Kind, sym.Name), func(t *testing.T) {
+		original := s.Files[string(sym.Span.Path)]
+		defer func() { files[string(sym.Span.Path)] = &fstest.MapFile{Data: []byte(original)} }()
+
+		planned, err := e.Plan(t.Context(), engine.Request{Scope: sym.Span.Path},
+			edit.DocumentSymbol,
+			edit.Target{Kind: edit.TargetSpan, Span: sym.Span},
+			edit.Args{edit.ArgDoc: written})
+		if errors.Is(err, engine.ErrRefuse) {
+			t.Skipf("this language will not document a %s here: %v", sym.Kind, err)
+		}
+		assert.NoError(t, err, "a declaration this parser found is one it can be pointed at")
+		assert.Length(t, planned.Items, 1, "documenting one declaration changes one file")
+
+		changed := applied(t, original, planned.Items[0])
+		files[string(sym.Span.Path)] = &fstest.MapFile{Data: []byte(changed)}
+
+		faults, err := e.Check(t.Context(),
+			map[source.Path][]byte{sym.Span.Path: []byte(changed)})
+		assert.NoError(t, err, "checking content this engine claims succeeds")
+		assert.Empty(t, faults.Items, "documentation is a comment, and a comment parses")
+
+		after := outline(t, e, ".")
+		assert.Equal(t, summarise(after.Items), summarise(before.Items),
+			"writing a comment declares nothing and takes nothing away")
+		assert.True(t, reads(after.Items, sym, written),
+			"a language states the forms its own documentation tool reads, so what "+
+				"this wrote in one of them is what it reads back")
+	})
+}
+
+// written is the documentation the round trip writes. Two paragraphs,
+// because a form that carries the first line and drops the rest is a
+// form that passes a one-line check.
+const written = "Documented by the suite.\n\nA second paragraph, to carry the form past its first line."
+
+// applied rewrites content the way the write path would.
+func applied(t *testing.T, content string, c edit.Change) string {
+	t.Helper()
+	assert.Equal(t, c.Kind, edit.ChangeEdit, "documenting rewrites a file that exists")
+
+	out, at := "", 0
+	for _, one := range c.Edits {
+		start, end := one.Span.Start.Offset, one.Span.End.Offset
+		assert.True(t, start >= at && end <= len(content) && start <= end,
+			"an edit names a range inside the file it was computed against")
+		out += content[at:start] + one.New
+		at = end
+	}
+	return out + content[at:]
+}
+
+// reads reports whether some declaration of this name and kind now
+// carries the documentation that was written.
+//
+// By name and kind rather than by span, because writing above a
+// declaration moves it, and by "some" because a fixture may declare one
+// name twice.
+func reads(found []sema.Symbol, sym sema.Symbol, doc string) bool {
+	for _, one := range found {
+		if one.Name == sym.Name && one.Kind == sym.Kind && one.Doc == doc {
+			return true
+		}
+	}
+	return false
+}
+
+// content is the fixture as the gate is handed it.
+func content(s Suite) map[source.Path][]byte {
+	out := map[source.Path][]byte{}
+	for path, text := range s.Files {
+		out[source.Path(path)] = []byte(text)
+	}
+	return out
+}
+
+// garbage is punctuation no grammar here can make a declaration of. It
+// was checked against all ten rather than assumed: a breaker one
+// language shrugs off would leave that language's gate untested.
+const garbage = "\n)]}%\n"
 
 // build returns the engine under test, failing the suite when a module's
 // grammar or declaration is incomplete.

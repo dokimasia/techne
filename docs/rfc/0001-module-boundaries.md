@@ -4,7 +4,7 @@ title: Module boundaries
 author: Roy Klopper
 status: Accepted
 created: 2026-09-01
-updated: 2026-09-01
+updated: 2026-09-02
 discussion: none
 supersedes: none
 superseded-by: none
@@ -15,15 +15,16 @@ produces-adr: none
 
 ## Summary
 
-Split techne into five Go modules in one repository: `core` holds
-everything that does not know a language, `lang` holds machinery more
+Split techne into seven Go modules in one repository: `core` holds the
+vocabulary and the ports, `service` holds the read and write paths,
+`tool` holds the surface an agent calls, `lang` holds machinery more
 than one language uses, `lang/<x>` holds one language each, `presenter`
 holds the MCP transport, and the root module holds the binary.
-Dependencies run one way: `lang` and `presenter` import `core`, a
-language module imports `lang` and `core`, `core` imports none of them,
-and only the root module imports a language module or a presenter.
-Adding or removing a language is then a directory plus two lines, and
-`core` compiles without a C toolchain.
+Dependencies run one way: everything imports `core`, `presenter` also
+imports `tool`, a language module imports `lang` and `core`, `core`
+imports none of them, and only the root module imports a language module
+or a presenter. Adding or removing a language is then a directory plus
+two lines, and `core` compiles without a C toolchain.
 
 ## Motivation
 
@@ -50,7 +51,14 @@ client; each grammar is its own module. Put them in one module and every
 consumer's `go.sum` lists all of them, whether or not that consumer ever
 asks about that language.
 
-**Why this belongs at the module layer.** All
+The fourth cost is not a dependency set at all. A module holding both a
+contract and the code that consumes it is one where the two grow into
+each other, because nothing stops them: a tool comes to hold a service,
+a service comes to hold a copy of another service's rules, and each of
+those reads as convenience at the time. What separates them is a
+boundary a linter can see.
+
+**Why the first three belong at the module layer.** All
 three costs are about a *dependency set*, and the module is the unit in
 which Go declares dependencies. Splitting into packages inside one module
 changes none of it: `go.sum` still lists every grammar, `go build ./...`
@@ -64,7 +72,9 @@ control what `go get` downloads or what the linker includes.
 
 | Directory | Module path | Holds | cgo |
 |---|---|---|---|
-| `techne-core/` | `go.dokimi.dev/techne/core` | Vocabulary, engine ports, catalog, read and write services, index, tool interface | no |
+| `techne-core/` | `go.dokimi.dev/techne/core` | Vocabulary, engine ports, catalog, engine selection | no |
+| `techne-service/` | `go.dokimi.dev/techne/service` | The read path, the write path, the workspace they run over | no |
+| `techne-tool/` | `go.dokimi.dev/techne/tool` | The surface an agent calls: tools, schemas, size budget, rendering | no |
 | `techne-lang/` | `go.dokimi.dev/techne/lang` | Language declaration, engines more than one language uses, conformance suite | in `lang/treesitter` only |
 | `techne-lang-go/` | `go.dokimi.dev/techne/lang/go` | Go: queries, a `go/types` engine, planners | via `lang/treesitter` |
 | `techne-lang-<x>/` | `go.dokimi.dev/techne/lang/<x>` | One language each | via `lang/treesitter` |
@@ -73,37 +83,49 @@ control what `go get` downloads or what the linker includes.
 
 ```mermaid
 flowchart BT
-    core["core<br/>vocabulary, ports, services"]
+    core["core<br/>vocabulary, ports"]
+    svc["service<br/>read path, write path"]
+    tool["tool<br/>agent-facing surface"]
     lang["lang<br/>declaration, shared engines"]
     langgo["lang/go"]
     langpy["lang/python"]
     pres["presenter<br/>mcp"]
     root["techne<br/>cmd + composition root"]
 
+    svc -->|"ports, vocabulary"| core
+    tool -->|"vocabulary"| core
     lang -->|"ports, vocabulary"| core
-    pres -->|"tool interface"| core
+    pres -->|"tool interface"| tool
     langgo -->|"Declaration, treesitter, lsp"| lang
     langpy -->|"Declaration, treesitter"| lang
     langgo -.->|"sema, edit, trust"| core
     langpy -.->|"sema, edit, trust"| core
     root -->|"Catalog"| core
+    root -->|"New"| svc
+    root -->|"Outline, Document"| tool
     root -->|"Serve"| pres
     root -->|"Register"| langgo
     root -->|"Register"| langpy
 ```
 
-### The five rules
+### The seven rules
 
 1. `core` imports nothing else in this repository.
-2. `lang` imports `core` and nothing else in this repository.
-3. `presenter` imports `core` and nothing else in this repository.
-4. `lang/<x>` imports `core` and `lang`, never another `lang/<x>`.
-5. Only the root module imports a `lang/<x>` or `presenter`.
+2. `service` imports `core` and nothing else in this repository.
+3. `tool` imports `core` and nothing else in this repository.
+4. `lang` imports `core` and nothing else in this repository.
+5. `presenter` imports `core` and `tool`, and nothing else.
+6. `lang/<x>` imports `core` and `lang`, never another `lang/<x>`.
+7. Only the root module imports a `lang/<x>` or `presenter`.
 
-Rule 1 keeps `core` free of cgo and of every language ecosystem. Rule 3
-keeps the MCP SDK out of `core`, so embedding the services does not pull
-a transport in with them. Rule 4 makes a language deletable: nothing but
-the root module names it. Rule 5 keeps the graph acyclic, and it is the
+Rule 1 keeps `core` free of cgo and of every language ecosystem, and it
+is what stops a port depending on the thing that calls it. Rules 2 and 3
+are the same rule twice: neither the services nor the surface may name
+the other, so a tool is given a service through an interface the tool
+itself declares, and can be tested without one. Rule 5 keeps the MCP SDK
+out of everything below it, so embedding the services does not pull a
+transport in with them. Rule 6 makes a language deletable: nothing but
+the root module names it. Rule 7 keeps the graph acyclic, and it is the
 reason the binary lives in its own module rather than in `core`.
 
 Enforce them with depguard, from the root `.golangci.yml`. Each module
@@ -119,32 +141,16 @@ linters:
         core:
           files: ["**/techne-core/**"]
           list-mode: strict
-          allow: [$gostd, go.dokimi.dev/techne/core]
-        lang:
-          files: ["**/techne-lang/**"]
+          allow:
+            - $gostd
+            - go.dokimi.dev/techne/core
+        service:
+          files: ["**/techne-service/**"]
           list-mode: strict
           allow:
             - $gostd
             - go.dokimi.dev/techne/core
-            - go.dokimi.dev/techne/lang$
-            - go.dokimi.dev/techne/lang/treesitter
-            - go.dokimi.dev/techne/lang/lsp
-            - go.dokimi.dev/techne/lang/command
-            - go.dokimi.dev/techne/lang/conformance
-        presenter:
-          files: ["**/techne-presenter/**"]
-          list-mode: strict
-          allow:
-            - $gostd
-            - go.dokimi.dev/techne/core
-            - go.dokimi.dev/techne/presenter
-        language-module:
-          files: ["**/techne-lang-*/**"]
-          list-mode: strict
-          allow:
-            - $gostd
-            - go.dokimi.dev/techne/core
-            - go.dokimi.dev/techne/lang
+            - go.dokimi.dev/techne/service
 ```
 
 The allow lists above name only what this repository declares. The live
@@ -175,26 +181,60 @@ tree gets built during development.
 techne-core/
   doc.go
   source/            Language, Path, Position, Span         where code lives
-  sema/              Symbol, ID, Kind, Relation, Unit, Ref   what it means
+  sema/              Symbol, ID, Kind, Relation, Unit        what it means
   trust/             Fidelity, Completeness, Status, Caveat, Provenance
-  edit/              Operation, Family, Target, Spec, Plan   how it changes
-  diag/              Diagnostic, Severity, Fix               what is wrong with it
-  engine/            Role, Cost, the port interfaces, Catalog, Capability
+  edit/              Operation, Target, Spec, Plan, Policy   how it changes
+  diag/              Diagnostic, Severity                    what is wrong with it
+  engine/            Role, Cost, the port interfaces, Catalog, Capability,
+                     and the one place an engine is selected and asked
+```
+
+The five vocabulary packages sit at the top level rather than under a
+group of their own, because the module name already says what they are.
+Every type in them is named in a port signature; a type nothing in
+`engine/` mentions does not belong here.
+
+Selecting an engine sits in `engine/` rather than with the services that
+do it. The rule deciding which language owns a path was written twice
+while it lived in the services, once in the read path and once in the
+write path, and a read and a write that disagree about who owns a file
+plan a change with one engine and gate it with another.
+
+### What service holds
+
+```
+techne-service/
+  doc.go
   query/             the read path, strongest engine first
   change/            the write pipeline
   gate/              verification
   workspace/
     index/           Store and Source ports, boot scan, staleness
-    files/           filesystem operations, produced as edit.Plan
+    files/           reading and writing one rooted directory
     project/         which workspace a path belongs to
-  tool/              the tool interface: name, summary, derived schemas
 ```
 
-The five vocabulary packages sit at the top level rather than under a
-group of their own, because the module name already says what they are.
 `workspace/` keeps its group: without it a reader meets `files` beside
 `query` and `change` and has to work out that one of the three is not a
 service.
+
+### What tool holds
+
+```
+techne-tool/
+  doc.go             package tool: Tool, Result, Registry, derived schemas
+  service.go         the interfaces a tool is given, one per question
+  answer.go          the shape every read answer takes, and its rendering
+  budget.go          the levels, and what is dropped to fit a ceiling
+  declaration.go     an item, its members, and the filters that narrow it
+  outline.go search.go capabilities.go document.go
+```
+
+A tool is given a service through an interface declared here rather than
+by importing one, so `techne-service` is absent from this module's
+dependency rule on purpose. A tool that could name a service would be
+tested against one, and what a tool does with an answer would stop being
+separable from how the answer was assembled.
 
 ### What presenter holds
 
@@ -338,6 +378,12 @@ techne-core/go.mod       module go.dokimi.dev/techne/core
                          go 1.27.0
                          (no techne requires)
 
+techne-service/go.mod    module go.dokimi.dev/techne/service
+                         require go.dokimi.dev/techne/core
+
+techne-tool/go.mod       module go.dokimi.dev/techne/tool
+                         require go.dokimi.dev/techne/core
+
 techne-lang/go.mod       module go.dokimi.dev/techne/lang
                          require go.dokimi.dev/techne/core
 
@@ -347,9 +393,12 @@ techne-lang-go/go.mod    module go.dokimi.dev/techne/lang/go
 
 techne-presenter/go.mod  module go.dokimi.dev/techne/presenter
                          require go.dokimi.dev/techne/core
+                         require go.dokimi.dev/techne/tool
 
 go.mod                   module go.dokimi.dev/techne
                          require go.dokimi.dev/techne/core
+                         require go.dokimi.dev/techne/service
+                         require go.dokimi.dev/techne/tool
                          require go.dokimi.dev/techne/presenter
                          require go.dokimi.dev/techne/lang/go
                          require go.dokimi.dev/techne/lang/python
@@ -431,21 +480,24 @@ names which languages ship. The module count is the same as this
 proposal; the difference is which module holds the services, and this
 placement makes them unembeddable.
 
-### C. A separate contract module for the vocabulary and ports
+### C. A contract module below core, leaving the services in core
 
-A sixth module holding the vocabulary and the ports, with `core` and
-every language module depending on it, so a port change does not force a
+A module holding the vocabulary and the ports, with `core` and every
+language module depending on it, so a port change does not force a
 version bump on the service layer.
 
 **Why not:** the coupling it removes is version coupling, and inside one
 repository with `go.work` there is none to remove: every module builds
-against the working tree. The build-time argument does not
-apply either, because Go compiles per package: a language module
-importing `core/engine` never compiles `core/query`. The extraction stays
-available and is mechanical, since the packages that would move already
-import nothing above them. It becomes worth doing when language modules
-move to their own repositories, or when someone outside this repository
-writes one.
+against the working tree. The build-time argument does not apply either,
+because Go compiles per package: a language module importing
+`core/engine` never compiles `core/sema`'s tests or anything else it does
+not name.
+
+The seam this cuts is the right one, and the direction is wrong. Moving
+the contract down renames what every module already imports; moving the
+consumers out instead leaves `core` holding what it always held. Doing
+it that way changed no language module's imports at all, which is what
+made it a mechanical change rather than a repository-wide one.
 
 ### D. A separate module for the tree-sitter engine
 
@@ -472,7 +524,7 @@ ports are not settled. One repository keeps that change to one commit.
 
 ## Drawbacks
 
-- Five `go.mod` files, and one more for every language added. Each
+- Seven `go.mod` files, and one more for every language added. Each
   needs `go mod tidy` and each pins its own dependency versions. The
   pre-merge gate already iterates the directories `go.work` lists, so
   this is a cost in review attention rather than in tooling.
@@ -495,6 +547,10 @@ ports are not settled. One repository keeps that change to one commit.
 - Splitting presenters out puts the transports one module away from the
   tool interface they consume, so a change to `tool.Tool` is a two-module
   edit even though only one thing changed.
+- Splitting the services and the surface out of `core` does the same
+  again: adding a tool that needs a new read role is an edit to `core`
+  for the port, to `service` for the path that drives it, and to `tool`
+  for what an agent sees. Three modules for one capability.
 - Directory names and module paths differ, so a reader cannot derive one
   from the other, and `go get` depends on the vanity host being correct.
   Until that host serves these paths, every module importing a sibling
@@ -518,9 +574,9 @@ are settled in RFC-0002. The agent-facing tools, their schemas and the
 size budget are settled in RFC-0003. The operation catalogue and the
 write pipeline are settled in RFC-0004.
 
-Extraction of a contract module, and the move to one repository per
-module, are both noted in Alternatives as things that become worth doing
-under conditions that do not hold yet. Neither is proposed.
+The move to one repository per module is noted in Alternatives as
+something that becomes worth doing under conditions that do not hold
+yet. It is not proposed.
 
 ## References
 

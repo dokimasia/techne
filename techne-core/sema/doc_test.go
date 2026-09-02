@@ -38,15 +38,20 @@ func TestDoc(t *testing.T) {
 	t.Run("directions", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("let a service turn any stored edge around", func(t *testing.T) {
+		t.Run("let an engine store one and answer for both", func(t *testing.T) {
 			t.Parallel()
-			stored := sema.Relation{Kind: sema.Calls, From: "go:./a#F:function", To: "go:./b#G:function"}
-			turned := sema.Relation{Kind: stored.Kind.Inverse(), From: stored.To, To: stored.From}
-
-			assert.Equal(t, turned.Kind.Inverse(), stored.Kind,
-				"turning an edge around and back describes the edge that was stored")
-			assert.Equal(t, turned.From, stored.To, "turning an edge around swaps its ends")
-			assert.Equal(t, turned.To, stored.From, "turning an edge around swaps its ends")
+			// An edge names the far end and takes the near end from the
+			// question, so answering the other direction is a matter of
+			// which end an engine returns rather than of rewriting what
+			// it stored.
+			called := sema.Relation{
+				Kind: sema.CalledBy,
+				To:   sema.Symbol{Name: "F", Kind: sema.KindFunction},
+			}
+			assert.Equal(t, called.Kind.Inverse(), sema.Calls,
+				"a caller asking who calls this is answered from the edges that call it")
+			assert.Equal(t, called.Kind.Inverse().Inverse(), called.Kind,
+				"turning a direction around twice is the direction that was asked for")
 		})
 	})
 }

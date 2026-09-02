@@ -9,7 +9,7 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
-	"go.dokimi.dev/techne/core/tool"
+	"go.dokimi.dev/techne/tool"
 )
 
 // covering builds one symbol over a byte range of one file, which is

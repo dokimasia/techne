@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/techne/core/tool"
+	"go.dokimi.dev/techne/tool"
 )
 
 // TestDoc covers the claim the package comment makes: this package holds
