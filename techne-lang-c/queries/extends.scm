@@ -10,8 +10,26 @@
 (enumerator name: (identifier) @name) @definition.enum_member
 (field_declaration declarator: (field_identifier) @name) @definition.field
 
+;; A function returning a pointer wraps its declarator in one
+;; pointer_declarator per star, so each depth is its own pattern. Two
+;; covers everything short of a pointer to a pointer to a pointer.
 (function_definition declarator: (function_declarator declarator: (identifier) @name)) @definition.function
+(function_definition
+  declarator: (pointer_declarator
+    declarator: (function_declarator declarator: (identifier) @name))) @definition.function
+(function_definition
+  declarator: (pointer_declarator
+    declarator: (pointer_declarator
+      declarator: (function_declarator declarator: (identifier) @name)))) @definition.function
+
 (declaration declarator: (function_declarator declarator: (identifier) @name)) @definition.function
+(declaration
+  declarator: (pointer_declarator
+    declarator: (function_declarator declarator: (identifier) @name))) @definition.function
+(declaration
+  declarator: (pointer_declarator
+    declarator: (pointer_declarator
+      declarator: (function_declarator declarator: (identifier) @name)))) @definition.function
 (type_definition declarator: (type_identifier) @name) @definition.type
 
 (declaration declarator: (identifier) @name) @definition.variable

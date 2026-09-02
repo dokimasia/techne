@@ -20,12 +20,10 @@ import (
 // changing it invalidates stored data.
 const Language source.Language = "c"
 
-// Upstream's query, unchanged, followed by this module's own patterns.
-// Keeping them in separate files makes upgrading a grammar a re-vendor
-// and a diff review rather than a hand merge.
-
-//go:embed queries/upstream.scm
-var upstreamQuery string
+// Upstream's query is vendored for diffing but not compiled in. It
+// captures a function by its declarator, so the span it reports stops
+// before the body and nothing written inside a function nests under it.
+// Everything upstream captures is covered below.
 
 //go:embed queries/extends.scm
 var extendsQuery string
@@ -56,7 +54,7 @@ func Declaration() lang.Declaration {
 func Grammar() treesitter.Grammar {
 	return treesitter.Grammar{
 		Language: ts.NewLanguage(binding.Language()),
-		Tags:     upstreamQuery + "\n" + extendsQuery,
+		Tags:     extendsQuery,
 	}
 }
 

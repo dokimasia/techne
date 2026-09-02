@@ -42,6 +42,12 @@ union Bits {
     int raw;
 };
 
+/// Returns a pointer to its argument.
+static int *
+borrow(int *a) {
+    return a;
+}
+
 /// Returns its argument.
 static int helper(int a) {
     int local = a;
@@ -60,6 +66,12 @@ static int helper(int a) {
 			{Name: "Store", Kind: sema.KindStruct, Doc: "Store holds a count."},
 			{Name: "Store", Kind: sema.KindType, Doc: "Store holds a count."},
 			{Name: "a", Kind: sema.KindParameter},
+			{Name: "a", Kind: sema.KindParameter},
+			{
+				Name: "borrow", Kind: sema.KindFunction,
+				Signature: "static int * borrow(int *a)",
+				Doc:       "Returns a pointer to its argument.",
+			},
 			{
 				Name: "helper", Kind: sema.KindFunction,
 				Doc:       "Returns its argument.",
