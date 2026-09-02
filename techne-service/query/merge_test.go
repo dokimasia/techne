@@ -220,4 +220,120 @@ func TestMerge(t *testing.T) {
 			assert.Equal(t, got.Provenance.Engine, "fx", "the language claiming the suffix answered")
 		})
 	})
+
+	t.Run("an engine that read nothing", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("does not lower what the others are worth", func(t *testing.T) {
+			t.Parallel()
+			// A directory with no Ruby in it tells you nothing about
+			// Ruby. Letting a parser that opened no file drag a type
+			// checker down reports resolved evidence as text-matched and
+			// withdraws a negative claim the caller had earned.
+			got, err := query.New(holding(t,
+				strong{}, absent{},
+			), everything{}).Outline(t.Context(), engine.Request{Scope: "src"})
+
+			assert.NoError(t, err, "outlining a directory succeeds")
+			assert.Equal(t, got.Provenance.Fidelity, trust.Resolved,
+				"the engine that read the files decides what the answer is worth")
+			assert.True(t, got.Provenance.SupportsNegativeClaim(),
+				"and the claim it earned survives being asked beside a language with no files")
+			assert.NotContains(t, got.Provenance.Engine, "absent",
+				"an engine with nothing to say is not named as having said it")
+		})
+
+		t.Run("is told apart from one that read and found nothing", func(t *testing.T) {
+			t.Parallel()
+			// An engine that searched forty files and matched none still
+			// cannot say there are no others, and its silence is what
+			// stops the merged answer claiming there are.
+			got, err := query.New(holding(t,
+				strong{}, quiet{},
+			), everything{}).Outline(t.Context(), engine.Request{Scope: "src"})
+
+			assert.NoError(t, err, "outlining a directory succeeds")
+			assert.Equal(t, got.Provenance.Fidelity, trust.Syntactic,
+				"a parser that read files is evidence, however little it found")
+			assert.False(t, got.Provenance.SupportsNegativeClaim(),
+				"so nothing here may claim there are no others")
+		})
+
+		t.Run("counts when every engine read nothing", func(t *testing.T) {
+			t.Parallel()
+			// A scope holding no source at all is one nothing examined.
+			// Reporting the strongest tier among engines that read
+			// nothing would claim evidence none of them gathered.
+			got, err := query.New(holding(t,
+				absent{}, quietAbsent{},
+			), everything{}).Outline(t.Context(), engine.Request{Scope: "src"})
+
+			assert.NoError(t, err, "outlining an empty directory succeeds")
+			assert.Equal(t, got.Provenance.Fidelity, trust.Syntactic,
+				"nothing was read, so the weakest engine that looked decides")
+		})
+	})
 }
+
+// everything routes a directory to every language it knows.
+type everything struct{}
+
+func (everything) LanguageOf(source.Path) (source.Language, bool) { return "", false }
+
+func (everything) Languages() []source.Language {
+	return []source.Language{"strong", "quiet", "absent", "quiet-absent"}
+}
+
+// holding builds a catalogue over the engines given.
+func holding(t *testing.T, engines ...engine.Engine) *engine.Catalog {
+	t.Helper()
+	c := engine.NewCatalog()
+	for _, e := range engines {
+		assert.NoError(t, c.Add(e), "a test engine registers")
+	}
+	return c
+}
+
+// strong read the files and bound the names in them.
+type strong struct{}
+
+func (strong) Name() string                        { return "strong" }
+func (strong) Language() source.Language           { return "strong" }
+func (strong) Fidelity(engine.Role) trust.Fidelity { return trust.Resolved }
+func (strong) Cost(engine.Role) engine.Cost        { return engine.CostAnalyze }
+
+func (strong) Outline(context.Context, engine.Request) (engine.Result[sema.Symbol], error) {
+	return engine.Result[sema.Symbol]{
+		Items:        []sema.Symbol{{Name: "Store", Kind: sema.KindType, Language: "strong"}},
+		Completeness: trust.ScopeTotal,
+	}, nil
+}
+
+// quiet read the files and found nothing in them.
+type quiet struct{}
+
+func (quiet) Name() string                        { return "quiet" }
+func (quiet) Language() source.Language           { return "quiet" }
+func (quiet) Fidelity(engine.Role) trust.Fidelity { return trust.Syntactic }
+func (quiet) Cost(engine.Role) engine.Cost        { return engine.CostParse }
+
+func (quiet) Outline(context.Context, engine.Request) (engine.Result[sema.Symbol], error) {
+	return engine.Result[sema.Symbol]{Completeness: trust.ScopeTotal}, nil
+}
+
+// absent found no file of its own to read.
+type absent struct{ quiet }
+
+func (absent) Name() string              { return "absent" }
+func (absent) Language() source.Language { return "absent" }
+
+func (absent) Outline(context.Context, engine.Request) (engine.Result[sema.Symbol], error) {
+	return engine.Result[sema.Symbol]{Completeness: trust.ScopeTotal, Skipped: true}, nil
+}
+
+// quietAbsent is a second one, so a scope nothing read has two engines
+// saying so.
+type quietAbsent struct{ absent }
+
+func (quietAbsent) Name() string              { return "quiet-absent" }
+func (quietAbsent) Language() source.Language { return "quiet-absent" }

@@ -26,49 +26,60 @@ import (
 // Coverage is total: the walk reads every file in scope. What the
 // answer is worth is still limited by the tier, and a caveat says so.
 func (e *Engine) Outline(ctx context.Context, req engine.Request) (engine.Result[sema.Symbol], error) {
-	out, err := e.symbols(ctx, req)
+	out, read, err := e.symbols(ctx, req)
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, err
 	}
-	return found(out), nil
+	return found(out, read), nil
 }
 
 // symbols reads every declaration in a scope. Outline returns them as
 // they are; Search filters them.
-func (e *Engine) symbols(ctx context.Context, req engine.Request) ([]sema.Symbol, error) {
+//
+// It reports how many files it read as well as what it found, because a
+// scope holding none of this language is a different answer from a scope
+// holding files that declare nothing.
+func (e *Engine) symbols(ctx context.Context, req engine.Request) ([]sema.Symbol, int, error) {
 	paths, err := lang.FilesIn(e.fsys, req.Scope, e.declared.Extensions)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
+	read := 0
 	var out []sema.Symbol
 	for _, p := range paths {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if !req.Tests && e.declared.IsTest(string(p)) {
 			continue
 		}
 		content, readErr := fs.ReadFile(e.fsys, string(p))
 		if readErr != nil {
-			return nil, fmt.Errorf("treesitter: read %s: %w", p, readErr)
+			return nil, 0, fmt.Errorf("treesitter: read %s: %w", p, readErr)
 		}
 		declared, outlineErr := e.declarations(p, content)
 		if outlineErr != nil {
-			return nil, outlineErr
+			return nil, 0, outlineErr
 		}
+		read++
 		out = append(out, declared...)
 	}
-	return out, nil
+	return out, read, nil
 }
 
 // found wraps symbols in the result every role at this tier returns.
 //
 // Coverage is total: the walk reads every file in scope. What the answer
 // is worth is limited by the tier, and the caveat says so.
-func found(items []sema.Symbol) engine.Result[sema.Symbol] {
+//
+// A walk that read nothing says so. A scope holding no file of this
+// language is not an answer about the language, and a service merging
+// several must not let it lower what the others are worth.
+func found(items []sema.Symbol, read int) engine.Result[sema.Symbol] {
 	return engine.Result[sema.Symbol]{
 		Items:        items,
+		Skipped:      read == 0,
 		Completeness: trust.ScopeTotal,
 		Caveats: []trust.Caveat{{
 			Code: trust.CaveatDynamic,

@@ -22,7 +22,7 @@ func (e *Engine) Outline(ctx context.Context, req engine.Request) (engine.Result
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, err
 	}
-	return e.found(held.symbols), nil
+	return e.found(held.symbols, len(held.lines)), nil
 }
 
 // Search reports the declarations in a scope matching a query.
@@ -65,7 +65,7 @@ func (e *Engine) Search(
 	if q.Limit > 0 && len(out) > q.Limit {
 		out = out[:q.Limit]
 	}
-	return e.found(out), nil
+	return e.found(out, len(held.lines)), nil
 }
 
 // workspace is one read of a scope: what it declares, and what refers to
@@ -200,8 +200,14 @@ func kindWord(k sema.Kind) string {
 
 // found wraps symbols in the result this engine returns, at the tier it
 // was registered to claim.
-func (e *Engine) found(items []sema.Symbol) engine.Result[sema.Symbol] {
-	out := engine.Result[sema.Symbol]{Items: items, Completeness: e.coverage}
+//
+// A scope holding no file of this language says so. It is not an answer
+// about the language, and a service merging several must not let it
+// lower what the others are worth.
+func (e *Engine) found(items []sema.Symbol, read int) engine.Result[sema.Symbol] {
+	out := engine.Result[sema.Symbol]{
+		Items: items, Completeness: e.coverage, Skipped: read == 0,
+	}
 	if e.fidelity >= trust.Resolved {
 		// Every resolved answer carries it, because no static analysis
 		// sees a name assembled at run time.

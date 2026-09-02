@@ -28,7 +28,7 @@ import (
 // breaks any remaining tie, so two identical requests answer
 // identically.
 func (e *Engine) Search(ctx context.Context, req engine.Request, q engine.Query) (engine.Result[sema.Symbol], error) {
-	all, err := e.symbols(ctx, req)
+	all, read, err := e.symbols(ctx, req)
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, err
 	}
@@ -60,7 +60,7 @@ func (e *Engine) Search(ctx context.Context, req engine.Request, q engine.Query)
 	if q.Limit > 0 && len(matched) > q.Limit {
 		matched = matched[:q.Limit]
 	}
-	return found(matched), nil
+	return found(matched, read), nil
 }
 
 // How a name matched, lowest first. noMatch sorts last and is filtered

@@ -25,6 +25,21 @@ type Result[T any] struct {
 	// Caveats are limits on this answer that a tier cannot express: what
 	// drifted, what was truncated, what no static analysis sees.
 	Caveats []trust.Caveat
+
+	// Skipped reports that the scope held no file this engine reads.
+	//
+	// It is a different answer from reading a scope and finding nothing
+	// in it. The second says there are none, and is worth exactly what
+	// the engine's tier is worth. The first says nothing at all: a
+	// directory with no Ruby in it tells you nothing about Ruby, and a
+	// parser saying so must not lower the evidence of a type checker
+	// that did read the files beside it.
+	//
+	// The zero value counts, so an engine that does not set this is
+	// merged as it always was. Setting it wrongly costs an answer its
+	// say; leaving it unset costs nothing but the precision this exists
+	// for.
+	Skipped bool
 }
 
 // Publish stamps a result with the evidence behind it.
@@ -52,8 +67,9 @@ func Publish[T any](r Result[T], e Engine, role Role, want trust.Fidelity) Answe
 	}
 
 	return Answer[T]{
-		Items:  r.Items,
-		Status: status,
+		Items:   r.Items,
+		Status:  status,
+		Skipped: r.Skipped,
 		Provenance: trust.Provenance{
 			Engine:       e.Name(),
 			Fidelity:     held,

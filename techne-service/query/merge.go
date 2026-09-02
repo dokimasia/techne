@@ -55,9 +55,24 @@ func merge[T any](parts []engine.Answer[T], want trust.Fidelity) engine.Answer[T
 		},
 	}
 
+	// Only the engines that read something decide what the answer is
+	// worth. A directory with no Ruby in it tells you nothing about
+	// Ruby, and letting a parser that read no file lower the tier of a
+	// type checker beside it reports resolved evidence as text-matched
+	// and withdraws a negative claim the caller had earned.
+	//
+	// Reading a scope and finding nothing is a different answer, and it
+	// counts: an engine that searched forty files and matched none still
+	// cannot say there are no others, and its silence is what stops the
+	// merged answer claiming there are.
+	read := spoke(parts)
+
 	names := make([]string, 0, len(parts))
 	for _, part := range parts {
 		merged.Items = append(merged.Items, part.Items...)
+		if part.Skipped && read {
+			continue
+		}
 		names = append(names, part.Provenance.Engine)
 		merged.Provenance.Caveats = keep(merged.Provenance.Caveats, part.Provenance.Caveats)
 		merged.Provenance.Fidelity = min(merged.Provenance.Fidelity, part.Provenance.Fidelity)
@@ -76,4 +91,18 @@ func merge[T any](parts []engine.Answer[T], want trust.Fidelity) engine.Answer[T
 		merged.Status = trust.OK
 	}
 	return merged
+}
+
+// spoke reports whether any engine read a file.
+//
+// Where none did, every answer is left in. A scope holding no source at
+// all is one nothing examined, and reporting the strongest tier among
+// engines that read nothing would claim evidence none of them gathered.
+func spoke[T any](parts []engine.Answer[T]) bool {
+	for _, part := range parts {
+		if !part.Skipped {
+			return true
+		}
+	}
+	return false
 }

@@ -4,7 +4,7 @@ title: The read contract
 author: Roy Klopper
 status: Accepted
 created: 2026-09-01
-updated: 2026-09-01
+updated: 2026-09-02
 discussion: none
 supersedes: none
 superseded-by: none
@@ -530,6 +530,31 @@ func (c *Catalog) Capabilities(ctx context.Context) []Capability
 
 "We cannot rename Python here" becomes a value a caller reads, rather
 than knowledge spread through dispatch code.
+
+### An engine that read nothing has no evidence to merge
+
+A scope holding more than one language is asked of all of them, and the
+merged answer takes the weakest tier and the least coverage any of them
+reported. That is right for an engine that read the files and found
+nothing: it searched forty of them and matched none, it still cannot say
+there are no others, and its silence is what stops the merged answer
+claiming there are.
+
+It is wrong for an engine that read nothing. A directory with no Ruby in
+it tells you nothing about Ruby, and a Ruby parser saying so must not
+lower what a type checker beside it is worth. Left in, the same two
+declarations from the same engine come back `resolved` when the file is
+named and `syntactic` when the directory holding it is, and the negative
+claim the caller had earned is withdrawn on the way.
+
+An engine therefore reports whether the scope held any file it reads,
+and a service leaves those answers out of the evidence. Where no engine
+read anything the answers all count, because a scope nothing examined is
+not one to report the strongest tier over.
+
+The signal counts by default: an engine that does not set it is merged
+as it always was. Setting it wrongly costs an answer its say, and
+forgetting it costs only the precision it exists for.
 
 ## Alternatives considered
 

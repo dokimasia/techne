@@ -24,6 +24,11 @@ type Answer[T any] struct {
 	Items      []T
 	Status     trust.Status
 	Provenance trust.Provenance
+
+	// Skipped reports that the scope held no file this engine reads, and
+	// is carried so a service merging several languages can leave it
+	// out. A caller reads the provenance and never this.
+	Skipped bool
 }
 
 // Request is the scope of one question.

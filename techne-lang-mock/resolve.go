@@ -36,7 +36,7 @@ func (e *Engine) Resolve(
 
 	named := naming(held, req.Scope, at)
 	if named == "" {
-		return e.found(nil), nil
+		return e.found(nil, len(held.lines)), nil
 	}
 
 	var out []sema.Symbol
@@ -45,7 +45,7 @@ func (e *Engine) Resolve(
 			out = append(out, one)
 		}
 	}
-	return e.found(out), nil
+	return e.found(out, len(held.lines)), nil
 }
 
 // Relate reports how a declaration connects to the rest.

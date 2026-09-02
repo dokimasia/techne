@@ -93,7 +93,7 @@ func (e *Engine) site(
 		return target.Span.Path, target.Span.Start.Offset, nil
 	}
 
-	declared, err := e.symbols(ctx, req)
+	declared, _, err := e.symbols(ctx, req)
 	if err != nil {
 		return "", 0, err
 	}
