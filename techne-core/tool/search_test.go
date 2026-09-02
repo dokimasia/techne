@@ -137,4 +137,56 @@ func TestSearch(t *testing.T) {
 			assert.False(t, documented, "a caller that asked for summary gets summary")
 		})
 	})
+
+	t.Run("Render", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("heads the answer with the question, not the place", func(t *testing.T) {
+			t.Parallel()
+			// A search is asked in words and an outline is asked about a
+			// place, so an answer read on its own says which it was.
+			got := tool.Matches{
+				Text:       "Digest",
+				Items:      []tool.Declaration{{Name: "Digest", Kind: sema.KindFunction, Line: 3}},
+				Provenance: tool.Provenance{Fidelity: "syntactic", Completeness: "total"},
+			}.Render()
+			assert.HasPrefix(t, got, `"Digest" — 1 match`,
+				"an answer carries the question that produced it")
+		})
+
+		t.Run("counts one match without reading as a fault", func(t *testing.T) {
+			t.Parallel()
+			one := tool.Matches{
+				Text:       "x",
+				Items:      []tool.Declaration{{Name: "x", Kind: sema.KindVariable, Line: 1}},
+				Provenance: tool.Provenance{Fidelity: "syntactic", Completeness: "total"},
+			}.Render()
+			assert.Contains(t, one, "1 match", "one of a thing is not one things")
+
+			none := tool.Matches{
+				Text:       "x",
+				Provenance: tool.Provenance{Fidelity: "syntactic", Completeness: "total"},
+			}.Render()
+			assert.Contains(t, none, "0 matches", "none of a thing is plural")
+			assert.Contains(t, none, "nothing found",
+				"a heading with no lines under it reads as a broken answer")
+		})
+	})
+
+	t.Run("scope", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("reads the workspace root as a directory, not a file", func(t *testing.T) {
+			t.Parallel()
+			// path.Ext reads "." as an extension of ".", so the root was
+			// taken for a file: answered at a file's level, and with its
+			// path left off every item because the scope named one.
+			assert.Equal(t, tool.DefaultDetail("."), tool.Names,
+				"the whole workspace is answered at the level a directory is")
+			assert.Equal(t, tool.DefaultDetail("a/b.go"), tool.Signatures,
+				"a file is answered at the level that replaces reading it")
+			assert.Equal(t, tool.DefaultDetail(".gitignore"), tool.Names,
+				"a name that is all suffix is not a file with an extension")
+		})
+	})
 }

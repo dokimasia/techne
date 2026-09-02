@@ -394,9 +394,14 @@ Structured:
 ```
 
 One exact match answers at `docs` rather than `names`, so the common
-case needs no second call. `matched` says whether the name or the
-documentation carried the result: a caller told why something ranked can
-judge whether to trust it.
+case needs no second call.
+
+`score` and `matched` are not carried. Both belong to the engine that
+ranked, and `Searcher` returns a declaration with no room for either, so
+deriving them in the tool would be a second ranking able to disagree
+with the one that fixed the order. Neither is worth that yet: the
+engines here match a name and nothing else, so `matched` would read
+`name` on every item. The order is the ranking, and nothing re-ranks it.
 
 ### `resolve` — what does this name denote
 

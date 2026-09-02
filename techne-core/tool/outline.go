@@ -86,13 +86,24 @@ func about(scope source.Path, asked string, a engine.Answer[sema.Symbol]) Scope 
 	if len(a.Items) > 0 {
 		held.Language = string(a.Items[0].Language)
 	}
-	if path.Ext(string(scope)) != "" {
+	if names(scope) {
 		held.Path = string(scope)
 		held.Unit = path.Dir(string(scope))
 		return held
 	}
 	held.Unit = string(scope)
 	return held
+}
+
+// names reports whether a scope names one file.
+//
+// The suffix is not enough on its own: path.Ext reads "." as an
+// extension of ".", so the workspace root would be taken for a file and
+// answered at the level a file is answered at.
+func names(scope source.Path) bool {
+	base := path.Base(string(scope))
+	suffix := path.Ext(base)
+	return suffix != "" && suffix != base
 }
 
 // level reads the detail a caller asked for, and falls back to what the

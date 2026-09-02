@@ -155,7 +155,7 @@ func (a Answer) heading() string {
 		unit = ""
 	}
 	held := strings.TrimSpace(a.Scope.Language + " " + unit)
-	return fmt.Sprintf("%s — %s, %d declarations", about, held, count(a.Items))
+	return fmt.Sprintf("%s — %s, %s", about, held, plural(count(a.Items), "declaration", "declarations"))
 }
 
 // evidence is the footer: what bound the answer, how much it covered,
@@ -171,6 +171,30 @@ func (a Answer) evidence() string {
 	}
 	b.WriteString(".\n")
 	return b.String()
+}
+
+// plural counts a thing without reading as a bug at one of it.
+//
+// Both forms are given rather than a suffix added, because English does
+// not make the plural of match by adding one.
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return fmt.Sprintf("%d %s", n, many)
+}
+
+// body writes the items and the evidence, which every answer shares
+// whatever it heads them with.
+func (a Answer) body(b *strings.Builder) {
+	if len(a.Items) == 0 {
+		b.WriteString("nothing found\n")
+	}
+	for _, item := range a.Items {
+		item.render(b, 0, a.Scope.Path == "")
+	}
+	b.WriteString("\n")
+	b.WriteString(a.evidence())
 }
 
 // render writes one declaration and everything it holds.

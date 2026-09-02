@@ -5,6 +5,8 @@ package tool
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/query"
@@ -35,10 +37,29 @@ type SearchInput struct {
 type Matches struct {
 	Answer
 
+	// Text is what was searched for, so an answer read on its own says
+	// which question produced it.
+	Text string `json:"text"`
+
 	// Ambiguous reports that more than one declaration matched. The
 	// candidates are ranked and each carries enough to choose between
 	// them, so a caller picks rather than asking again.
 	Ambiguous bool `json:"ambiguous,omitempty"`
+}
+
+// Render heads the answer with the question rather than with the scope.
+//
+// A search is asked in words and an outline is asked about a place, so
+// the two do not read the same way even where they carry the same items.
+func (m Matches) Render() string {
+	if m.Error != nil {
+		return m.Answer.Render()
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%q — %s\n\n", m.Text, plural(count(m.Items), "match", "matches"))
+	m.body(&b)
+	return b.String()
 }
 
 // Search builds the tool that finds a declaration by name.
@@ -77,7 +98,9 @@ func Search(s *query.Service) (Tool, error) {
 
 			fitted := Fit(published(answered, about(scope, in.Language, answered), detail, in.Include),
 				Budget{MaxTokens: in.MaxTokens})
-			return Matches{Answer: fitted, Ambiguous: len(fitted.Items) > 1}, nil
+			return Matches{
+				Answer: fitted, Text: in.Text, Ambiguous: len(fitted.Items) > 1,
+			}, nil
 		})
 }
 

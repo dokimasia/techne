@@ -5,6 +5,8 @@ package tool
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
@@ -40,6 +42,47 @@ type Capability struct {
 	// engine that cannot run is reported rather than omitted.
 	Available   bool   `json:"available"`
 	Unavailable string `json:"unavailable,omitempty"`
+}
+
+// Render writes the report for a reader rather than a parser.
+//
+// One line per engine rather than per role, because an engine serving
+// four roles is one fact about the system and four lines of it read as
+// four.
+func (o CapabilitiesOutput) Render() string {
+	type held struct {
+		language, engine, fidelity, cost, unavailable string
+		roles                                         []string
+	}
+	var order []string
+	by := map[string]*held{}
+	for _, c := range o.Items {
+		key := c.Language + "\x00" + c.Engine
+		if _, seen := by[key]; !seen {
+			by[key] = &held{
+				language: c.Language, engine: c.Engine, fidelity: c.Fidelity,
+				cost: c.Cost, unavailable: c.Unavailable,
+			}
+			order = append(order, key)
+		}
+		by[key].roles = append(by[key].roles, c.Role)
+	}
+
+	var b strings.Builder
+	if len(order) == 0 {
+		return "nothing is served\n"
+	}
+	for _, key := range order {
+		one := by[key]
+		fmt.Fprintf(&b, "%-12s %-22s %-10s %-8s %s\n",
+			one.language, one.engine, one.fidelity, one.cost, strings.Join(one.roles, " "))
+		if one.unavailable != "" {
+			// What would make it available, so a caller can act rather
+			// than only route around.
+			fmt.Fprintf(&b, "%-12s %s\n", "", one.unavailable)
+		}
+	}
+	return b.String()
 }
 
 // Capabilities builds the tool that reports what the system can answer.

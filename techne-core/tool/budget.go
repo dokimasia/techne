@@ -6,7 +6,6 @@ package tool
 import (
 	"encoding/json"
 	"fmt"
-	"path"
 	"sort"
 	"strings"
 
@@ -50,7 +49,7 @@ func Levels() []Detail { return []Detail{Names, Signatures, Docs, Source} }
 // asked about to find the right file, which names answer for a fraction
 // of the cost.
 func DefaultDetail(scope source.Path) Detail {
-	if path.Ext(string(scope)) == "" {
+	if !names(scope) {
 		return Names
 	}
 	return Signatures

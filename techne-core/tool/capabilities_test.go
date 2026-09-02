@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -115,6 +116,50 @@ func TestCapabilities(t *testing.T) {
 			first := reported(t, built, `{}`)
 			second := reported(t, built, `{}`)
 			assert.Equal(t, first, second, "a caller caching the report sees only real changes")
+		})
+	})
+
+	t.Run("Render", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("writes one line per engine, not per role", func(t *testing.T) {
+			t.Parallel()
+			// An engine serving four roles is one fact about the system,
+			// and four lines of it read as four systems.
+			got := tool.CapabilitiesOutput{Items: []tool.Capability{
+				{
+					Language: "go", Role: "outline", Engine: "gopls",
+					Fidelity: "resolved", Cost: "session", Available: true,
+				},
+				{
+					Language: "go", Role: "search", Engine: "gopls",
+					Fidelity: "resolved", Cost: "session", Available: true,
+				},
+			}}.Render()
+
+			assert.Equal(t, strings.Count(got, "gopls"), 1, "one engine reads as one line")
+			assert.Contains(t, got, "outline search", "the roles it serves are named on it")
+		})
+
+		t.Run("says what would make an engine available", func(t *testing.T) {
+			t.Parallel()
+			// A caller told only that something cannot run can route
+			// around it. One told why can fix it.
+			got := tool.CapabilitiesOutput{Items: []tool.Capability{
+				{
+					Language: "csharp", Role: "outline", Engine: "lsp/csharp",
+					Fidelity: "resolved", Cost: "session",
+					Available: false, Unavailable: "omnisharp is not on PATH",
+				},
+			}}.Render()
+			assert.Contains(t, got, "omnisharp is not on PATH",
+				"a missing server is a different problem from a missing capability")
+		})
+
+		t.Run("says so when nothing is served", func(t *testing.T) {
+			t.Parallel()
+			assert.Contains(t, tool.CapabilitiesOutput{}.Render(), "nothing is served",
+				"an empty report reads as a broken one unless it says otherwise")
 		})
 	})
 }
