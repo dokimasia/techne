@@ -102,3 +102,52 @@ func TestFilesIn(t *testing.T) {
 		})
 	})
 }
+
+func TestClaims(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Claims", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("answers on the extension and nothing else", func(t *testing.T) {
+			t.Parallel()
+			// It needs no filesystem, which is what lets an engine decide
+			// whether a scope is one of its files before it reads
+			// anything.
+			assert.True(t, lang.Claims("nowhere/at/all/a.fx", []string{".fx"}),
+				"a path that does not exist is still claimed by its extension")
+		})
+
+		t.Run("leaves a path with no extension to nobody", func(t *testing.T) {
+			t.Parallel()
+			// A directory carries none, and a language claiming one would
+			// claim every directory.
+			assert.False(t, lang.Claims("pkg", []string{".fx"}), "a directory names no language")
+			assert.False(t, lang.Claims("Makefile", []string{".fx"}), "nor does a bare name")
+		})
+
+		t.Run("leaves a file of another language alone", func(t *testing.T) {
+			t.Parallel()
+			assert.False(t, lang.Claims("b.txt", []string{".fx"}),
+				"an extension nobody declared is claimed by nobody")
+		})
+
+		t.Run("is the rule FilesIn keeps a file by", func(t *testing.T) {
+			t.Parallel()
+			// Two copies of the rule are two answers to which language
+			// owns a path, and a read and a write that disagree plan a
+			// change with one engine and gate it with another.
+			held := fstest.MapFS{
+				"a.fx":     {Data: []byte("a")},
+				"b.txt":    {Data: []byte("b")},
+				"Makefile": {Data: []byte("m")},
+			}
+			for name := range held {
+				got, err := lang.FilesIn(held, source.Path(name), []string{".fx"})
+				assert.NoError(t, err, "each scope exists")
+				assert.Equal(t, len(got) == 1, lang.Claims(name, []string{".fx"}),
+					"a scope naming a file yields it exactly when this claims it")
+			}
+		})
+	})
+}

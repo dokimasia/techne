@@ -38,7 +38,7 @@ func FilesIn(fsys fs.FS, scope source.Path, extensions []string) ([]source.Path,
 	}
 
 	if !info.IsDir() {
-		if !claims(name, extensions) {
+		if !Claims(name, extensions) {
 			return nil, nil
 		}
 		return []source.Path{source.Path(name)}, nil
@@ -49,7 +49,7 @@ func FilesIn(fsys fs.FS, scope source.Path, extensions []string) ([]source.Path,
 		switch {
 		case err != nil:
 			return err
-		case d.IsDir(), !claims(p, extensions):
+		case d.IsDir(), !Claims(p, extensions):
 			return nil
 		}
 		out = append(out, source.Path(p))
@@ -62,8 +62,16 @@ func FilesIn(fsys fs.FS, scope source.Path, extensions []string) ([]source.Path,
 	return out, nil
 }
 
-// claims reports whether one of the extensions covers a path.
-func claims(p string, extensions []string) bool {
+// Claims reports whether one of the extensions covers a path.
+//
+// The rule is the file's extension and nothing else, so it needs no
+// filesystem and answers about a path that does not exist. An engine
+// that must decide whether a scope is one of its files before it reads
+// anything asks this rather than carrying its own copy: two copies of
+// the rule are two answers to "which language owns this path", and a
+// read and a write that disagree plan a change with one engine and gate
+// it with another.
+func Claims(p string, extensions []string) bool {
 	suffix := path.Ext(p)
 	return suffix != "" && slices.Contains(extensions, suffix)
 }

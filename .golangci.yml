@@ -136,6 +136,13 @@ linters:
             # a grammar belongs to one language, so it lives in that
             # language's module.
             - github.com/tree-sitter/go-tree-sitter
+            # The language server protocol. Taken as a dependency for
+            # the union types: a definition is a location, a list of
+            # locations or a list of links, and decoding the wrong arm
+            # by hand reports nothing found rather than failing.
+            - go.lsp.dev/protocol
+            - go.lsp.dev/jsonrpc2
+            - go.lsp.dev/uri
 
         presenter:
           files: ["**/techne-presenter/**"]
