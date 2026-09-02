@@ -42,8 +42,20 @@ type Written struct {
 }
 
 // Changed is one file a change touches.
+//
+// Every file it touches, not only the ones whose text it rewrites. A
+// move rewrites nothing and still changes two paths, and an answer that
+// said it had applied while naming no file would leave a caller unable
+// to say what happened.
 type Changed struct {
-	Path    string    `json:"path"`
+	Path string `json:"path"`
+	// To is where the file goes, on a change that moves it.
+	To string `json:"to,omitempty"`
+	// Gone reports a file the change takes away.
+	Gone bool `json:"gone,omitempty"`
+	// Made reports a file the change creates.
+	Made bool `json:"made,omitempty"`
+	// Sites is how many ranges within the file are rewritten.
 	Sites   int       `json:"sites"`
 	Changes []Rewrite `json:"changes,omitempty"`
 }
@@ -92,6 +104,14 @@ func (w Written) Render() string {
 	}
 
 	for _, item := range w.Items {
+		switch {
+		case item.To != "":
+			fmt.Fprintf(&b, "\n%s → %s\n", item.Path, item.To)
+		case item.Gone:
+			fmt.Fprintf(&b, "\n%s removed\n", item.Path)
+		case item.Made:
+			fmt.Fprintf(&b, "\n%s made\n", item.Path)
+		}
 		for _, one := range item.Changes {
 			fmt.Fprintf(&b, "\n%s:%d\n", item.Path, one.Line)
 			for _, line := range diffed(one) {
@@ -192,7 +212,7 @@ func reported(op edit.Operation, scope Scope, target string, done edit.Outcome) 
 		Operation:  string(op),
 		Target:     target,
 		Applied:    done.Applied,
-		Items:      touched(done.Rewrites),
+		Items:      touched(done.Changes, done.Rewrites),
 		Handle:     done.Handle,
 		Provenance: provenance(done.Provenance),
 	}
@@ -217,17 +237,40 @@ func reported(op edit.Operation, scope Scope, target string, done edit.Outcome) 
 	return out
 }
 
-// touched groups the ranges a change rewrites by the file they are in.
-func touched(rewrites []edit.Rewrite) []Changed {
+// touched names every file a change touches, and puts the ranges it
+// rewrites under the one they are in.
+//
+// The changes come first, so a file that is moved, made or taken away is
+// named even though no text in it is rewritten. The rewrites then fill
+// in what a reader compares.
+func touched(changes []edit.Change, rewrites []edit.Rewrite) []Changed {
 	out := []Changed{}
 	at := map[string]int{}
-	for _, r := range rewrites {
-		i, held := at[string(r.Path)]
-		if !held {
+
+	held := func(p string) int {
+		i, seen := at[p]
+		if !seen {
 			i = len(out)
-			at[string(r.Path)] = i
-			out = append(out, Changed{Path: string(r.Path)})
+			at[p] = i
+			out = append(out, Changed{Path: p})
 		}
+		return i
+	}
+
+	for _, c := range changes {
+		i := held(string(c.Path))
+		switch c.Kind {
+		case edit.ChangeMove:
+			out[i].To = string(c.To)
+		case edit.ChangeDelete:
+			out[i].Gone = true
+		case edit.ChangeCreate:
+			out[i].Made = true
+		case edit.ChangeEdit, edit.ChangeUnset:
+		}
+	}
+	for _, r := range rewrites {
+		i := held(string(r.Path))
 		out[i].Sites++
 		out[i].Changes = append(out[i].Changes, Rewrite{Line: r.Line, Was: r.Was, Now: r.Now})
 	}
