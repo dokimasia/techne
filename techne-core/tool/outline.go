@@ -22,12 +22,18 @@ import (
 // Language overrides what the path would say, so a caller that knows
 // need not wait for a suffix to be recognised. Detail selects what each
 // item carries and MaxTokens caps the answer; both take a default when
-// left empty. Preferred is the weakest evidence worth having, and an
-// engine below it still answers with a degraded status.
+// left empty. Names, Kind and Prefix narrow the answer to what the
+// caller meant, which is what makes the levels carrying documentation
+// and source text worth asking for. Preferred is the weakest evidence
+// worth having, and an engine below it still answers.
 type OutlineInput struct {
 	Scope     string   `json:"scope"                        jsonschema:"file or directory, workspace-relative"`
 	Language  string   `json:"language,omitempty"           jsonschema:"language to assume"`
 	Detail    string   `json:"detail,omitempty"             jsonschema:"names|signatures|docs|source"`
+	Names     []string `json:"names,omitempty"              jsonschema:"limit the answer to these declarations"`
+	Kind      string   `json:"kind,omitempty"               jsonschema:"limit the answer to one kind"`
+	Prefix    string   `json:"prefix,omitempty"             jsonschema:"limit to names starting with this"`
+	Private   bool     `json:"private,omitempty"            jsonschema:"include declarations not visible outside their unit"`
 	Include   []string `json:"include,omitempty"            jsonschema:"import|parameter|local|all"`
 	Tests     bool     `json:"tests,omitempty"              jsonschema:"include the files this language calls tests"`
 	MaxTokens int      `json:"max_tokens,omitempty"         jsonschema:"estimated answer ceiling"`
@@ -54,14 +60,21 @@ func Outline(s *query.Service) (Tool, error) {
 			}
 
 			detail := level(in.Detail, scope)
-			return Fit(published(answered, about(scope, in.Language, answered), detail, in.Include),
-				Budget{MaxTokens: in.MaxTokens}), nil
+			out := published(answered, about(scope, in.Language, answered), detail, in.Include)
+			out.Items = Narrow{
+				Names: in.Names, Kind: kindOf(in.Kind),
+				Prefix: in.Prefix, Private: in.Private,
+			}.Apply(out.Items)
+			return Fit(out, Budget{MaxTokens: in.MaxTokens}), nil
 		})
 }
 
-const outlineDescription = "PREFER OVER read for finding what a file or directory declares. " +
-	"Returns the declarations alone rather than the whole file, and states the evidence behind " +
-	"them: an empty answer says whether it means there are none or only that none were found."
+const outlineDescription = "PREFER OVER read for finding what a file or directory declares: " +
+	"about a quarter of the tokens, measured on real files in Go, Python, Java and TypeScript. " +
+	"Returns declarations rather than lines, and states the evidence behind them, so an empty " +
+	"answer says whether it means there are none or only that none were found. " +
+	"The docs and source levels return whole comments and whole bodies, so over a whole file " +
+	"they cost more than reading it: narrow them with names, kind or prefix."
 
 // about names what an answer is about, so no item has to.
 //

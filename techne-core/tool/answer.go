@@ -150,7 +150,11 @@ func (a Answer) heading() string {
 	if about == "" {
 		about = a.Scope.Unit
 	}
-	held := strings.TrimSpace(a.Scope.Language + " " + a.Scope.Unit)
+	unit := a.Scope.Unit
+	if unit == "." {
+		unit = ""
+	}
+	held := strings.TrimSpace(a.Scope.Language + " " + unit)
 	return fmt.Sprintf("%s — %s, %d declarations", about, held, count(a.Items))
 }
 
@@ -170,30 +174,42 @@ func (a Answer) evidence() string {
 }
 
 // render writes one declaration and everything it holds.
+//
+// A level that was asked for is written out. Truncating the
+// documentation to its first line or leaving the source text out would
+// make the half a model reads carry less than the half it does not,
+// which is the failure the two renderings exist to avoid.
 func (d Declaration) render(b *strings.Builder, depth int, withPath bool) {
-	said := d.Signature
-	if said == "" {
-		said = d.Kind.String() + " " + d.Name
-	}
 	indent := strings.Repeat("  ", depth)
+
+	// The source text opens with the declaration's own signature, so
+	// writing the signature above it would say it twice.
+	head, rest := d.Signature, []string(nil)
+	if d.Snippet != "" {
+		lines := strings.Split(d.Snippet, "\n")
+		head, rest = lines[0], lines[1:]
+	}
+	if head == "" {
+		head = d.Kind.String() + " " + d.Name
+	}
+
 	if withPath && d.Path != "" {
-		fmt.Fprintf(b, "%s%s:%d  %s\n", indent, d.Path, d.Line, said)
+		fmt.Fprintf(b, "%s%s:%d  %s\n", indent, d.Path, d.Line, head)
 	} else {
-		fmt.Fprintf(b, "%s%5d  %s\n", indent, d.Line, said)
+		fmt.Fprintf(b, "%s%5d  %s\n", indent, d.Line, head)
+	}
+	for _, line := range rest {
+		fmt.Fprintf(b, "%s%7s%s\n", indent, "", line)
 	}
 	if d.Doc != "" {
-		fmt.Fprintf(b, "%s       %s\n", strings.Repeat("  ", depth), firstLine(d.Doc))
+		for line := range strings.SplitSeq(d.Doc, "\n") {
+			fmt.Fprintf(b, "%s%7s%s\n", indent, "", line)
+		}
 	}
+
 	for _, member := range d.Members {
 		member.render(b, depth+1, withPath)
 	}
-}
-
-// firstLine is what a reader scanning an outline takes in. The rest of a
-// documentation comment is a read away.
-func firstLine(doc string) string {
-	first, _, _ := strings.Cut(doc, "\n")
-	return first
 }
 
 // count reports how many declarations an answer holds, members included.

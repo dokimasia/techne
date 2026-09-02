@@ -66,13 +66,27 @@ func TestAnswer(t *testing.T) {
 				"what it holds is written under it rather than pointed at from it")
 		})
 
-		t.Run("carries one line of documentation, not the whole comment", func(t *testing.T) {
+		t.Run("carries the whole documentation a level asked for", func(t *testing.T) {
 			t.Parallel()
+			// The half a model reads must not carry less than the half
+			// it does not. A caller that asked for documentation and got
+			// one line of it would have to fetch the rest from the
+			// structured half it was not reading.
 			got := answered().Render()
 			assert.Contains(t, got, "Symbol is one declaration.",
-				"the first line is what a reader scanning an outline takes in")
-			assert.NotContains(t, got, "The second line is a read away.",
-				"the rest of a comment is one read away and costs a line here")
+				"a level that was asked for is written out")
+			assert.Contains(t, got, "The second line is a read away.",
+				"a level that was asked for is written out")
+		})
+
+		t.Run("writes the source text once, not beside its own signature", func(t *testing.T) {
+			t.Parallel()
+			a := answered()
+			a.Items[0].Snippet = "type Symbol struct {\n\tName string\n}"
+			got := a.Render()
+			assert.Contains(t, got, "\tName string", "the source level carries what a declaration does")
+			assert.Equal(t, strings.Count(got, "type Symbol struct"), 1,
+				"the source text opens with the signature, so writing both says it twice")
 		})
 
 		t.Run("ends with the evidence behind it", func(t *testing.T) {

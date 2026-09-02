@@ -4,7 +4,9 @@
 package tool
 
 import (
+	"slices"
 	"sort"
+	"strings"
 
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
@@ -39,6 +41,62 @@ func asks(named []string, what Include) bool {
 		}
 	}
 	return false
+}
+
+// Narrow limits an answer to the declarations a caller named.
+//
+// It is what makes the levels that carry documentation and source text
+// worth calling. Over a whole file those levels cost more than reading
+// the file, because the source text of every declaration is the file;
+// over a handful of named declarations they cost a fraction of it.
+type Narrow struct {
+	// Names limits the answer to these declarations. A qualified name
+	// matches the declaration it names, whatever holds it.
+	Names []string
+	// Kind limits it to one kind. The zero value matches any.
+	Kind sema.Kind
+	// Prefix limits it to names starting with this.
+	Prefix string
+	// Private includes declarations not visible outside their unit.
+	Private bool
+}
+
+// wanted reports whether one declaration is what the caller asked for.
+func (n Narrow) wanted(d Declaration) bool {
+	if !n.Private && d.Visibility == sema.Unexported {
+		return false
+	}
+	if n.Kind != sema.KindUnknown && d.Kind != n.Kind {
+		return false
+	}
+	if n.Prefix != "" && !strings.HasPrefix(d.Name, n.Prefix) {
+		return false
+	}
+	if len(n.Names) == 0 {
+		return true
+	}
+	return slices.Contains(n.Names, d.Name)
+}
+
+// Apply keeps what a caller asked for, and what it holds.
+//
+// A declaration that matches is kept whole, because asking for a struct
+// means asking for its fields. One that does not match survives only to
+// carry a match below it, and then holds nothing else: asking for every
+// method is not asking for the fields beside them.
+func (n Narrow) Apply(items []Declaration) []Declaration {
+	out := []Declaration{}
+	for _, item := range items {
+		if n.wanted(item) {
+			out = append(out, item)
+			continue
+		}
+		if held := n.Apply(item.Members); len(held) > 0 {
+			item.Members = held
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // Members are the declarations one declaration holds.
@@ -147,6 +205,12 @@ func Declared(items []sema.Symbol, d Detail, include []string) []Declaration {
 	var build func(i int) Declaration
 	build = func(i int) Declaration {
 		out := project(items[i], d)
+		// A declaration's own source text already holds everything
+		// inside it. Carrying the members beside it would send a
+		// struct's fields twice, once as text and once as items.
+		if out.Snippet != "" {
+			return out
+		}
 		for _, child := range children[i] {
 			out.Members = append(out.Members, build(child))
 		}
@@ -179,7 +243,7 @@ func kept(items []sema.Symbol, held []int, include []string) []bool {
 			keep[i] = asks(include, IncludeParameter)
 		case s.Kind == sema.KindLabel:
 			keep[i] = asks(include, IncludeAll)
-		case inBody(items, held, i):
+		case insideValue(items, held, i):
 			keep[i] = asks(include, IncludeLocal)
 		default:
 			keep[i] = true
@@ -188,15 +252,20 @@ func kept(items []sema.Symbol, held []int, include []string) []bool {
 	return keep
 }
 
-// inBody reports whether a declaration is written inside a callable.
+// insideValue reports whether a declaration is written inside a
+// callable's body or inside a value.
 //
 // Nothing in the vocabulary separates a package-level binding from one
 // local to a function: both are variables. Where it sits is what
-// separates them.
-func inBody(items []sema.Symbol, held []int, of int) bool {
+// separates them, and the same holds one level out. A key in an object
+// literal is a binding the language makes, and a caller asking what a
+// file offers is not asking for the fields of a value passed to a
+// constructor.
+func insideValue(items []sema.Symbol, held []int, of int) bool {
 	for at, steps := held[of], 0; at >= 0 && steps <= len(items); at, steps = held[at], steps+1 {
 		switch items[at].Kind {
-		case sema.KindFunction, sema.KindMethod, sema.KindConstructor, sema.KindProperty:
+		case sema.KindFunction, sema.KindMethod, sema.KindConstructor, sema.KindProperty,
+			sema.KindField, sema.KindVariable, sema.KindConstant:
 			return true
 		}
 	}

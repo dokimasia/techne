@@ -174,7 +174,9 @@ every answer that ran, so the common path pays nothing for it.
 
 - **`members`** replaces the `parent` pointer. A file's declarations are
   a tree and the answer is one, which removes a field from every nested
-  item and lets a reader see the shape rather than reconstruct it.
+  item and lets a reader see the shape rather than reconstruct it. A
+  declaration carrying its source text carries no members, because its
+  text already holds them and sending both says a struct's fields twice.
 - **Depth is the filter a kind cannot be.** A package-level `var` and a
   `local := 1` inside a function are both `variable`; what separates
   them is that one is nested in a callable. An outline returns depth 0
@@ -210,6 +212,27 @@ means to work in it, and `signatures` is where the answer replaces
 reading it. A directory is asked about to find the right file, and
 `names` answers that for a fraction of the cost. One default for both
 would be wrong for one of them.
+
+Measured over one file of 3,924 bytes, against reading it:
+
+| Level | Reading half | Structured half | Against the file |
+|---|---|---|---|
+| `names` | 707 | 2,337 | 0.18× |
+| `signatures` | 1,319 | 4,128 | 0.34× |
+| `docs` | 4,208 | 6,784 | 1.07× |
+| `source`, whole file | 4,476 | 5,620 | 1.14× |
+| `source`, one declaration | 2,378 | 2,632 | 0.61× |
+
+The top two are where an outline replaces reading. The bottom two are
+not, over a whole file, and cannot be: the source text of every
+declaration is the file, plus the structure around it. They are levels
+for a narrowed scope, which is what `names`, `kind` and `prefix` are
+for, and the last row is what they cost when used that way.
+
+The reading half is the smaller one at every level. The margin narrows
+as the levels rise, because documentation and source text are prose and
+code, which a structured form inflates only by escaping and by naming
+the field each sits in.
 
 Each level contains the ones above it, and a level never emits a field
 it does not carry. Today `summary` writes a span whose offsets, line and
