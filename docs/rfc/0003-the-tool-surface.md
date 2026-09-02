@@ -4,7 +4,7 @@ title: The tool surface
 author: Roy Klopper
 status: Accepted
 created: 2026-09-01
-updated: 2026-09-01
+updated: 2026-09-02
 discussion: none
 supersedes: none
 superseded-by: none
@@ -56,6 +56,9 @@ alone is ambiguous.
 | `capabilities` | what can you answer, per language, and how well |
 | `rename.symbol` | rename this declaration and every reference |
 | `move.file` | move this file and fix what referred to it |
+| `document.symbol` | write documentation onto this declaration |
+| `extract.function` | lift these lines into a function |
+| `apply.change` | apply the change a preview computed |
 
 `outline` needs no subject. `rename` does, because renaming a symbol and
 renaming a file are different operations with different preconditions.
@@ -226,10 +229,17 @@ An operation nothing implements anywhere is not a tool. It appears in
 `capabilities` with `available: false`, so an agent is told the operation
 exists and cannot run rather than that no such operation exists.
 
-That rule keeps the list proportional to what works. Four tools serve ten
-languages: `outline`, `search`, `capabilities` and `document`. The rest
-of the catalogue is declared and unimplemented, which `capabilities`
-reports rather than hides.
+That rule keeps the list proportional to what works. Eleven tools are
+registered. Four of them answer for the ten languages that ship —
+`outline`, `search`, `capabilities` and `document.symbol` — and the rest
+answer for any language whose engine reaches the tier they need, which
+today is none of them. A caller is told so rather than left to infer it:
+`capabilities` reports what each language and role can reach, and a tool
+asked for more returns `unsupported` with the reason.
+
+`apply.change` is the one tool that is not an operation. It applies what
+another operation planned, so it has no row in the catalogue and no
+planner; what it needs is the handle a preview returned.
 
 `verify` runs a language's gate without changing anything, so an agent
 can check its own work before asking for a change. It is the same

@@ -2,9 +2,9 @@
 rfc: 0006
 title: What a tool returns
 author: Roy Klopper
-status: Draft
+status: Accepted
 created: 2026-09-01
-updated: 2026-09-01
+updated: 2026-09-02
 discussion: none
 supersedes: none
 superseded-by: none

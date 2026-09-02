@@ -11,7 +11,7 @@ proposals that are withdrawn.
 | [0003](0003-the-tool-surface.md) | The tool surface | Accepted |
 | [0004](0004-operations-and-the-write-path.md) | Operations and the write path | Accepted |
 | [0005](0005-turn-cost.md) | Turn cost | Accepted |
-| [0006](0006-what-a-tool-returns.md) | What a tool returns | Draft |
+| [0006](0006-what-a-tool-returns.md) | What a tool returns | Accepted |
 
 RFC-0001 fixes which module each thing lives in; ADR-0004 records why
 the services and the tool surface are not among the things in `core`. The next three fix what

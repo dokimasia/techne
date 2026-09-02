@@ -78,6 +78,7 @@ control what `go get` downloads or what the linker includes.
 | `techne-lang/` | `go.dokimi.dev/techne/lang` | Language declaration, engines more than one language uses, conformance suite | in `lang/treesitter` only |
 | `techne-lang-go/` | `go.dokimi.dev/techne/lang/go` | Go: queries, a `go/types` engine, planners | via `lang/treesitter` |
 | `techne-lang-<x>/` | `go.dokimi.dev/techne/lang/<x>` | One language each | via `lang/treesitter` |
+| `techne-lang-mock/` | `go.dokimi.dev/techne/lang/mock` | A language with no grammar and no server, answering every port at any tier | no |
 | `techne-presenter/` | `go.dokimi.dev/techne/presenter` | The MCP transport and the loop that drives a tool call | no |
 | `.` | `go.dokimi.dev/techne` | `cmd/techne`, composition root, version stamp | inherited |
 
