@@ -95,6 +95,9 @@ func Build(fsys fs.FS, files change.Files) (*Server, error) {
 	err := errors.Join(
 		offer(tool.Outline(reads)),
 		offer(tool.Search(reads)),
+		offer(tool.Resolve(reads)),
+		offer(tool.Relations(reads, reads)),
+		offer(tool.Verify(reads)),
 		offer(tool.Capabilities(catalogue)),
 	)
 	if files != nil {

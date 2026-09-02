@@ -10,7 +10,6 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/edit"
-	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
@@ -165,7 +164,7 @@ func TestDocument(t *testing.T) {
 // came back.
 func documenting(t *testing.T, writer *recorder, input string) tool.DocumentOutput {
 	t.Helper()
-	built, err := tool.Document(reader{}, writer)
+	built, err := tool.Document(addressable(), writer)
 	assert.NoError(t, err, "the tool's schemas derive from its own types")
 
 	result, err := built.Execute(t.Context(), json.RawMessage(input))
@@ -176,26 +175,20 @@ func documenting(t *testing.T, writer *recorder, input string) tool.DocumentOutp
 	return out
 }
 
-// reader outlines one file holding a container, two methods on it and a
-// function sharing one of their names.
-type reader struct{}
-
-func (reader) Outline(context.Context, engine.Request) (engine.Answer[sema.Symbol], error) {
-	return engine.Answer[sema.Symbol]{
-		Items: []sema.Symbol{
-			declared("Store", sema.KindStruct, "", 1, 10),
-			declared("Get", sema.KindMethod, "store", 3, 30),
-			declared("Put", sema.KindMethod, "store", 4, 40),
-			declared("Get", sema.KindFunction, "", 5, 50),
-		},
-		Status: trust.OK,
-		Provenance: trust.Provenance{
-			Engine: "reader", Fidelity: trust.Syntactic, Completeness: trust.ScopeTotal,
-		},
-	}, nil
+// addressable is what every case in this package addresses against: a
+// container, two methods on it, and a function sharing one of their
+// names. One double, so two tools asked about one name are asked about
+// the same declarations.
+func addressable() reads {
+	return serving(
+		declared("Store", sema.KindStruct, "", 1, 10),
+		declared("Get", sema.KindMethod, "store", 3, 30),
+		declared("Put", sema.KindMethod, "store", 4, 40),
+		declared("Get", sema.KindFunction, "", 5, 50),
+	)
 }
 
-// declared is one symbol the reader reports.
+// declared is one symbol the fixture reports.
 func declared(name string, kind sema.Kind, parent string, line, offset int) sema.Symbol {
 	held := sema.Symbol{
 		ID: sema.NewID("fx", "a", name, kind), Name: name, Kind: kind, Language: "fx",

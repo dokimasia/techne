@@ -168,13 +168,20 @@ func (a Answer) heading() string {
 
 // evidence is the footer: what bound the answer, how much it covered,
 // and every limit on it.
-func (a Answer) evidence() string {
+func (a Answer) evidence() string { return evidence(a.Provenance) }
+
+// evidence is the footer every answer ends with: what bound it, how much
+// it covered, and every limit on it.
+//
+// One rendering, whatever the tool. Two tools spelling the same evidence
+// differently would leave a caller comparing answers it cannot compare.
+func evidence(p Provenance) string {
 	var b strings.Builder
-	b.WriteString(a.Provenance.Fidelity + ", " + a.Provenance.Completeness + " coverage")
-	if a.Provenance.SupportsNegativeClaim {
+	b.WriteString(p.Fidelity + ", " + p.Completeness + " coverage")
+	if p.SupportsNegativeClaim {
 		b.WriteString(". an empty answer here means there are none")
 	}
-	for _, c := range a.Provenance.Caveats {
+	for _, c := range p.Caveats {
 		b.WriteString(". " + c.Note)
 	}
 	b.WriteString(".\n")

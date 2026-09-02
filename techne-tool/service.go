@@ -9,6 +9,7 @@ import (
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
+	"go.dokimi.dev/techne/core/source"
 )
 
 // The services a tool is given, one interface per question asked.
@@ -32,6 +33,27 @@ type (
 	// Searcher reports which declarations match a query.
 	Searcher interface {
 		Search(ctx context.Context, req engine.Request, q engine.Query) (engine.Answer[sema.Symbol], error)
+	}
+
+	// Resolver reports what the name at a position denotes.
+	Resolver interface {
+		Resolve(ctx context.Context, req engine.Request, at source.Position) (engine.Answer[sema.Symbol], error)
+	}
+
+	// Relator reports how a declaration connects to the rest, in one
+	// direction.
+	Relator interface {
+		Relate(
+			ctx context.Context,
+			req engine.Request,
+			of sema.ID,
+			kind sema.RelationKind,
+		) (engine.Answer[sema.Relation], error)
+	}
+
+	// Verifier reports what a language's own gate says about a scope.
+	Verifier interface {
+		Verify(ctx context.Context, req engine.Request, suites []string) (engine.Answer[edit.Finding], error)
 	}
 
 	// Catalogue reports what the system can answer, per language and

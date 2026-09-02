@@ -127,6 +127,27 @@ func (k Kind) MarshalJSON() ([]byte, error) {
 	return json.Marshal(k.String())
 }
 
+// UnmarshalJSON reads the wire form back.
+//
+// A word this package does not know becomes [KindUnknown] rather than an
+// error. A vocabulary that grows is one where an older reader meets a
+// newer word, and refusing the whole answer over one field it does not
+// recognise loses everything else in it.
+func (k *Kind) UnmarshalJSON(b []byte) error {
+	var name string
+	if err := json.Unmarshal(b, &name); err != nil {
+		return err
+	}
+	*k = KindUnknown
+	for kind, held := range kindNames {
+		if held == name {
+			*k = kind
+			return nil
+		}
+	}
+	return nil
+}
+
 // Kinds returns every kind the vocabulary carries, [KindUnknown]
 // excepted, so a caller checks a value against the set rather than
 // against a list of its own.

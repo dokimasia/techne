@@ -51,6 +51,24 @@ func (v Visibility) MarshalJSON() ([]byte, error) {
 	return json.Marshal(v.String())
 }
 
+// UnmarshalJSON reads the wire form back. A word this package does not
+// know becomes [VisibilityUnknown], which is the answer for a
+// declaration nothing could tell about either way.
+func (v *Visibility) UnmarshalJSON(b []byte) error {
+	var name string
+	if err := json.Unmarshal(b, &name); err != nil {
+		return err
+	}
+	*v = VisibilityUnknown
+	for held, spelt := range visibilityNames {
+		if spelt == name {
+			*v = held
+			return nil
+		}
+	}
+	return nil
+}
+
 // Visibilities returns every value, [VisibilityUnknown] included.
 //
 // Unlike [Kinds], the unknown value is one of the answers rather than

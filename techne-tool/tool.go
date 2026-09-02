@@ -10,6 +10,7 @@ import (
 	"reflect"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"go.dokimi.dev/techne/core/diag"
 	"go.dokimi.dev/techne/core/sema"
 )
 
@@ -116,6 +117,7 @@ func New[In, Out any](
 var marshalled = map[reflect.Type]*jsonschema.Schema{
 	reflect.TypeFor[sema.Kind]():       enumOf(sema.Kinds()),
 	reflect.TypeFor[sema.Visibility](): enumOf(sema.Visibilities()),
+	reflect.TypeFor[diag.Severity]():   enumOf(diag.Severities()),
 	reflect.TypeFor[Members]():         nestedDeclarations(),
 }
 

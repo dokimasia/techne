@@ -23,6 +23,12 @@ type Searcher interface {
 
 // Resolver reports what the name at a position denotes. More than one
 // item means the name is ambiguous, and the caller chooses.
+//
+// A position handed in may carry only a line and a column. Whoever asked
+// is looking at an editor rather than at a byte count, and only the
+// engine has the file the offset would have to be counted in, so the
+// engine resolves it. That is the one place [source.Position.Offset] is
+// not the authoritative coordinate.
 type Resolver interface {
 	Resolve(ctx context.Context, req Request, at source.Position) (Result[sema.Symbol], error)
 }

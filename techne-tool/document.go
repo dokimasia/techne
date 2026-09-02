@@ -10,7 +10,6 @@ import (
 
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
-	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 )
@@ -178,17 +177,17 @@ func Document(reads Outliner, writes Writer) (Tool, error) {
 					fmt.Sprintf("nothing outlines %q, so no declaration could be found in it", scope)), nil
 			}
 
-			found := matching(answered.Items, in.Name, kindOf(in.Kind))
-			if len(found) != 1 {
-				return declined(held, in.Name, "refused", ambiguous(in, scope, found, answered.Items)), nil
+			found, failure := pick(answered.Items, scope, in.Name, kindOf(in.Kind))
+			if failure != nil {
+				return declined(held, in.Name, failure.Code, failure.Reason), nil
 			}
-			held.Language = string(found[0].Language)
+			held.Language = string(found.Language)
 
 			done, err := writes.Apply(ctx, edit.Request{
 				Operation: edit.DocumentSymbol,
 				Scope:     scope,
-				Language:  found[0].Language,
-				Target:    edit.Target{Kind: edit.TargetSpan, Span: found[0].Span},
+				Language:  found.Language,
+				Target:    edit.Target{Kind: edit.TargetSpan, Span: found.Span},
 				Args:      edit.Args{edit.ArgDoc: in.Doc},
 				DryRun:    in.DryRun == nil || *in.DryRun,
 			})
@@ -198,113 +197,6 @@ func Document(reads Outliner, writes Writer) (Tool, error) {
 			return reported(held, in.Name, done), nil
 		})
 }
-
-// matching keeps the declarations a name and a kind pick out.
-//
-// A name matches as the language writes it, so Kind.Declares finds the
-// method and Declares finds it too. A kind narrows what the name leaves
-// ambiguous, and no kind matches every one.
-func matching(found []sema.Symbol, name string, kind sema.Kind) []sema.Symbol {
-	named := map[sema.ID]string{}
-	for _, s := range found {
-		named[s.ID] = s.Name
-	}
-
-	var out []sema.Symbol
-	for _, s := range found {
-		if kind != sema.KindUnknown && s.Kind != kind {
-			continue
-		}
-		qualified := s.Name
-		if parent, held := named[s.Parent]; held && s.Parent != "" {
-			qualified = parent + "." + s.Name
-		}
-		if s.Name == name || qualified == name {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-// ambiguous says why a name did not pick out one declaration.
-//
-// A name nothing matches is answered with what is nearby, and a name
-// several match is answered with all of them: an agent that is told only
-// "not found" retries with the same word, and one told the ten names in
-// the file corrects itself in the same turn.
-func ambiguous(in DocumentInput, scope source.Path, found, all []sema.Symbol) string {
-	if len(found) > 1 {
-		return fmt.Sprintf("%q names %d declarations in %q: %s — narrow it with kind, "+
-			"or qualify it as the language writes it",
-			in.Name, len(found), scope, strings.Join(sites(found), ", "))
-	}
-	near := similar(all, in.Name)
-	if len(near) == 0 {
-		return fmt.Sprintf("%q declares nothing called %q", scope, in.Name)
-	}
-	return fmt.Sprintf("%q declares nothing called %q. It declares %s",
-		scope, in.Name, strings.Join(near, ", "))
-}
-
-// sites lists where declarations were found, so a caller can tell them
-// apart.
-func sites(found []sema.Symbol) []string {
-	out := make([]string, 0, len(found))
-	for _, s := range found {
-		out = append(out, fmt.Sprintf("%s at %s:%d", s.Kind, s.Span.Path, s.Span.Start.Line+1))
-	}
-	return out
-}
-
-// similar names the declarations a mistyped name was probably meant to
-// be, and caps the list so a wrong name in a large scope does not answer
-// with the whole scope.
-//
-// A name is offered back when it holds the one asked for, or when the
-// two agree for their first few characters. Offering back every name the
-// query happens to contain would answer a typo in normalizeBody with
-// every one-letter local in the file, which is worse than answering
-// nothing.
-func similar(all []sema.Symbol, name string) []string {
-	var out []string
-	seen := map[string]bool{}
-	folded := strings.ToLower(name)
-	for _, s := range all {
-		if !s.Kind.Declares() || seen[s.Name] {
-			continue
-		}
-		low := strings.ToLower(s.Name)
-		if !strings.Contains(low, folded) && agree(low, folded) < nearPrefix {
-			continue
-		}
-		seen[s.Name] = true
-		out = append(out, s.Name)
-		if len(out) == nearLimit {
-			break
-		}
-	}
-	return out
-}
-
-// agree returns how many leading bytes two names have in common.
-func agree(a, b string) int {
-	n := min(len(a), len(b))
-	for i := range n {
-		if a[i] != b[i] {
-			return i
-		}
-	}
-	return n
-}
-
-const (
-	// nearLimit caps the names offered back for one that matched
-	// nothing.
-	nearLimit = 8
-	// nearPrefix is how much of a name has to agree with the one asked
-	// for before it is worth offering back.
-	nearPrefix = 4
-)
 
 // reported turns what the write path did into what a caller reads.
 func reported(scope Scope, name string, done edit.Outcome) DocumentOutput {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
+	"sync"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -221,16 +222,29 @@ func serving(t *testing.T, engines ...engine.Engine) (*held, *change.Service) {
 
 // held is a workspace in memory, so the whole pipeline runs without a
 // directory and a test reads back what landed.
+//
+// It takes a lock of its own. The write path holds one per path, which
+// leaves two callers changing different files running at once, and a
+// real workspace serves both: os.Root is documented safe for concurrent
+// use. A bare map is not, on different keys or on the same one, so a
+// double without this models a filesystem nobody has.
 type held struct {
+	mu      sync.Mutex
 	content map[source.Path]string
 	// refuse is the path this workspace will not take a write for, so a
 	// change that fails partway through can be driven.
 	refuse source.Path
 }
 
-func (h *held) at(p source.Path) string { return h.content[p] }
+func (h *held) at(p source.Path) string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.content[p]
+}
 
 func (h *held) Read(p source.Path) ([]byte, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	text, there := h.content[p]
 	if !there {
 		return nil, fs.ErrNotExist
@@ -239,6 +253,8 @@ func (h *held) Read(p source.Path) ([]byte, error) {
 }
 
 func (h *held) Write(p source.Path, content []byte) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if p == h.refuse {
 		return fmt.Errorf("this workspace will not take a write to %s", p)
 	}
@@ -247,6 +263,8 @@ func (h *held) Write(p source.Path, content []byte) error {
 }
 
 func (h *held) Remove(p source.Path) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	delete(h.content, p)
 	return nil
 }
@@ -268,6 +286,9 @@ type planner struct {
 	// also is a second file the plan changes, so a change that fails
 	// partway through has something to have already written.
 	also source.Path
+	// makes is a file the plan creates, which is a change that reads
+	// back as nothing.
+	makes source.Path
 }
 
 func (planner) Name() string                        { return "planner" }
@@ -294,6 +315,11 @@ func (p planner) Plan(
 	out := []edit.Change{{Kind: edit.ChangeEdit, Path: req.Scope, Edits: written}}
 	if p.also != "" {
 		out = append(out, edit.Change{Kind: edit.ChangeEdit, Path: p.also, Edits: written})
+	}
+	if p.makes != "" {
+		out = append(out, edit.Change{
+			Kind: edit.ChangeCreate, Path: p.makes, Content: []byte("made\n"),
+		})
 	}
 	return engine.Result[edit.Change]{Items: out, Completeness: trust.ScopeTotal}, nil
 }

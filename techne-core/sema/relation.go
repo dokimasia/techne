@@ -117,6 +117,21 @@ type Relation struct {
 }
 
 // MarshalJSON writes the wire form rather than the number.
+func (r *RelationKind) UnmarshalJSON(b []byte) error {
+	var name string
+	if err := json.Unmarshal(b, &name); err != nil {
+		return err
+	}
+	*r = RelationUnknown
+	for held, spelt := range relationNames {
+		if spelt == name {
+			*r = held
+			return nil
+		}
+	}
+	return nil
+}
+
 func (r RelationKind) MarshalJSON() ([]byte, error) {
 	return json.Marshal(relationNames[r])
 }

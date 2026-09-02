@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
@@ -45,6 +46,10 @@ func (p parser) Outline(context.Context, engine.Request) (engine.Result[sema.Sym
 type reads struct {
 	engine parser
 	claims map[source.Path]bool
+	// edges and found are what the roles nothing implements yet answer
+	// with, so a tool over them is testable before an engine exists.
+	edges []sema.Relation
+	found []edit.Finding
 }
 
 func (r reads) Outline(_ context.Context, req engine.Request) (engine.Answer[sema.Symbol], error) {
@@ -69,6 +74,54 @@ func (r reads) Search(
 	return engine.Publish(
 		engine.Result[sema.Symbol]{Items: r.engine.found, Completeness: trust.ScopeTotal},
 		r.engine, engine.RoleSearch, req.Preferred), nil
+}
+
+func (r reads) Resolve(
+	_ context.Context,
+	req engine.Request,
+	_ source.Position,
+) (engine.Answer[sema.Symbol], error) {
+	if !r.claims[req.Scope] {
+		return engine.Unsupported[sema.Symbol](
+			"no engine serves " + string(req.Scope) + " for this role"), nil
+	}
+	return engine.Publish(
+		engine.Result[sema.Symbol]{Items: r.engine.found, Completeness: trust.ScopeTotal},
+		r.engine, engine.RoleResolve, req.Preferred), nil
+}
+
+func (r reads) Relate(
+	_ context.Context,
+	req engine.Request,
+	_ sema.ID,
+	kind sema.RelationKind,
+) (engine.Answer[sema.Relation], error) {
+	if !r.claims[req.Scope] {
+		return engine.Unsupported[sema.Relation](
+			"no engine serves " + string(req.Scope) + " for this role"), nil
+	}
+	edges := make([]sema.Relation, 0, len(r.edges))
+	for _, one := range r.edges {
+		one.Kind = kind
+		edges = append(edges, one)
+	}
+	return engine.Publish(
+		engine.Result[sema.Relation]{Items: edges, Completeness: trust.ScopeTotal},
+		r.engine, engine.RoleRelate, req.Preferred), nil
+}
+
+func (r reads) Verify(
+	_ context.Context,
+	req engine.Request,
+	_ []string,
+) (engine.Answer[edit.Finding], error) {
+	if !r.claims[req.Scope] {
+		return engine.Unsupported[edit.Finding](
+			"no engine serves " + string(req.Scope) + " for this role"), nil
+	}
+	return engine.Publish(
+		engine.Result[edit.Finding]{Items: r.found, Completeness: trust.ScopeTotal},
+		r.engine, engine.RoleVerify, req.Preferred), nil
 }
 
 // serving is a read service over the declarations a case gave it.
