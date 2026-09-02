@@ -149,6 +149,8 @@ func serve(mode string) int {
 	}
 	// done reports whether the loading modes have finished loading.
 	done := false
+	// opened is what the client said it can do, kept from initialise.
+	var opened json.RawMessage
 	// answered is what the client said when this server asked it
 	// something, so a case can see a callback that a passing outline
 	// would otherwise hide.
@@ -178,6 +180,7 @@ func serve(mode string) int {
 			// opened. Without this the fake would have no file to name in
 			// a workspace symbol answer.
 			seen = rooted(held.Params) + "/a.fake"
+			opened = held.Params
 			switch mode {
 			case modeSilent:
 				// A server that starts and never answers. The client
@@ -228,6 +231,12 @@ func serve(mode string) int {
 			answer(out, held.ID, capabilities(mode))
 
 		case "textDocument/didOpen":
+			if mode == modePushes && !receives(opened) {
+				// A server checks whether the client can receive
+				// diagnostics before it sends any. techne once did not
+				// say so, and every push-model server was silent.
+				continue
+			}
 			if mode == modePushes {
 				// A server with no pull request reports when it has
 				// finished rather than when it is asked.
@@ -355,6 +364,24 @@ func told(answered map[string]string) string {
 			of+"="+answered[of]))
 	}
 	return "[" + strings.Join(out, ",") + "]"
+}
+
+// receives reports whether the client said it can be sent diagnostics.
+//
+// Read from the initialise the fake kept, because a server has no other
+// way to know and the ones that check simply publish nothing.
+func receives(params json.RawMessage) bool {
+	var held struct {
+		Capabilities struct {
+			TextDocument struct {
+				PublishDiagnostics map[string]any `json:"publishDiagnostics"`
+			} `json:"textDocument"`
+		} `json:"capabilities"`
+	}
+	if err := json.Unmarshal(params, &held); err != nil {
+		return false
+	}
+	return held.Capabilities.TextDocument.PublishDiagnostics != nil
 }
 
 // rooted is the workspace the client opened, as it named it.

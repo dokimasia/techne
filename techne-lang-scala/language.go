@@ -84,8 +84,19 @@ const importing = 2 * time.Minute
 // missing, it knows what to install.
 func Server() lsp.Server {
 	return lsp.Server{
-		Name:       server,
-		Command:    []string{server},
+		Name:    server,
+		Command: []string{server},
+		// Metals asks whether to import the build and waits for the
+		// answer, and a headless client has nobody to ask: the prompt is
+		// dismissed and the server sits with no compiler view, answering
+		// every question with nothing. Told to import without asking, it
+		// builds one.
+		//
+		// Read twice from here: as the initialisation options, and as
+		// the answer to a configuration request for the metals section.
+		Settings: map[string]any{
+			"metals": map[string]any{"autoImportBuilds": "all"},
+		},
 		Loading:    importing,
 		LanguageID: lsp.IdentityScala,
 		Serves:     lsp.Binding(),

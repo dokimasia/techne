@@ -203,6 +203,20 @@ func (e *Engine) handshake(ctx context.Context, held *session) error {
 		RootURI: &root, //nolint:staticcheck // a server older than the replacement still reads it
 		Capabilities: protocol.ClientCapabilities{
 			TextDocument: &protocol.TextDocumentClientCapabilities{
+				// A server that reports diagnostics unasked checks
+				// whether the client can receive them before it sends
+				// any. Undeclared, the gate reads a file nobody
+				// analysed and cannot say whether it is clean.
+				PublishDiagnostics: &protocol.PublishDiagnosticsClientCapabilities{
+					RelatedInformation: &yes,
+					VersionSupport:     &yes,
+				},
+				// Opening a document is how a server is told what to
+				// analyse. A client that does not claim to synchronise
+				// is one a server need not analyse anything for.
+				Synchronization: &protocol.TextDocumentSyncClientCapabilities{
+					DidSave: &yes,
+				},
 				DocumentSymbol: &protocol.DocumentSymbolClientCapabilities{
 					// The flat shape is a list of names whose containers
 					// are named by string, so two members called Get
