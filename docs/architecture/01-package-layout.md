@@ -189,6 +189,21 @@ techne-lang-go/
   module/               go.work and module loading, with a load cache
 ```
 
+**A language to drive the tools with.** `techne-lang-mock` is neither: it
+has no grammar and no server, and answers every port over a line-oriented
+language of its own. It exists because nothing techne ships answers above
+`syntactic`, so the tools for resolve, relations, verify and any
+operation that rewrites references had nothing but a refusal to be tested
+against.
+
+It is a factory rather than a language: `mock.Registering(name)` claims
+the extension of that name, so a workspace can hold several that route
+separately, and `mock.At` and `mock.Covering` lower what one of them
+claims so a refusal between two of them is real rather than described. A
+composition root registers them only when `TECHNE_MOCK` names them,
+because a fake language in a real server's tool surface would have an
+agent routing real work to a toy grammar.
+
 The root package cannot be called `go`, because `go` is a keyword. It is
 `package golang`, imported as `go.dokimi.dev/techne/lang/go`.
 

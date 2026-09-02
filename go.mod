@@ -11,6 +11,7 @@ require (
 	go.dokimi.dev/techne/lang/go v0.0.0
 	go.dokimi.dev/techne/lang/java v0.0.0
 	go.dokimi.dev/techne/lang/javascript v0.0.0
+	go.dokimi.dev/techne/lang/mock v0.0.0
 	go.dokimi.dev/techne/lang/python v0.0.0
 	go.dokimi.dev/techne/lang/ruby v0.0.0
 	go.dokimi.dev/techne/lang/rust v0.0.0
@@ -59,6 +60,8 @@ replace go.dokimi.dev/techne/lang/go => ./techne-lang-go
 replace go.dokimi.dev/techne/lang/java => ./techne-lang-java
 
 replace go.dokimi.dev/techne/lang/javascript => ./techne-lang-javascript
+
+replace go.dokimi.dev/techne/lang/mock => ./techne-lang-mock
 
 replace go.dokimi.dev/techne/lang/python => ./techne-lang-python
 

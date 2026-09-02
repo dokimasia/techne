@@ -9,15 +9,19 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"slices"
+	"strings"
 
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
+	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/lang"
 	"go.dokimi.dev/techne/lang/c"
 	"go.dokimi.dev/techne/lang/csharp"
 	golang "go.dokimi.dev/techne/lang/go"
 	"go.dokimi.dev/techne/lang/java"
 	"go.dokimi.dev/techne/lang/javascript"
+	"go.dokimi.dev/techne/lang/mock"
 	"go.dokimi.dev/techne/lang/python"
 	"go.dokimi.dev/techne/lang/ruby"
 	"go.dokimi.dev/techne/lang/rust"
@@ -62,6 +66,74 @@ type Server struct {
 	Languages []source.Language
 }
 
+// mocked is the mock languages to register, read from the environment.
+//
+// Off unless asked for. A fake language in a real server's tool surface
+// would have an agent routing real work to something that answers from a
+// toy grammar, so it takes an explicit word to turn on.
+//
+//	TECHNE_MOCK=1                      one language, called mock
+//	TECHNE_MOCK=alpha,beta             two, which route separately
+//	TECHNE_MOCK=alpha,beta@syntactic   one that resolves beside one that
+//	                                   only parses
+//	TECHNE_MOCK=alpha@resolved/partial one that binds names and has not
+//	                                   finished reading the workspace
+//
+// The tiers are what make a refusal drivable rather than described: an
+// operation that rewrites references is refused on partial coverage
+// however strong the binding, and there is no other way to stand a
+// workspace up in that state.
+func mocked() []register {
+	held := strings.TrimSpace(os.Getenv(mockVar))
+	switch held {
+	case "", "0", "false":
+		return nil
+	case "1", "true":
+		held = mock.Language
+	}
+
+	var out []register
+	for spec := range strings.SplitSeq(held, ",") {
+		if spec = strings.TrimSpace(spec); spec != "" {
+			out = append(out, simulating(spec))
+		}
+	}
+	return out
+}
+
+// simulating reads one name@fidelity/completeness and returns its
+// registration.
+//
+// A tier nobody recognises is left at the default rather than refused.
+// This is a switch for driving the tools by hand, and failing to start
+// over a typo in it would be the wrong trade.
+func simulating(spec string) register {
+	name, tiers, _ := strings.Cut(spec, "@")
+	bound, covered, _ := strings.Cut(tiers, "/")
+
+	var opts []mock.Option
+	for held, f := range map[string]trust.Fidelity{
+		"none": trust.None, "syntactic": trust.Syntactic,
+		"indexed": trust.Indexed, "resolved": trust.Resolved,
+	} {
+		if held == bound {
+			opts = append(opts, mock.At(f))
+		}
+	}
+	for held, c := range map[string]trust.Completeness{
+		"unknown": trust.ScopeUnknown, "partial": trust.ScopePartial,
+		"total": trust.ScopeTotal,
+	} {
+		if held == covered {
+			opts = append(opts, mock.Covering(c))
+		}
+	}
+	return mock.Registering(name, opts...)
+}
+
+// mockVar names the languages to simulate.
+const mockVar = "TECHNE_MOCK"
+
 // Build assembles a server over one workspace.
 //
 // The workspace is given twice: as an [io/fs.FS] the engines read
@@ -73,7 +145,8 @@ type Server struct {
 // is a mistake in that module rather than something a caller did.
 func Build(fsys fs.FS, files change.Files) (*Server, error) {
 	registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
-	for _, add := range languages {
+	shipped := append(slices.Clone(languages), mocked()...)
+	for _, add := range shipped {
 		if err := add(fsys, registry, catalogue); err != nil {
 			return nil, fmt.Errorf("app: %w", err)
 		}

@@ -101,12 +101,12 @@ func (s *Service) Apply(ctx context.Context, req edit.Request) (edit.Outcome, er
 		return edit.Outcome{}, err
 	}
 	if refusal := s.policy.Admit(spec, plan); refusal != nil {
-		return refusedBy(plan, refusal.Error()), nil
+		return refusedBy(plan, reason(refusal)), nil
 	}
 
 	projected, err := project(plan, sealed)
 	if err != nil {
-		return refusedBy(plan, err.Error()), nil
+		return refusedBy(plan, reason(err)), nil
 	}
 
 	gated, err := s.gate(ctx, req, sealed, projected)
@@ -183,12 +183,12 @@ func (s *Service) Commit(ctx context.Context, handle string) (edit.Outcome, erro
 		return refusedBy(plan, drifted), nil
 	}
 	if refusal := s.policy.Admit(spec, plan); refusal != nil {
-		return refusedBy(plan, refusal.Error()), nil
+		return refusedBy(plan, reason(refusal)), nil
 	}
 
 	projected, err := project(plan, sealed)
 	if err != nil {
-		return refusedBy(plan, err.Error()), nil
+		return refusedBy(plan, reason(err)), nil
 	}
 	gated, err := s.gate(ctx, edit.Request{Scope: plan.Paths()[0]}, sealed, projected)
 	if err != nil {
@@ -365,6 +365,21 @@ func trimmed(err error) string {
 	out := err.Error()
 	if _, why, cut := strings.Cut(out, engine.ErrRefuse.Error()+": "); cut {
 		return why
+	}
+	return reason(err)
+}
+
+// reason is an error as a caller reads it, without the package that
+// raised it.
+//
+// The repository's convention puts a package name in front of every
+// error so a log says where it came from. A refusal is not a log line:
+// it is an instruction to whoever asked, and "edit:" in front of it
+// names something the caller has never heard of.
+func reason(err error) string {
+	out := err.Error()
+	for _, prefix := range []string{"edit: ", "change: ", "mock: "} {
+		out = strings.TrimPrefix(out, prefix)
 	}
 	return out
 }

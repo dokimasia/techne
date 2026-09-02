@@ -11,6 +11,7 @@ use (
 	./techne-lang-csharp
 	./techne-lang-go
 	./techne-lang-java
+	./techne-lang-mock
 	./techne-lang-javascript
 	./techne-lang-python
 	./techne-lang-ruby
