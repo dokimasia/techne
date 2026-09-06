@@ -172,6 +172,17 @@ linters:
             # each: which one a module may use is settled by which one it
             # imports, and no module can import another's.
             - github.com/tree-sitter/tree-sitter-
+            # Go is the one language whose compiler is already a
+            # dependency of any workspace written in it, so its module
+            # answers with the toolchain's own type checker rather than
+            # only through a server. Which module may use this is settled
+            # the same way a grammar is: by which one imports it.
+            - golang.org/x/tools/go/packages
+            # And the parts of the standard library that loader hands
+            # back. $gostd does not cover the go/ tree.
+            - go/ast
+            - go/token
+            - go/types
 
     gocritic:
       enabled-tags: [diagnostic]

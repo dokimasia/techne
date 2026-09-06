@@ -5,6 +5,7 @@ package golang
 
 import (
 	_ "embed"
+	"fmt"
 
 	ts "github.com/tree-sitter/go-tree-sitter"
 	binding "github.com/tree-sitter/tree-sitter-go/bindings/go"
@@ -12,6 +13,7 @@ import (
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/lang"
 	"go.dokimi.dev/techne/lang/engines"
+	"go.dokimi.dev/techne/lang/go/checker"
 	"go.dokimi.dev/techne/lang/lsp"
 	"go.dokimi.dev/techne/lang/treesitter"
 )
@@ -98,5 +100,31 @@ func Server() lsp.Server {
 // is settled in one place rather than ten, so a language cannot end up
 // served differently from its siblings by accident.
 func Register(w lang.Workspace, r *lang.Registry, c *engine.Catalog) error {
-	return engines.Register(w, r, c, Declaration(), Grammar(), Server())
+	held, err := checking(w)
+	if err != nil {
+		return err
+	}
+	return engines.Register(w, r, c, Declaration(), Grammar(), Server(), held...)
+}
+
+// checking is the in-process type checker, where the workspace is one it
+// can be run over.
+//
+// Go is the language techne is written in, so its toolchain is on every
+// machine techne builds on and gopls is not. Without this, a machine
+// with no server drops Go from every question that needs a type: what
+// implements this, what calls this, does this still compile.
+//
+// It needs a directory for the same reason a server does — the loader
+// runs the go command against one — so a workspace that is nowhere gets
+// the parser alone.
+func checking(w lang.Workspace) ([]engine.Engine, error) {
+	if !w.OnDisk() {
+		return nil, nil
+	}
+	held, err := checker.New(w.Root, Declaration())
+	if err != nil {
+		return nil, fmt.Errorf("go: %w", err)
+	}
+	return []engine.Engine{held}, nil
 }

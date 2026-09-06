@@ -8,6 +8,7 @@ require (
 	go.dokimi.dev/assert v0.0.0-20260901105745-9c4b8bd0fc5f
 	go.dokimi.dev/techne/core v0.0.0
 	go.dokimi.dev/techne/lang v0.0.0
+	golang.org/x/tools v0.45.0
 )
 
 require (
@@ -17,6 +18,8 @@ require (
 	go.lsp.dev/jsonrpc2 v1.0.1 // indirect
 	go.lsp.dev/protocol v1.0.1 // indirect
 	go.lsp.dev/uri v1.0.1 // indirect
+	golang.org/x/mod v0.36.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
 )
 
 replace go.dokimi.dev/techne/core => ../techne-core
