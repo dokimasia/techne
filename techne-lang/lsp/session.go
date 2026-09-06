@@ -60,6 +60,20 @@ type session struct {
 // paid once per session either way; what this decides is how much.
 const starting = 10 * time.Second
 
+// leaving is how long the protocol's own shutdown is given before the
+// process is killed instead.
+//
+// Bounded for the same reason [starting] is, and against the same
+// failure: shutdown is a request, and a server that does not answer
+// requests does not answer this one either. Unbounded it held a caller
+// for as long as it allowed, which is what [session.stop] exists to
+// prevent for the process and had not been doing for the conversation.
+//
+// Long enough for a server that is working to write out what it was
+// holding, which is why the whole sequence is attempted rather than
+// killing outright.
+const leaving = 5 * time.Second
+
 // start runs a server and brings up the connection to it.
 //
 // The command is run rather than looked for. Whether it exists is
@@ -121,8 +135,14 @@ func start(ctx context.Context, declared Server, root string, answers protocol.C
 func (s *session) stop(ctx context.Context) error {
 	var refused error
 	s.ends.Do(func() {
-		refused = s.asks.Shutdown(ctx)
-		_ = s.asks.Exit(ctx)
+		// Bounded rather than the caller's own, so a server that stopped
+		// answering cannot hold the caller here. A context already done
+		// keeps its own deadline, so cancelling still kills at once.
+		saying, done := context.WithTimeout(ctx, leaving)
+		defer done()
+
+		refused = s.asks.Shutdown(saying)
+		_ = s.asks.Exit(saying)
 		_ = s.conn.Close()
 
 		gone := make(chan error, 1)
@@ -130,13 +150,17 @@ func (s *session) stop(ctx context.Context) error {
 
 		select {
 		case <-gone:
-		case <-ctx.Done():
+		case <-saying.Done():
 			_ = s.cmd.Process.Kill()
 			<-gone
 		}
 	})
 
-	if refused != nil && !errors.Is(refused, context.Canceled) {
+	// A server that would not shut down was killed, which is this
+	// package's business and not the caller's.
+	if refused != nil &&
+		!errors.Is(refused, context.Canceled) &&
+		!errors.Is(refused, context.DeadlineExceeded) {
 		return fmt.Errorf("lsp: shutdown: %w", refused)
 	}
 	return nil

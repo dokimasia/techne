@@ -202,7 +202,13 @@ func (e *Engine) running(ctx context.Context) (*session, error) {
 	handshaking, done := context.WithTimeout(ctx, starting)
 	defer done()
 	if err := e.handshake(handshaking, held); err != nil {
-		_ = held.stop(ctx)
+		// It never answered initialise, so there is nothing to ask it to
+		// write out and no reason to wait on an answer to shutdown
+		// either. Stopped under a context already done, which is this
+		// package's way of saying kill it now.
+		at, now := context.WithCancel(context.WithoutCancel(ctx))
+		now()
+		_ = held.stop(at)
 		if errors.Is(err, context.DeadlineExceeded) {
 			// Said as what it is. A server that answered nothing inside
 			// the window is one to install, configure or drop, and a
