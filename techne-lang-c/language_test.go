@@ -88,6 +88,20 @@ func TestLanguage(t *testing.T) {
 			assert.Equal(t, c.Server().Reaches(engine.RoleOutline), trust.None,
 				"and holds no evidence a parser does not already have for outline")
 		})
+
+		t.Run("does not gate a change, because clangd cannot", func(t *testing.T) {
+			t.Parallel()
+			// clangd builds a translation unit's preamble from the files
+			// on disk, so a change to a header is invisible to every
+			// file that includes it until something writes it. Asked to
+			// gate one it reports the dependent file as calling a
+			// function nothing declares, and refuses a rename that is
+			// right.
+			assert.Equal(t, c.Server().Reaches(engine.RoleCheck), trust.None,
+				"so C gates on its grammar, which says less and says it truly")
+			assert.Equal(t, lsp.Binding()[engine.RoleCheck], trust.Resolved,
+				"and the other nine keep the compiler gate this one gives up")
+		})
 	})
 
 	t.Run("Register", func(t *testing.T) {

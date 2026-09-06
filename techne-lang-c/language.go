@@ -77,11 +77,25 @@ const server = "clangd"
 // concludes this language cannot be served at all; told the server is
 // missing, it knows what to install.
 func Server() lsp.Server {
+	serves := lsp.Binding()
+	// clangd builds a translation unit's preamble from the files on
+	// disk, so a change to a header is invisible to every file that
+	// includes it until something writes it. Asked to gate one it
+	// reports the dependent file as calling a function nothing declares
+	// and refuses a rename that is right — which was measured against
+	// clangd directly, with no techne in the way, and did not clear
+	// after six seconds.
+	//
+	// So C gates on its grammar. That says the result is still C and not
+	// that it still compiles, which is less than the other nine get and
+	// more than a false refusal is worth.
+	delete(serves, engine.RoleCheck)
+
 	return lsp.Server{
 		Name:       server,
 		Command:    []string{server},
 		LanguageID: lsp.IdentityC,
-		Serves:     lsp.Binding(),
+		Serves:     serves,
 	}
 }
 
