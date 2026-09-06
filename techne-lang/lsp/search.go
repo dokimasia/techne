@@ -35,6 +35,12 @@ func (e *Engine) Search(
 	req engine.Request,
 	q engine.Query,
 ) (engine.Result[sema.Symbol], error) {
+	if holds, err := e.reads(req); err != nil {
+		return engine.Result[sema.Symbol]{}, err
+	} else if !holds {
+		return engine.Result[sema.Symbol]{Skipped: true, Completeness: trust.ScopeTotal}, nil
+	}
+
 	held, err := e.running(ctx)
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)

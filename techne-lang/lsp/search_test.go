@@ -112,14 +112,32 @@ func TestSearch(t *testing.T) {
 		t.Run("leaves out a match outside the scope", func(t *testing.T) {
 			t.Parallel()
 			// A workspace query covers the workspace, and a caller that
-			// named a directory asked about that directory.
-			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
+			// named a directory asked about that directory. The other
+			// directory holds a file of this language, so the scope is
+			// one the engine reads and the matches are simply not in it.
+			got, err := serving(t, modeDefault, map[string]string{
+				"a.fake":           content,
+				"elsewhere/b.fake": content,
+			}).
 				Search(t.Context(), engine.Request{Scope: "elsewhere"}, engine.Query{
 					Text: "St", Private: true,
 				})
 
 			assert.NoError(t, err, "a scope the matches fall outside is not a fault")
 			assert.Empty(t, got.Items, "and nothing in it matched")
+		})
+
+		t.Run("says a scope that is not there is not there", func(t *testing.T) {
+			t.Parallel()
+			// An empty answer at this tier supports a claim that nothing
+			// of the name exists. Made about a directory that does not
+			// exist, it is a claim about nothing at all.
+			_, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
+				Search(t.Context(), engine.Request{Scope: "nowhere"}, engine.Query{
+					Text: "St", Private: true,
+				})
+
+			assert.HasError(t, err, "a scope that does not exist is a different fact from an empty one")
 		})
 	})
 }

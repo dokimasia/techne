@@ -533,6 +533,27 @@ func (e *Engine) sync(
 	return false, nil
 }
 
+// reads reports whether a scope holds a file this engine reads.
+//
+// Asked before [Engine.running], because starting a server is what this
+// engine costs and a scope holding none of its language has nothing for
+// it to answer about. A directory carries no extension to route by, so a
+// question naming no language is put to every one of them: measured over
+// a TypeScript monorepo, one relations call started clangd, gopls,
+// jdtls, pyright-langserver, ruby-lsp and rust-analyzer to be told six
+// times that there was nothing to read, and took 13.5s. Naming the
+// language took 0.2s.
+//
+// The roles that go on to walk the scope anyway take their paths from
+// [Engine.files] and check those instead, so the walk happens once.
+func (e *Engine) reads(req engine.Request) (bool, error) {
+	paths, err := e.files(req)
+	if err != nil {
+		return false, err
+	}
+	return len(paths) > 0, nil
+}
+
 // readable reports why a file should not be read, or nil.
 //
 // [lang.Readable] over a path inside the workspace. A path outside it

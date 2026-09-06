@@ -135,8 +135,11 @@ func TestEngine(t *testing.T) {
 			// over a repository whose TypeScript version it refuses,
 			// fourteen seconds of an agent's turn went on a server that
 			// was never going to answer.
+			// A file this language claims, because the scope is read
+			// before the server is started and an empty workspace never
+			// gets as far as the handshake.
 			held := pretending(modeSilent)
-			e, err := lsp.New(t.TempDir(), declared(), held)
+			e, err := lsp.New(workspace(t, map[string]string{"a.fake": content}), declared(), held)
 			assert.NoError(t, err, "an engine builds over the workspace")
 			stopping(t, e)
 

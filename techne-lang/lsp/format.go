@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
@@ -41,6 +42,15 @@ const (
 // Nothing here writes. The edits go back through techne's write path,
 // which reads the files, gates the result and applies it atomically.
 func (e *Engine) Format(ctx context.Context, paths []source.Path) (engine.Result[edit.Change], error) {
+	// None of them this engine's is a set to leave alone, and settled
+	// before a server is started rather than after: a caller naming a
+	// mixed set otherwise starts one server per language in it.
+	if !slices.ContainsFunc(paths, func(p source.Path) bool {
+		return lang.Claims(string(p), e.declared.Extensions)
+	}) {
+		return engine.Result[edit.Change]{Skipped: true, Completeness: trust.ScopeTotal}, nil
+	}
+
 	held, err := e.running(ctx)
 	if err != nil {
 		return engine.Result[edit.Change]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)

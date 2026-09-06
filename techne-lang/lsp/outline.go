@@ -26,11 +26,9 @@ import (
 // scope holding many is many requests to a process that answers each in
 // a millisecond once it is warm.
 func (e *Engine) Outline(ctx context.Context, req engine.Request) (engine.Result[sema.Symbol], error) {
-	held, err := e.running(ctx)
-	if err != nil {
-		return engine.Result[sema.Symbol]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
-	}
-
+	// What the scope holds is settled before the server is started. A
+	// process is this engine's whole cost, and a scope with none of its
+	// language has nothing for it to answer about.
 	paths, err := e.files(req)
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, err
@@ -39,6 +37,11 @@ func (e *Engine) Outline(ctx context.Context, req engine.Request) (engine.Result
 		return engine.Result[sema.Symbol]{
 			Skipped: true, Completeness: trust.ScopeTotal,
 		}, nil
+	}
+
+	held, err := e.running(ctx)
+	if err != nil {
+		return engine.Result[sema.Symbol]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
 
 	var out []sema.Symbol

@@ -55,17 +55,17 @@ func (e *Engine) Verify(
 	req engine.Request,
 	suites []string,
 ) (engine.Result[edit.Finding], error) {
-	held, err := e.running(ctx)
-	if err != nil {
-		return engine.Result[edit.Finding]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
-	}
-
 	paths, err := e.files(req)
 	if err != nil {
 		return engine.Result[edit.Finding]{}, err
 	}
 	if len(paths) == 0 {
 		return engine.Result[edit.Finding]{Skipped: true, Completeness: trust.ScopeTotal}, nil
+	}
+
+	held, err := e.running(ctx)
+	if err != nil {
+		return engine.Result[edit.Finding]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
 
 	var out []edit.Finding

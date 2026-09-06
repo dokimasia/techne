@@ -52,6 +52,14 @@ func (e *Engine) Relate(
 	of sema.ID,
 	kind sema.RelationKind,
 ) (engine.Result[sema.Relation], error) {
+	if holds, err := e.reads(req); err != nil {
+		return engine.Result[sema.Relation]{}, err
+	} else if !holds {
+		// The scope holds no file this engine reads, so it says nothing
+		// about the declaration rather than that it has no edges.
+		return engine.Result[sema.Relation]{Skipped: true, Completeness: trust.ScopeTotal}, nil
+	}
+
 	held, err := e.running(ctx)
 	if err != nil {
 		return engine.Result[sema.Relation]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)

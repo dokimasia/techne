@@ -1260,7 +1260,10 @@ func workspace(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
 	for name, held := range files {
-		assert.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(held), 0o644),
+		at := filepath.Join(dir, name)
+		assert.NoError(t, os.MkdirAll(filepath.Dir(at), 0o755),
+			"the case can prepare the workspace")
+		assert.NoError(t, os.WriteFile(at, []byte(held), 0o644),
 			"the case can prepare the workspace")
 	}
 	return dir
