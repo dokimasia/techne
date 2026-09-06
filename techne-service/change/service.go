@@ -120,8 +120,10 @@ func (s *Service) Apply(ctx context.Context, req edit.Request) (edit.Outcome, er
 	}
 	if gated.worse {
 		out := refusedBy(plan, fmt.Sprintf(
-			"the change stops %s parsing, so it was not written", where(gated.found)))
+			"the change stops %s %s, so it was not written",
+			where(gated.found), judging(gated.by)))
 		out.Diagnostics, out.Rewrites = gated.found, preview(plan, sealed)
+		out.Gate = &gated.by
 		return out, nil
 	}
 
@@ -131,6 +133,9 @@ func (s *Service) Apply(ctx context.Context, req edit.Request) (edit.Outcome, er
 		Changes:    plan.Changes,
 		Rewrites:   preview(plan, sealed),
 		Provenance: plan.Provenance,
+	}
+	if gated.checked {
+		out.Gate = &gated.by
 	}
 	if !gated.checked {
 		// Nothing judged the result, so the caller is holding a change
@@ -202,8 +207,10 @@ func (s *Service) Commit(ctx context.Context, handle string) (edit.Outcome, erro
 	}
 	if gated.worse {
 		out := refusedBy(plan, fmt.Sprintf(
-			"the change stops %s parsing, so it was not written", where(gated.found)))
+			"the change stops %s %s, so it was not written",
+			where(gated.found), judging(gated.by)))
 		out.Diagnostics, out.Rewrites = gated.found, preview(plan, sealed)
+		out.Gate = &gated.by
 		return out, nil
 	}
 
@@ -211,7 +218,7 @@ func (s *Service) Commit(ctx context.Context, handle string) (edit.Outcome, erro
 	if failed != nil {
 		return edit.Outcome{}, failed
 	}
-	return edit.Outcome{
+	out := edit.Outcome{
 		Operation:  plan.Operation,
 		Status:     trust.OK,
 		Applied:    true,
@@ -219,7 +226,11 @@ func (s *Service) Commit(ctx context.Context, handle string) (edit.Outcome, erro
 		Changes:    plan.Changes,
 		Rewrites:   preview(plan, sealed),
 		Provenance: plan.Provenance,
-	}, nil
+	}
+	if gated.checked {
+		out.Gate = &gated.by
+	}
+	return out, nil
 }
 
 // unchanged reads the files a plan depends on and reports which of them
@@ -299,6 +310,10 @@ type verdict struct {
 	// worse reports that the change broke something that was whole.
 	worse bool
 	found []edit.Finding
+	// by is which engine judged it and at what tier, which is not the
+	// engine that planned it: a parser gates what a type checker planned
+	// whenever no server is running.
+	by trust.Provenance
 }
 
 // gate judges the projection, and judges what it replaces, so a change
@@ -314,12 +329,12 @@ func (s *Service) gate(
 	req edit.Request,
 	sealed, projected map[source.Path][]byte,
 ) (verdict, error) {
-	after, checked, err := s.check(ctx, req, projected)
+	after, by, checked, err := s.check(ctx, req, projected)
 	if err != nil || !checked {
 		return verdict{checked: checked}, err
 	}
 	if len(after) == 0 {
-		return verdict{checked: true}, nil
+		return verdict{checked: true, by: by}, nil
 	}
 
 	// Only the files the change touches, and only as they were. A fault
@@ -330,22 +345,30 @@ func (s *Service) gate(
 			was[p] = content
 		}
 	}
-	before, _, err := s.check(ctx, req, was)
+	before, _, _, err := s.check(ctx, req, was)
 	if err != nil {
 		return verdict{}, err
 	}
-	return verdict{checked: true, worse: len(after) > len(before), found: after}, nil
+	return verdict{
+		checked: true, worse: len(after) > len(before), found: after, by: by,
+	}, nil
 }
 
 // check asks whatever serves this language what is wrong with content,
-// and reports whether anything answered.
+// and reports which engine answered.
+//
+// Whichever reaches furthest: a language server judges what the result
+// means and a parser judges only that it is still the language it was.
+// The catalogue orders them, so a workspace with a server running gates
+// on a compiler and the same workspace without one gates on a grammar,
+// and the answer says which.
 func (s *Service) check(
 	ctx context.Context,
 	req edit.Request,
 	files map[source.Path][]byte,
-) ([]edit.Finding, bool, error) {
+) ([]edit.Finding, trust.Provenance, bool, error) {
 	if len(files) == 0 {
-		return nil, true, nil
+		return nil, trust.Provenance{}, true, nil
 	}
 	asking := engine.Request{Scope: req.Scope, Language: req.Language}
 	answered, ok, _, err := engine.AskAny(ctx, s.catalog, s.router, asking, engine.RoleCheck,
@@ -353,9 +376,14 @@ func (s *Service) check(
 			return e.(engine.Checker).Check(ctx, files)
 		})
 	if err != nil || !ok {
-		return nil, false, err
+		return nil, trust.Provenance{}, false, err
 	}
-	return errorsIn(answered.Items), true, nil
+	// A gate that did not cover everything it was shown has not said the
+	// content is clean, and a caller acts on a clean gate by writing.
+	if answered.Provenance.Completeness == trust.ScopePartial {
+		return errorsIn(answered.Items), answered.Provenance, false, nil
+	}
+	return errorsIn(answered.Items), answered.Provenance, true, nil
 }
 
 // errorsIn keeps the findings that stop a change being written.
@@ -393,6 +421,16 @@ func reason(err error) string {
 		out = strings.TrimPrefix(out, prefix)
 	}
 	return out
+}
+
+// judging is what the gate did to the content, in the words a refusal
+// reads with: a parser says it stopped being the language it was, and a
+// type checker says it stopped meaning anything.
+func judging(by trust.Provenance) string {
+	if by.Fidelity >= trust.Resolved {
+		return "compiling"
+	}
+	return "parsing"
 }
 
 // where names the files a set of diagnostics is about, for a refusal a

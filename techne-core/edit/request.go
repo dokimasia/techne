@@ -54,7 +54,18 @@ type Outcome struct {
 	// change that planned cleanly was not applied. Each carries the
 	// change that resolves it where there is one obvious change.
 	Diagnostics []Finding
-	Provenance  trust.Provenance
+	// Provenance is what planned the change.
+	Provenance trust.Provenance
+	// Gate is what judged it, which is not the same engine and often not
+	// the same tier: a parser gates what a type checker planned whenever
+	// no server is running. It is absent where nothing judged the change
+	// at all, which is a different fact from nothing being wrong.
+	//
+	// The tier says what was checked. A syntactic gate says the result is
+	// still the language it was; a resolved one says it still means
+	// something, and only the second refuses a rename onto a name
+	// already taken.
+	Gate *trust.Provenance
 	// Reason says why, when the status is refused or unsupported.
 	Reason string
 }

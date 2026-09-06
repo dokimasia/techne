@@ -37,6 +37,32 @@ func TestResult(t *testing.T) {
 				"a Result has no field for a tier, so an adapter cannot claim one it does not hold")
 		})
 
+		t.Run("lets an engine lower its own tier for one answer", func(t *testing.T) {
+			t.Parallel()
+			// A type checker over a workspace that does not compile
+			// binds some names and not others, and every answer it
+			// gives is worth what a half-bound program is worth. That is
+			// a property of the answer rather than of the engine, so it
+			// travels on the result.
+			r := engine.Result[sema.Symbol]{
+				Completeness: trust.ScopeTotal, Lowered: trust.Indexed,
+			}
+			got := engine.Publish(r, strong, engine.RoleOutline, trust.None)
+			assert.Equal(t, got.Provenance.Fidelity, trust.Indexed,
+				"the answer is worth less than the engine usually is")
+		})
+
+		t.Run("does not let an engine raise it", func(t *testing.T) {
+			t.Parallel()
+			// Understating is the engine's to do and overstating is not.
+			r := engine.Result[sema.Symbol]{
+				Completeness: trust.ScopeTotal, Lowered: trust.Resolved,
+			}
+			got := engine.Publish(r, answered, engine.RoleOutline, trust.None)
+			assert.Equal(t, got.Provenance.Fidelity, trust.Syntactic,
+				"a result claiming more than the engine declares is not believed")
+		})
+
 		t.Run("carries the completeness only the engine knows", func(t *testing.T) {
 			t.Parallel()
 			r := engine.Result[sema.Symbol]{Completeness: trust.ScopePartial}
