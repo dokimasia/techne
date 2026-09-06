@@ -135,10 +135,30 @@ func Fit(a Answer, b Budget) Answer {
 
 	// One item at a minimum. Zero beside a count reads like an answer
 	// nothing served.
-	for len(a.Items) > 1 && estimate(a) > ceiling {
-		last := a.Items[len(a.Items)-1]
-		dropped[last.Kind.String()] += count([]Declaration{last})
-		a.Items = a.Items[:len(a.Items)-1]
+	//
+	// Found by halving rather than by dropping one at a time. Estimating
+	// an answer renders it, so one drop per item is one render per item:
+	// a search with no name to match returned thirty-five thousand
+	// declarations and spent twelve seconds re-rendering what had not
+	// changed. An answer with fewer items never estimates larger, so the
+	// longest prefix that fits is found in as many estimates as the list
+	// has bits.
+	if len(a.Items) > 1 && estimate(a) > ceiling {
+		whole := a.Items
+		fits, most := 1, len(whole)
+		for fits < most {
+			half := (fits + most + 1) / 2
+			a.Items = whole[:half]
+			if estimate(a) <= ceiling {
+				fits = half
+			} else {
+				most = half - 1
+			}
+		}
+		a.Items = whole[:fits]
+		for _, one := range whole[fits:] {
+			dropped[one.Kind.String()] += count([]Declaration{one})
+		}
 	}
 	return truncate(a, matched, dropped)
 }
