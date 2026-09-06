@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -198,8 +199,18 @@ func (e *Engine) running(ctx context.Context) (*session, error) {
 		e.failed = err
 		return nil, err
 	}
-	if err := e.handshake(ctx, held); err != nil {
+	handshaking, done := context.WithTimeout(ctx, starting)
+	defer done()
+	if err := e.handshake(handshaking, held); err != nil {
 		_ = held.stop(ctx)
+		if errors.Is(err, context.DeadlineExceeded) {
+			// Said as what it is. A server that answered nothing inside
+			// the window is one to install, configure or drop, and a
+			// caller told only "context deadline exceeded" has nothing
+			// to act on.
+			err = fmt.Errorf("lsp: %s: no answer to initialise within %s",
+				e.server.Name, starting)
+		}
 		e.failed = err
 		return nil, err
 	}
@@ -419,6 +430,14 @@ func (e *Engine) handshake(ctx context.Context, held *session) error {
 // it costs nothing beside the round trip that follows, and re-sending
 // unchanged content is the version conflict that made this open once.
 func (e *Engine) open(ctx context.Context, held *session, p source.Path) error {
+	// The one place a file becomes a buffer the server holds, so the
+	// rules about what may be read are asked here rather than at each of
+	// the eight callers. A caller naming a path reaches this without
+	// passing a walk: extracting a function from a bundle the workspace
+	// calls generated cost three seconds before this was here.
+	if unreadable := e.readable(p); unreadable != nil {
+		return unreadable
+	}
 	full := e.fullPath(p)
 	content, err := os.ReadFile(full)
 	if err != nil {
@@ -497,7 +516,7 @@ func (e *Engine) sync(
 	if err := held.asks.DidOpen(ctx, &protocol.DidOpenTextDocumentParams{
 		TextDocument: protocol.TextDocumentItem{
 			URI:        uri.File(full),
-			LanguageID: protocol.LanguageKind(e.server.LanguageID),
+			LanguageID: protocol.LanguageKind(e.server.Named(full)),
 			Version:    1,
 			Text:       string(content),
 		},
@@ -506,6 +525,24 @@ func (e *Engine) sync(
 	}
 	e.opened[full] = sent{version: 1, digest: digest}
 	return false, nil
+}
+
+// readable reports why a file should not be read, or nil.
+//
+// [lang.Readable] over a path inside the workspace. A path outside it
+// keeps its absolute form, and no .gitignore in the workspace speaks for
+// a file in a module cache or a standard library, so what is left of the
+// rule there is the size. A server answers about both, and either can be
+// generated.
+func (e *Engine) readable(p source.Path) error {
+	if !filepath.IsAbs(filepath.FromSlash(string(p))) {
+		return lang.Readable(os.DirFS(e.root), p)
+	}
+	info, err := os.Stat(e.fullPath(p))
+	if err != nil {
+		return fmt.Errorf("lsp: %s: %w", p, err)
+	}
+	return lang.Large(p, info.Size())
 }
 
 // fullPath is a path where it is on disk.

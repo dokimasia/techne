@@ -29,7 +29,10 @@ type Engine struct {
 	fsys     fs.FS
 	declared lang.Declaration
 	grammar  Grammar
-	tags     *ts.Query
+	// tags is the compiled query per grammar. A query is compiled
+	// against one grammar and cannot be used with another, so a language
+	// that declares a dialect has one for each.
+	tags map[*ts.Language]*ts.Query
 }
 
 // ErrUnknownCapture reports a query naming a definition capture the
@@ -60,34 +63,44 @@ func New(fsys fs.FS, d lang.Declaration, g Grammar) (*Engine, error) {
 		return nil, fmt.Errorf("treesitter: %q supplies no tags query", d.Language)
 	}
 
-	q, qerr := ts.NewQuery(g.Language, g.Tags)
-	if qerr != nil {
-		return nil, fmt.Errorf("treesitter: %q tags query: %w", d.Language, *qerr)
-	}
-	// A query naming a definition capture the vocabulary does not carry
-	// would match and then be dropped, so the pattern would find nothing
-	// and say nothing. That is the hardest failure to notice in a system
-	// whose job includes reporting that it found nothing, so it is
-	// refused here instead.
-	for _, name := range q.CaptureNames() {
-		if !strings.HasPrefix(name, DefinitionPrefix) {
-			continue
+	held := &Engine{fsys: fsys, declared: d, grammar: g, tags: map[*ts.Language]*ts.Query{}}
+	for _, one := range g.each() {
+		if one == nil {
+			held.Close()
+			return nil, fmt.Errorf("treesitter: %q declares a dialect with no grammar", d.Language)
 		}
-		if _, known := KindOf(Capture(name)); !known {
-			q.Close()
-			return nil, fmt.Errorf("%w: %q captures @%s, which no kind carries",
-				ErrUnknownCapture, d.Language, name)
+		q, qerr := ts.NewQuery(one, g.Tags)
+		if qerr != nil {
+			held.Close()
+			return nil, fmt.Errorf("treesitter: %q tags query: %w", d.Language, *qerr)
 		}
+		// A query naming a definition capture the vocabulary does not
+		// carry would match and then be dropped, so the pattern would
+		// find nothing and say nothing. That is the hardest failure to
+		// notice in a system whose job includes reporting that it found
+		// nothing, so it is refused here instead.
+		for _, name := range q.CaptureNames() {
+			if !strings.HasPrefix(name, DefinitionPrefix) {
+				continue
+			}
+			if _, known := KindOf(Capture(name)); !known {
+				q.Close()
+				held.Close()
+				return nil, fmt.Errorf("%w: %q captures @%s, which no kind carries",
+					ErrUnknownCapture, d.Language, name)
+			}
+		}
+		held.tags[one] = q
 	}
-	return &Engine{fsys: fsys, declared: d, grammar: g, tags: q}, nil
+	return held, nil
 }
 
-// Close releases the compiled query. Calling it twice is safe.
+// Close releases the compiled queries. Calling it twice is safe.
 func (e *Engine) Close() {
-	if e.tags != nil {
-		e.tags.Close()
-		e.tags = nil
+	for _, q := range e.tags {
+		q.Close()
 	}
+	clear(e.tags)
 }
 
 // Name identifies this engine in a provenance and a capability report.

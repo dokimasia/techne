@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
@@ -42,6 +43,22 @@ type session struct {
 	// reaped, which never returns.
 	ends sync.Once
 }
+
+// starting is how long a server is given to answer the handshake.
+//
+// Separate from [Server.Loading], which is how long it may take to read
+// the workspace after answering. This is the answer itself, and a server
+// that does not give one is not going to: the connection came up, so the
+// program is there and it is not talking.
+//
+// Bounded because the alternative is unbounded. A server that accepts
+// the connection and never answers initialise held a question for as
+// long as its caller allowed — measured against
+// typescript-language-server over a repository whose TypeScript version
+// it refuses, fourteen seconds of an agent's turn, spent on a server
+// that was never going to answer. The failure is remembered, so it is
+// paid once per session either way; what this decides is how much.
+const starting = 10 * time.Second
 
 // start runs a server and brings up the connection to it.
 //

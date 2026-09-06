@@ -84,7 +84,11 @@ func Server() lsp.Server {
 		Name:       server,
 		Command:    []string{server, stdio},
 		LanguageID: lsp.IdentityJavaScript,
-		Serves:     lsp.Binding(),
+		// The grammar parses JSX either way, and a server does not: a
+		// .jsx file opened as javascript is one whose JSX a server reads
+		// as an error.
+		Dialects: map[string]string{".jsx": lsp.IdentityJavaScriptReact},
+		Serves:   lsp.Binding(),
 		// The same server as TypeScript, and the same menu: an inner
 		// function that cannot see the receiver, offered first, beside
 		// the method that can.

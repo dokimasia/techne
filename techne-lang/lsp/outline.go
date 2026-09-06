@@ -5,6 +5,7 @@ package lsp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -41,6 +42,7 @@ func (e *Engine) Outline(ctx context.Context, req engine.Request) (engine.Result
 	}
 
 	var out []sema.Symbol
+	var large []source.Path
 	for _, p := range paths {
 		if err := ctx.Err(); err != nil {
 			return engine.Result[sema.Symbol]{}, err
@@ -50,17 +52,28 @@ func (e *Engine) Outline(ctx context.Context, req engine.Request) (engine.Result
 		}
 		found, _, err := e.symbols(ctx, held, p)
 		if err != nil {
+			// One file past the size an engine reads costs itself and
+			// not the scope. Named in a caveat, because coverage over a
+			// directory holding a file nobody opened is a claim about
+			// the directory rather than about its declarations.
+			if _, big := errors.AsType[lang.LargeError](err); big {
+				large = append(large, p)
+				continue
+			}
 			return engine.Result[sema.Symbol]{}, err
 		}
 		out = append(out, found...)
 	}
 
 	covered, reaches, caveats := e.bound(ctx)
+	if len(large) > 0 {
+		covered = trust.ScopePartial
+	}
 	return engine.Result[sema.Symbol]{
 		Items:        out,
 		Completeness: covered,
 		Lowered:      reaches,
-		Caveats:      caveats,
+		Caveats:      append(caveats, unread(large)...),
 	}, nil
 }
 

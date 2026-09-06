@@ -5,6 +5,7 @@ package lsp
 
 import (
 	"os/exec"
+	"path"
 	"strings"
 	"time"
 
@@ -33,6 +34,15 @@ type Server struct {
 	// claiming "golang" would open every file under a name no server
 	// recognises.
 	LanguageID string
+
+	// Dialects are what an extension is called instead, where one
+	// language has more than one name in the protocol.
+	//
+	// TypeScript has two: a .tsx file is typescriptreact, and opened as
+	// typescript a server parses the JSX in it as an error. It is the
+	// same language and the same project to the server, which is why
+	// this is a name per extension rather than a language of its own.
+	Dialects map[string]string
 
 	// Serves is the tier this server reaches, per role.
 	//
@@ -103,6 +113,15 @@ type Refactor struct {
 // Offered reports whether the server was declared to offer this
 // refactoring at all.
 func (r Refactor) Offered() bool { return r.Kind != "" || len(r.Titles) > 0 }
+
+// Named is what a file is called in the protocol, which is the
+// language's own name unless a dialect claims the extension.
+func (s Server) Named(p string) string {
+	if held, dialect := s.Dialects[path.Ext(p)]; dialect {
+		return held
+	}
+	return s.LanguageID
+}
 
 // Reaches is the tier this server claims for a role, and [trust.None]
 // for a role it does not serve.

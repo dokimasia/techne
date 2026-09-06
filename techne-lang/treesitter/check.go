@@ -53,12 +53,9 @@ func (e *Engine) Check(
 	}
 	slices.Sort(mine)
 
-	parser := ts.NewParser()
-	defer parser.Close()
-	if err := parser.SetLanguage(e.grammar.Language); err != nil {
-		return engine.Result[edit.Finding]{}, fmt.Errorf("treesitter: %w", err)
-	}
-
+	// A parser per file rather than one for the run: which grammar
+	// parses a file is the file's own, and a language with a dialect
+	// needs both within one check.
 	var out []edit.Finding
 	for _, p := range mine {
 		if err := ctx.Err(); err != nil {
@@ -69,7 +66,7 @@ func (e *Engine) Check(
 		if files[p] == nil {
 			continue
 		}
-		found, err := e.broken(parser, p, files[p])
+		found, err := e.broken(p, files[p])
 		if err != nil {
 			return engine.Result[edit.Finding]{}, err
 		}
@@ -84,7 +81,13 @@ func (e *Engine) Check(
 
 // broken parses one file and reports where it stopped being the language
 // it claims to be.
-func (e *Engine) broken(parser *ts.Parser, p source.Path, content []byte) ([]edit.Finding, error) {
+func (e *Engine) broken(p source.Path, content []byte) ([]edit.Finding, error) {
+	parser := ts.NewParser()
+	defer parser.Close()
+	if err := parser.SetLanguage(e.grammar.For(string(p))); err != nil {
+		return nil, fmt.Errorf("treesitter: %s: %w", p, err)
+	}
+
 	tree := parser.Parse(content, nil)
 	if tree == nil {
 		return nil, fmt.Errorf("treesitter: %s: parser returned no tree", p)

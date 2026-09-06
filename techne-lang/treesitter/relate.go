@@ -5,6 +5,7 @@ package treesitter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"slices"
@@ -56,12 +57,20 @@ func (e *Engine) Relate(
 
 	name := of.Name()
 	var out []sema.Relation
+	var unread []source.Path
 	read := 0
 	for _, p := range paths {
 		if err := ctx.Err(); err != nil {
 			return engine.Result[sema.Relation]{}, err
 		}
 		if !req.Tests && e.declared.IsTest(string(p)) {
+			continue
+		}
+		if unreadable := lang.Readable(e.fsys, p); unreadable != nil {
+			if _, large := errors.AsType[lang.LargeError](unreadable); !large {
+				return engine.Result[sema.Relation]{}, unreadable
+			}
+			unread = append(unread, p)
 			continue
 		}
 		content, readErr := fs.ReadFile(e.fsys, string(p))
@@ -78,15 +87,25 @@ func (e *Engine) Relate(
 	}
 
 	slices.SortFunc(out, ordered)
+	caveats := []trust.Caveat{{
+		Code: trust.CaveatDynamic,
+		Note: "a parser matched the name an import is written under, " +
+			"which is not the same as what it resolves to",
+	}}
+	covered := trust.ScopeTotal
+	if len(unread) > 0 {
+		covered = trust.ScopePartial
+		caveats = append(caveats, trust.Caveat{
+			Code:  trust.CaveatUnread,
+			Note:  "past the size an engine parses, so these import nothing here",
+			Paths: unread,
+		})
+	}
 	return engine.Result[sema.Relation]{
 		Items:        out,
 		Skipped:      read == 0,
-		Completeness: trust.ScopeTotal,
-		Caveats: []trust.Caveat{{
-			Code: trust.CaveatDynamic,
-			Note: "a parser matched the name an import is written under, " +
-				"which is not the same as what it resolves to",
-		}},
+		Completeness: covered,
+		Caveats:      caveats,
 	}, nil
 }
 

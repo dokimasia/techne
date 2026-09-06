@@ -4,8 +4,11 @@
 package conformance
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -394,6 +397,98 @@ func Run(t *testing.T, s Suite) {
 		assert.Empty(t, outline(t, e, source.Path(s.Unclaimed)).Items,
 			"a directory holding several languages is normal, so another language's file yields nothing")
 	})
+
+	t.Run("a file past the size an engine reads", func(t *testing.T) {
+		t.Parallel()
+		// Every language has bundles, amalgamations and generated
+		// tables, and the cost of parsing one is superlinear: 1.3s at a
+		// megabyte and 11.8s at three, against a call with two seconds
+		// to spend. What holds it is a bound on the file rather than a
+		// list of directory names, so it is checked in every module.
+		held := grown(fsys, s)
+		e := build(t, held, s)
+		got := outline(t, e, ".")
+
+		t.Run("declares nothing, and the rest of the scope still answers", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, summarise(got.Items), expected(s.Declares),
+				"one file too big to read costs itself and not the directory holding it")
+		})
+
+		t.Run("is named in a caveat rather than passed over in silence", func(t *testing.T) {
+			t.Parallel()
+			// Coverage over a scope one of whose files was never opened
+			// is a claim about a directory rather than about its
+			// declarations, and a caller that wanted that file can only
+			// go and read it if it is told which one.
+			var named []source.Path
+			for _, one := range got.Caveats {
+				if one.Code == trust.CaveatUnread {
+					named = append(named, one.Paths...)
+				}
+			}
+			assert.Equal(t, named, []source.Path{source.Path(oversized(s))},
+				"the answer says which file it did not read")
+			assert.Equal(t, got.Completeness, trust.ScopePartial,
+				"and does not claim total coverage of a scope holding a file it never opened")
+		})
+
+		t.Run("is refused rather than indexed when a caller names it", func(t *testing.T) {
+			t.Parallel()
+			// An index asks per file and reaches the engine without
+			// passing a walk, so the walk's bound has to hold here too.
+			_, err := e.Index(t.Context(), source.Path(oversized(s)))
+			var large lang.LargeError
+			assert.True(t, errors.As(err, &large),
+				"a path named directly is held to the same bound a walk applies")
+		})
+	})
+
+	t.Run("a file the workspace calls generated", func(t *testing.T) {
+		t.Parallel()
+		// The write path takes a caller's path straight to whatever
+		// reads it. Planning a change over a bundle under dist cost
+		// three seconds before the rule was asked for here as well.
+		held := grown(fsys, s)
+		held[".gitignore"] = &fstest.MapFile{Data: []byte("generated\n")}
+		buried := "generated/" + oversized(s)
+		held[buried] = &fstest.MapFile{Data: []byte(anyFile(s))}
+
+		e := build(t, held, s)
+		_, err := e.Index(t.Context(), source.Path(buried))
+		var generated lang.GeneratedError
+		assert.True(t, errors.As(err, &generated),
+			"a path a caller names is judged by the workspace's own rule, not only by a walk")
+	})
+}
+
+// grown is the module's fixture with one file past [lang.Largest] added.
+//
+// Whitespace, because the file is never read: what decides it is the
+// size on disk, and a megabyte of real source would slow every module's
+// suite to prove nothing more.
+func grown(fsys fstest.MapFS, s Suite) fstest.MapFS {
+	held := fstest.MapFS{}
+	maps.Copy(held, fsys)
+	held[oversized(s)] = &fstest.MapFile{
+		Data: bytes.Repeat([]byte("\n"), lang.Largest+1),
+	}
+	return held
+}
+
+// oversized is the path the size check is exercised at, under an
+// extension this language claims so the walk reaches it.
+func oversized(s Suite) string {
+	return "toobig" + s.Declaration.Extensions[0]
+}
+
+// anyFile is one of the module's own fixture files, for a check that
+// needs content this language parses and does not care which.
+func anyFile(s Suite) string {
+	for _, held := range slices.Sorted(maps.Keys(s.Files)) {
+		return s.Files[held]
+	}
+	return ""
 }
 
 // documenting writes documentation onto one declaration and reads it

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 	"go.lsp.dev/protocol"
 )
@@ -232,6 +233,21 @@ func (e *Engine) settled(ctx context.Context) (trust.Completeness, []trust.Cavea
 		return trust.ScopeTotal, []trust.Caveat{dynamic}
 	}
 	return trust.ScopePartial, []trust.Caveat{dynamic, warming}
+}
+
+// unread is the caveat naming files a walk reached and did not read.
+//
+// Nil for a walk that read everything, so the common answer carries no
+// caveat about a limit it did not hit.
+func unread(paths []source.Path) []trust.Caveat {
+	if len(paths) == 0 {
+		return nil
+	}
+	return []trust.Caveat{{
+		Code:  trust.CaveatUnread,
+		Note:  "past the size an engine reads, so the server was never given them",
+		Paths: paths,
+	}}
 }
 
 // bound is what an answer that rests on binding is worth: how much of

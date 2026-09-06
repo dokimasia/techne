@@ -25,8 +25,10 @@ import (
 // "there is no such directory".
 //
 // A directory holding code the workspace did not write is not walked;
-// see [Vendored] for which and why. The scope itself is never skipped,
-// so a caller that names one is answered about it.
+// see [Vendored] for which and why. What the workspace itself says is
+// not its source is not walked either; see [ignores]. The scope itself
+// is never skipped either way, so a caller that names one is answered
+// about it.
 //
 // Every engine reading files needs this, so it lives here rather than in
 // one of them.
@@ -39,6 +41,28 @@ func FilesIn(fsys fs.FS, scope source.Path, extensions []string) ([]source.Path,
 	info, err := fs.Stat(fsys, name)
 	if err != nil {
 		return nil, fmt.Errorf("lang: scope %q: %w", scope, err)
+	}
+
+	// The rules above the scope apply to everything in it, so they are
+	// read before anything else. A caller narrowing to one package still
+	// gets what the workspace root said about generated code, and a
+	// caller naming one file gets it as surely as one naming a
+	// directory: the 3.2 megabyte bundle that made this worth measuring
+	// is a file, and reached by name it was parsed.
+	var skipping ignores
+	for _, above := range ancestors(name) {
+		skipping.reading(fsys, above)
+	}
+	if skipping.skips(name, info.IsDir()) {
+		// The scope is what the workspace calls generated. A dependency
+		// directory is exempt when a caller names one, because reading a
+		// dependency is a thing to want; this is not the same — it is
+		// the project's own statement that this holds output, and
+		// parsing it costs whatever the build wrote.
+		//
+		// Reported rather than read, so a caller is told why the answer
+		// is empty instead of reading it as an empty directory.
+		return nil, GeneratedError{Scope: scope}
 	}
 
 	if !info.IsDir() {
@@ -57,11 +81,14 @@ func FilesIn(fsys fs.FS, scope source.Path, extensions []string) ([]source.Path,
 			// The scope itself is never skipped. A caller that named a
 			// dependency directory asked about it, and answering nothing
 			// would report it as empty.
-			if p != name && Vendored(path.Base(p)) {
+			if p != name && (Vendored(path.Base(p)) || skipping.skips(p, true)) {
 				return fs.SkipDir
 			}
+			// Read on the way in, so a directory's own rules apply to
+			// everything under it and to nothing above it.
+			skipping.reading(fsys, p)
 			return nil
-		case !Claims(p, extensions):
+		case !Claims(p, extensions) || skipping.skips(p, false):
 			return nil
 		}
 		out = append(out, source.Path(p))

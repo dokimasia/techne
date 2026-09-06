@@ -36,7 +36,14 @@ type document struct {
 }
 
 // read loads a file for one call.
+//
+// Gated the same way [Engine.open] is, because a role that resolves a
+// position reads the file without ever giving it to the server, and a
+// gate on one of the two is a gate a caller can walk around.
 func (e *Engine) read(p source.Path) (document, error) {
+	if unreadable := e.readable(p); unreadable != nil {
+		return document{}, unreadable
+	}
 	content, err := os.ReadFile(e.fullPath(p))
 	if err != nil {
 		return document{}, fmt.Errorf("lsp: read %s: %w", p, err)

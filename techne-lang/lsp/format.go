@@ -5,6 +5,7 @@ package lsp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"go.dokimi.dev/techne/core/edit"
@@ -49,6 +50,7 @@ func (e *Engine) Format(ctx context.Context, paths []source.Path) (engine.Result
 	}
 
 	var out []edit.Change
+	var large []source.Path
 	for _, p := range paths {
 		if err := ctx.Err(); err != nil {
 			return engine.Result[edit.Change]{}, err
@@ -60,6 +62,12 @@ func (e *Engine) Format(ctx context.Context, paths []source.Path) (engine.Result
 			continue
 		}
 		if opened := e.open(ctx, held, p); opened != nil {
+			// A file past the size an engine reads is left as it is
+			// rather than costing the rest of the set its formatting.
+			if _, big := errors.AsType[lang.LargeError](opened); big {
+				large = append(large, p)
+				continue
+			}
 			return engine.Result[edit.Change]{}, opened
 		}
 
@@ -86,9 +94,13 @@ func (e *Engine) Format(ctx context.Context, paths []source.Path) (engine.Result
 		out = append(out, change)
 	}
 
+	covered := trust.ScopeTotal
+	if len(large) > 0 {
+		covered = trust.ScopePartial
+	}
 	return engine.Result[edit.Change]{
 		Items:        out,
-		Completeness: trust.ScopeTotal,
-		Caveats:      []trust.Caveat{dynamic},
+		Completeness: covered,
+		Caveats:      append([]trust.Caveat{dynamic}, unread(large)...),
 	}, nil
 }

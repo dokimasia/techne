@@ -25,11 +25,15 @@ const (
 	IdentityGo         = string(protocol.LanguageKindGo)
 	IdentityJava       = string(protocol.LanguageKindJava)
 	IdentityJavaScript = string(protocol.LanguageKindJavaScript)
-	IdentityPython     = string(protocol.LanguageKindPython)
-	IdentityRuby       = string(protocol.LanguageKindRuby)
-	IdentityRust       = string(protocol.LanguageKindRust)
-	IdentityScala      = string(protocol.LanguageKindScala)
-	IdentityTypeScript = string(protocol.LanguageKindTypeScript)
+	// The dialects. A server is told which of the two a file is, and
+	// tsserver answers about JSX only for the react one.
+	IdentityJavaScriptReact = string(protocol.LanguageKindJavaScriptReact)
+	IdentityTypeScriptReact = string(protocol.LanguageKindTypeScriptReact)
+	IdentityPython          = string(protocol.LanguageKindPython)
+	IdentityRuby            = string(protocol.LanguageKindRuby)
+	IdentityRust            = string(protocol.LanguageKindRust)
+	IdentityScala           = string(protocol.LanguageKindScala)
+	IdentityTypeScript      = string(protocol.LanguageKindTypeScript)
 )
 
 // Binding is what a server that runs a type checker reaches, per role.

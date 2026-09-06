@@ -5,6 +5,7 @@ package lsp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/lang"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 )
@@ -68,6 +70,7 @@ func (e *Engine) Verify(
 
 	var out []edit.Finding
 	var waited bool
+	var large []source.Path
 	for _, p := range paths {
 		if stopped := ctx.Err(); stopped != nil {
 			return engine.Result[edit.Finding]{}, stopped
@@ -76,6 +79,15 @@ func (e *Engine) Verify(
 			continue
 		}
 		if opened := e.open(ctx, held, p); opened != nil {
+			// A file past the size an engine reads is one nothing
+			// looked at, which lowers what this answer covers rather
+			// than ending it. Coverage is the whole point here: a gate
+			// saying a scope is clean must not make that claim about a
+			// file it never opened.
+			if _, big := errors.AsType[lang.LargeError](opened); big {
+				large = append(large, p)
+				continue
+			}
 			return engine.Result[edit.Finding]{}, opened
 		}
 
@@ -99,13 +111,14 @@ func (e *Engine) Verify(
 	// analysed: one that never reported is a file nothing looked at, and
 	// nothing looked at is not nothing wrong.
 	covered, caveats := e.settled(ctx)
-	if waited {
+	if waited || len(large) > 0 {
 		covered = trust.ScopePartial
 	}
+	caveats = append(caveats, reasons(suites, waited)...)
 	return engine.Result[edit.Finding]{
 		Items:        out,
 		Completeness: covered,
-		Caveats:      append(caveats, reasons(suites, waited)...),
+		Caveats:      append(caveats, unread(large)...),
 	}, nil
 }
 

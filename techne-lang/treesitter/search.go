@@ -28,13 +28,13 @@ import (
 // breaks any remaining tie, so two identical requests answer
 // identically.
 func (e *Engine) Search(ctx context.Context, req engine.Request, q engine.Query) (engine.Result[sema.Symbol], error) {
-	all, read, err := e.symbols(ctx, req)
+	all, err := e.symbols(ctx, req)
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, err
 	}
 
-	matched := make([]sema.Symbol, 0, len(all))
-	for _, s := range all {
+	matched := make([]sema.Symbol, 0, len(all.items))
+	for _, s := range all.items {
 		if q.Kind != sema.KindUnknown && s.Kind != q.Kind {
 			continue
 		}
@@ -60,7 +60,7 @@ func (e *Engine) Search(ctx context.Context, req engine.Request, q engine.Query)
 	if q.Limit > 0 && len(matched) > q.Limit {
 		matched = matched[:q.Limit]
 	}
-	return found(matched, read), nil
+	return found(matched, all.read, all.unread), nil
 }
 
 // How a name matched, lowest first. noMatch sorts last and is filtered

@@ -15,6 +15,7 @@ import (
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/lang"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -45,6 +46,11 @@ func (e *Engine) Resolve(
 		return engine.Result[sema.Symbol]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
 
+	// A caller names this path, so it reaches here without passing a
+	// walk and the walk's rules are asked for here instead.
+	if unreadable := lang.Readable(os.DirFS(e.root), p); unreadable != nil {
+		return engine.Result[sema.Symbol]{}, unreadable
+	}
 	content, err := os.ReadFile(filepath.Join(e.root, filepath.FromSlash(string(p))))
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, fmt.Errorf("checker: read %s: %w", p, err)

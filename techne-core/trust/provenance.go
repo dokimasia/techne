@@ -59,6 +59,11 @@ const (
 	CaveatUnrouted CaveatCode = "unrouted"
 	// CaveatUnsupported means nothing serves this language and role.
 	CaveatUnsupported CaveatCode = "unsupported"
+	// CaveatUnread means files in scope were left unread because reading
+	// them costs more than the answer is worth. Separate from
+	// [CaveatTruncated], which is an answer that was cut to fit: a
+	// narrower scope fixes that one and does not fix this one.
+	CaveatUnread CaveatCode = "unread"
 )
 
 // Caveat is a limit on an answer that its fidelity does not express.

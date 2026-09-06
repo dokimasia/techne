@@ -43,14 +43,18 @@ func (e *Engine) Plan(
 		return engine.Result[edit.Change]{}, err
 	}
 
+	if unreadable := lang.Readable(e.fsys, p); unreadable != nil {
+		return engine.Result[edit.Change]{}, unreadable
+	}
 	content, err := fs.ReadFile(e.fsys, string(p))
 	if err != nil {
 		return engine.Result[edit.Change]{}, fmt.Errorf("treesitter: read %s: %w", p, err)
 	}
 
+	held := e.grammar.For(string(p))
 	parser := ts.NewParser()
 	defer parser.Close()
-	if unusable := parser.SetLanguage(e.grammar.Language); unusable != nil {
+	if unusable := parser.SetLanguage(held); unusable != nil {
 		return engine.Result[edit.Change]{}, fmt.Errorf("treesitter: %s: %w", p, unusable)
 	}
 	tree := parser.Parse(content, nil)
@@ -59,7 +63,7 @@ func (e *Engine) Plan(
 	}
 	defer tree.Close()
 
-	node, kind, found := e.at(tree, content, at)
+	node, kind, found := e.at(e.tags[held], tree, content, at)
 	if !found {
 		return engine.Result[edit.Change]{}, fmt.Errorf(
 			"%w: %s declares nothing at byte %d", engine.ErrRefuse, p, at)
@@ -93,12 +97,12 @@ func (e *Engine) site(
 		return target.Span.Path, target.Span.Start.Offset, nil
 	}
 
-	declared, _, err := e.symbols(ctx, req)
+	declared, err := e.symbols(ctx, req)
 	if err != nil {
 		return "", 0, err
 	}
 	var found []sema.Symbol
-	for _, s := range declared {
+	for _, s := range declared.items {
 		if s.ID == target.Symbol {
 			found = append(found, s)
 		}
@@ -108,6 +112,14 @@ func (e *Engine) site(
 	case 1:
 		return found[0].Span.Path, found[0].Span.Start.Offset, nil
 	case 0:
+		if len(declared.unread) > 0 {
+			// "declares nothing" over a scope holding a file nothing
+			// opened is the wrong answer to give: a caller acts on it by
+			// believing the declaration is not there.
+			return "", 0, fmt.Errorf(
+				"%w: %s was not read, so %s was not looked for: past the %d bytes an engine parses",
+				engine.ErrDecline, list(declared.unread), target.Symbol, lang.Largest)
+		}
 		return "", 0, fmt.Errorf("%w: %q declares no %s",
 			engine.ErrDecline, req.Scope, target.Symbol)
 	default:
@@ -115,6 +127,15 @@ func (e *Engine) site(
 			"%w: %q declares %s %d times, so it names no one declaration: %s",
 			engine.ErrRefuse, req.Scope, target.Symbol, len(found), strings.Join(where(found), ", "))
 	}
+}
+
+// list names the files a scope holds that were not read.
+func list(paths []source.Path) string {
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		out = append(out, string(p))
+	}
+	return strings.Join(out, ", ")
 }
 
 // where lists the positions several declarations sharing one identity
@@ -134,12 +155,17 @@ func where(found []sema.Symbol) []string {
 // way, so the offsets an outline hands back are the offsets this
 // answers to. A byte that several patterns match is resolved as the
 // outline resolves it, by rank.
-func (e *Engine) at(tree *ts.Tree, content []byte, offset int) (*ts.Node, sema.Kind, bool) {
+func (*Engine) at(
+	tags *ts.Query,
+	tree *ts.Tree,
+	content []byte,
+	offset int,
+) (*ts.Node, sema.Kind, bool) {
 	cursor := ts.NewQueryCursor()
 	defer cursor.Close()
 
-	names := e.tags.CaptureNames()
-	matches := cursor.Matches(e.tags, tree.RootNode(), content)
+	names := tags.CaptureNames()
+	matches := cursor.Matches(tags, tree.RootNode(), content)
 
 	var (
 		node  *ts.Node

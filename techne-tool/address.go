@@ -44,7 +44,42 @@ func addressed(
 				"nothing outlines %q, so no declaration could be found in it", scope),
 		}
 	}
-	return pick(answered.Items, scope, name, kind)
+	held, failed := pick(answered.Items, scope, name, kind)
+	if failed != nil && len(matching(answered.Items, name, kind)) == 0 {
+		// "declares nothing called x" over a scope holding a file
+		// nothing opened is a claim the outline did not make. A caller
+		// acts on it by believing the declaration is not there, when
+		// what happened is that nobody looked.
+		if why, unread := passedOver(answered.Provenance); unread {
+			return sema.Symbol{}, &Failure{
+				Code: trust.Refused.String(),
+				Reason: fmt.Sprintf(
+					"%q was not read in full: %s is past the size an engine reads, "+
+						"so %q was not looked for there",
+					scope, why, name),
+			}
+		}
+	}
+	return held, failed
+}
+
+// passedOver reports what a scope holds that was not read, if anything.
+func passedOver(p trust.Provenance) (string, bool) {
+	for _, one := range p.Caveats {
+		if one.Code == trust.CaveatUnread {
+			return strings.Join(paths(one.Paths), ", "), true
+		}
+	}
+	return "", false
+}
+
+// paths renders the files a caveat names.
+func paths(of []source.Path) []string {
+	out := make([]string, 0, len(of))
+	for _, p := range of {
+		out = append(out, string(p))
+	}
+	return out
 }
 
 // pick is the half of addressed that needs no service, so a tool that already

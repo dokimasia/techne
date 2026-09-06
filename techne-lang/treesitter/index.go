@@ -30,6 +30,12 @@ func (e *Engine) Index(ctx context.Context, p source.Path) (engine.Result[sema.S
 	if err := ctx.Err(); err != nil {
 		return engine.Result[sema.Symbol]{}, err
 	}
+	// A caller naming a file reaches this without passing a walk, so the
+	// walk's rules are asked for here. A bundle the workspace calls
+	// generated is not indexed just because something enumerated it.
+	if unreadable := lang.Readable(e.fsys, p); unreadable != nil {
+		return engine.Result[sema.Symbol]{}, unreadable
+	}
 
 	content, err := fs.ReadFile(e.fsys, string(p))
 	if err != nil {
@@ -39,7 +45,7 @@ func (e *Engine) Index(ctx context.Context, p source.Path) (engine.Result[sema.S
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, err
 	}
-	return found(declared, 1), nil
+	return found(declared, 1, nil), nil
 }
 
 // Granularity is [engine.InvalidateFile].

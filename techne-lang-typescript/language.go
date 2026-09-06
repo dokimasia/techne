@@ -35,8 +35,13 @@ var extendsQuery string
 // engine serves it.
 func Declaration() lang.Declaration {
 	return lang.Declaration{
-		Language:   Language,
-		Extensions: []string{".ts", ".mts", ".cts"},
+		Language: Language,
+		// .tsx is TypeScript with JSX in it. Claimed here rather than by
+		// a language of its own, because it is one language to a server
+		// and to a type checker: a declaration in a .tsx file is
+		// TypeScript, and a rename crossing the two would otherwise be
+		// two languages and refuse itself.
+		Extensions: []string{".ts", ".mts", ".cts", ".tsx"},
 		Manifests:  []string{"package.json", "tsconfig.json"},
 		Comment: lang.CommentStyle{
 			Line: "// ", BlockOpen: "/*", BlockClose: "*/",
@@ -55,7 +60,14 @@ func Declaration() lang.Declaration {
 func Grammar() treesitter.Grammar {
 	return treesitter.Grammar{
 		Language: ts.NewLanguage(binding.LanguageTypescript()),
-		Tags:     extendsQuery,
+		// The plain grammar does not parse JSX: a component file comes
+		// back as a tree with an error in it and every declaration under
+		// the error is lost. The binding ships the second grammar and
+		// the same tags query compiles against both.
+		Dialects: map[string]*ts.Language{
+			".tsx": ts.NewLanguage(binding.LanguageTSX()),
+		},
+		Tags: extendsQuery,
 	}
 }
 
@@ -86,7 +98,10 @@ func Server() lsp.Server {
 		Name:       server,
 		Command:    []string{server, stdio},
 		LanguageID: lsp.IdentityTypeScript,
-		Serves:     lsp.Binding(),
+		// Opened as typescript, a server reads the JSX in a .tsx file as
+		// an error.
+		Dialects: map[string]string{".tsx": lsp.IdentityTypeScriptReact},
+		Serves:   lsp.Binding(),
 		// typescript-language-server offers an inner function beside a
 		// method on the class, both under the same kind and the inner
 		// one first. An inner function cannot see the receiver, so

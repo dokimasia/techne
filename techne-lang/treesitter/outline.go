@@ -5,8 +5,12 @@ package treesitter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
+	"runtime"
+	"slices"
+	"sync"
 
 	ts "github.com/tree-sitter/go-tree-sitter"
 	"go.dokimi.dev/techne/core/engine"
@@ -23,14 +27,16 @@ import (
 // not claim is skipped rather than refused, because a directory holding
 // several languages is the normal case.
 //
-// Coverage is total: the walk reads every file in scope. What the
-// answer is worth is still limited by the tier, and a caveat says so.
+// Coverage is total: the walk reaches every file in scope. What the
+// answer is worth is still limited by the tier, and a caveat says so. A
+// file past [lang.Largest] is named in a caveat rather than read, so one
+// bundle in a directory does not cost the rest of it an answer.
 func (e *Engine) Outline(ctx context.Context, req engine.Request) (engine.Result[sema.Symbol], error) {
-	out, read, err := e.symbols(ctx, req)
+	out, err := e.symbols(ctx, req)
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, err
 	}
-	return found(out, read), nil
+	return found(out.items, out.read, out.unread), nil
 }
 
 // symbols reads every declaration in a scope. Outline returns them as
@@ -39,52 +45,124 @@ func (e *Engine) Outline(ctx context.Context, req engine.Request) (engine.Result
 // It reports how many files it read as well as what it found, because a
 // scope holding none of this language is a different answer from a scope
 // holding files that declare nothing.
-func (e *Engine) symbols(ctx context.Context, req engine.Request) ([]sema.Symbol, int, error) {
+//
+// # Files are parsed at once
+//
+// One file's parse needs nothing from another's, and a parser is taken
+// per file rather than shared, so there is nothing to serialise. What
+// there is to bound is memory: a workspace of ten thousand files read
+// all at once is ten thousand files in memory, so as many run as the
+// machine has cores and no more.
+//
+// The order is the walk's, not the order they finished, because two
+// identical requests must answer identically.
+//
+// # A file too big to read is left out rather than refused
+//
+// One bundle in a directory would otherwise cost the whole scope its
+// answer, which is the wrong trade: the other files parsed. It is named
+// in a caveat instead, so the coverage the answer claims is the coverage
+// it has.
+func (e *Engine) symbols(ctx context.Context, req engine.Request) (symbols, error) {
 	paths, err := lang.FilesIn(e.fsys, req.Scope, e.declared.Extensions)
 	if err != nil {
-		return nil, 0, err
+		return symbols{}, err
+	}
+	if !req.Tests {
+		paths = slices.DeleteFunc(paths, func(p source.Path) bool {
+			return e.declared.IsTest(string(p))
+		})
 	}
 
-	read := 0
-	var out []sema.Symbol
-	for _, p := range paths {
+	var (
+		wait   sync.WaitGroup
+		room   = make(chan struct{}, max(runtime.NumCPU(), 1))
+		held   = make([][]sema.Symbol, len(paths))
+		failed = make([]error, len(paths))
+	)
+	for at, p := range paths {
 		if err := ctx.Err(); err != nil {
-			return nil, 0, err
+			wait.Wait()
+			return symbols{}, err
 		}
-		if !req.Tests && e.declared.IsTest(string(p)) {
-			continue
-		}
-		content, readErr := fs.ReadFile(e.fsys, string(p))
-		if readErr != nil {
-			return nil, 0, fmt.Errorf("treesitter: read %s: %w", p, readErr)
-		}
-		declared, outlineErr := e.declarations(p, content)
-		if outlineErr != nil {
-			return nil, 0, outlineErr
-		}
-		read++
-		out = append(out, declared...)
+		wait.Add(1)
+		room <- struct{}{}
+		go func() {
+			defer func() { <-room; wait.Done() }()
+
+			if unreadable := lang.Readable(e.fsys, p); unreadable != nil {
+				failed[at] = unreadable
+				return
+			}
+			content, readErr := fs.ReadFile(e.fsys, string(p))
+			if readErr != nil {
+				failed[at] = fmt.Errorf("treesitter: read %s: %w", p, readErr)
+				return
+			}
+			held[at], failed[at] = e.declarations(p, content)
+		}()
 	}
-	return out, read, nil
+	wait.Wait()
+
+	out := symbols{}
+	for at, p := range paths {
+		_, large := errors.AsType[lang.LargeError](failed[at])
+		switch {
+		case large:
+			out.unread = append(out.unread, p)
+			continue
+		case failed[at] != nil:
+			return symbols{}, failed[at]
+		}
+		out.read++
+		out.items = append(out.items, held[at]...)
+	}
+	return out, nil
+}
+
+// symbols is what a scope declared, and what reading it did not cover.
+type symbols struct {
+	items []sema.Symbol
+	// read is how many files were read, which a scope holding none of
+	// this language distinguishes from one holding files that declare
+	// nothing.
+	read int
+	// unread is the files left out because they are past [lang.Largest].
+	unread []source.Path
 }
 
 // found wraps symbols in the result every role at this tier returns.
 //
-// Coverage is total: the walk reads every file in scope. What the answer
-// is worth is limited by the tier, and the caveat says so.
+// Coverage is total where the walk read every file in scope. What the
+// answer is worth is limited by the tier, and the caveat says so. A file
+// the walk reached and did not read makes it partial and is named,
+// because total coverage of a scope one of whose files was never opened
+// is a claim about a directory rather than about its declarations.
 //
 // A walk that read nothing says so. A scope holding no file of this
 // language is not an answer about the language, and a service merging
 // several must not let it lower what the others are worth.
-func found(items []sema.Symbol, read int) engine.Result[sema.Symbol] {
+func found(items []sema.Symbol, read int, unread []source.Path) engine.Result[sema.Symbol] {
+	caveats := []trust.Caveat{{
+		Code: trust.CaveatDynamic,
+		Note: "a parser matched text: a name resolved across files is coincidence",
+	}}
+	if len(unread) > 0 {
+		caveats = append(caveats, trust.Caveat{
+			Code:  trust.CaveatUnread,
+			Note:  "past the size an engine parses, so these declare nothing here",
+			Paths: unread,
+		})
+	}
+	covered := trust.ScopeTotal
+	if len(unread) > 0 {
+		covered = trust.ScopePartial
+	}
 	return engine.Result[sema.Symbol]{
 		Items:        items,
 		Skipped:      read == 0,
-		Completeness: trust.ScopeTotal,
-		Caveats: []trust.Caveat{{
-			Code: trust.CaveatDynamic,
-			Note: "a parser matched text: a name resolved across files is coincidence",
-		}},
+		Completeness: covered,
+		Caveats:      caveats,
 	}
 }
 
@@ -94,9 +172,13 @@ func found(items []sema.Symbol, read int) engine.Result[sema.Symbol] {
 // match missing either is skipped: a query pattern that captures a name
 // without saying what it declares describes no symbol.
 func (e *Engine) declarations(p source.Path, content []byte) ([]sema.Symbol, error) {
+	// The grammar that parses this file, which is not always the one
+	// the language leads with: a .tsx file is TypeScript and the plain
+	// TypeScript grammar does not parse it.
+	held := e.grammar.For(string(p))
 	parser := ts.NewParser()
 	defer parser.Close()
-	if err := parser.SetLanguage(e.grammar.Language); err != nil {
+	if err := parser.SetLanguage(held); err != nil {
 		return nil, fmt.Errorf("treesitter: %s: %w", p, err)
 	}
 
@@ -110,7 +192,8 @@ func (e *Engine) declarations(p source.Path, content []byte) ([]sema.Symbol, err
 	defer cursor.Close()
 
 	unit := source.Path(e.declared.Namespace(string(p)))
-	names := e.tags.CaptureNames()
+	query := e.tags[held]
+	names := query.CaptureNames()
 
 	var out []sema.Symbol
 	// Where each symbol's declaration began, so a statement binding
@@ -120,7 +203,7 @@ func (e *Engine) declarations(p source.Path, content []byte) ([]sema.Symbol, err
 	walk := tree.RootNode().Walk()
 	defer walk.Close()
 
-	matches := cursor.Matches(e.tags, tree.RootNode(), content)
+	matches := cursor.Matches(query, tree.RootNode(), content)
 	for match := matches.Next(); match != nil; match = matches.Next() {
 		kind, node, named, span, ok := read(match, names, p)
 		if !ok {

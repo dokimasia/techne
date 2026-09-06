@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/edit"
@@ -121,6 +122,29 @@ func TestEngine(t *testing.T) {
 			t.Parallel()
 			e := serving(t, modeDefault, map[string]string{"a.fake": content})
 			assert.NoError(t, e.Available(t.Context()), "the fake is this test binary")
+		})
+	})
+
+	t.Run("a server that does not answer the handshake", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("is given up on rather than waited out", func(t *testing.T) {
+			t.Parallel()
+			// The connection came up, so the program is there and it is
+			// not talking. Measured against typescript-language-server
+			// over a repository whose TypeScript version it refuses,
+			// fourteen seconds of an agent's turn went on a server that
+			// was never going to answer.
+			held := pretending(modeSilent)
+			e, err := lsp.New(t.TempDir(), declared(), held)
+			assert.NoError(t, err, "an engine builds over the workspace")
+			stopping(t, e)
+
+			began := time.Now()
+			_, err = e.Outline(t.Context(), engine.Request{Scope: "."})
+			assert.HasError(t, err, "a server that says nothing answers nothing")
+			assert.True(t, time.Since(began) < time.Minute,
+				"and is given up on inside a window this engine chose")
 		})
 	})
 
