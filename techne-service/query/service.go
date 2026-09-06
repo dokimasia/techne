@@ -136,5 +136,5 @@ func ask[T any](
 		return engine.Unsupported[T](fmt.Sprintf(
 			"no engine serves %q for this role", req.Scope)), nil
 	}
-	return merge(answered, req.Preferred), nil
+	return merge(answered, req.Preferred, declined), nil
 }

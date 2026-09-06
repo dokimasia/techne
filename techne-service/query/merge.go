@@ -32,7 +32,8 @@ func keep(into, from []trust.Caveat) []trust.Caveat {
 	return into
 }
 
-// merge combines what several languages answered about one scope.
+// merge combines what several languages answered about one scope, and
+// says what none of them covered.
 //
 // A merged answer claims only the weakest evidence behind it. Half an
 // answer from a parser makes the whole of it a parser's answer, because
@@ -40,14 +41,51 @@ func keep(into, from []trust.Caveat) []trust.Caveat {
 //
 // The engine field names each contributor. Naming one would say a
 // different engine produced items it never saw.
-func merge[T any](parts []engine.Answer[T], want trust.Fidelity) engine.Answer[T] {
+//
+// # A language that said nothing is not in parts
+//
+// It is in the declines, which is why they come in beside the answers.
+// An engine that declined contributed no items and no provenance, so
+// nothing in the merge is lowered by it, and the answer would claim
+// total coverage of a scope it covered part of.
+//
+// Measured: relations over a TypeScript directory, with no language
+// named, was answered by six servers for languages the directory holds
+// none of, while both TypeScript engines declined. The answer was "0
+// sites, resolved, total coverage, an empty answer here means there are
+// none" — a negative claim made by the languages that were not there,
+// about the one that was.
+func merge[T any](
+	parts []engine.Answer[T],
+	want trust.Fidelity,
+	silent engine.Declined,
+) engine.Answer[T] {
 	if len(parts) == 0 {
 		return engine.Answer[T]{}
 	}
-	if len(parts) == 1 {
-		return parts[0]
+
+	merged := parts[0]
+	if len(parts) > 1 {
+		merged = combined(parts, want)
+	}
+	if len(silent) == 0 {
+		return merged
 	}
 
+	// Nothing answered for a language that could have. That is a gap in
+	// the scope rather than a fact about it, so the answer stops
+	// claiming to cover the whole and says which language is missing.
+	merged.Provenance.Completeness = trust.ScopePartial
+	merged.Provenance.Caveats = keep(merged.Provenance.Caveats, []trust.Caveat{{
+		Code: trust.CaveatUnsupported,
+		Note: "nothing answered for part of the scope: " + silent.Reason(),
+	}})
+	merged.Status = statused(merged.Provenance, want)
+	return merged
+}
+
+// combined folds several languages' answers into one.
+func combined[T any](parts []engine.Answer[T], want trust.Fidelity) engine.Answer[T] {
 	merged := engine.Answer[T]{
 		Provenance: trust.Provenance{
 			Fidelity:     trust.Resolved,
@@ -80,17 +118,21 @@ func merge[T any](parts []engine.Answer[T], want trust.Fidelity) engine.Answer[T
 	}
 	merged.Provenance.Engine = strings.Join(names, ", ")
 
-	// The status is derived from the merged evidence, so it says the
-	// same thing a single-engine answer at this tier would.
-	switch {
-	case merged.Provenance.Fidelity < want:
-		merged.Status = trust.Degraded
-	case merged.Provenance.Completeness == trust.ScopePartial:
-		merged.Status = trust.Partial
-	default:
-		merged.Status = trust.OK
-	}
+	merged.Status = statused(merged.Provenance, want)
 	return merged
+}
+
+// statused is what an answer's own evidence makes it, so a merged answer
+// says the same thing a single-engine answer at this tier would.
+func statused(p trust.Provenance, want trust.Fidelity) trust.Status {
+	switch {
+	case p.Fidelity < want:
+		return trust.Degraded
+	case p.Completeness == trust.ScopePartial:
+		return trust.Partial
+	default:
+		return trust.OK
+	}
 }
 
 // spoke reports whether any engine read a file.
