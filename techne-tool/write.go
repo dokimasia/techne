@@ -60,6 +60,27 @@ type Changed struct {
 	Changes []Rewrite `json:"changes,omitempty"`
 }
 
+// mended is the fixes a gate offered, as text rather than as offsets.
+//
+// The offsets are into content nobody has written, so handing them over
+// would be handing over coordinates a caller cannot use. What it can use
+// is what to write.
+func mended(found []edit.Finding) []Fix {
+	var out []Fix
+	for _, one := range found {
+		for _, change := range one.Fix {
+			for _, held := range change.Edits {
+				out = append(out, Fix{
+					Path: string(change.Path),
+					Line: one.Diagnostic.Span.Start.Line + 1,
+					Now:  held.New,
+				})
+			}
+		}
+	}
+	return out
+}
+
 // Rewrite is one range within a file, as text rather than as offsets.
 type Rewrite struct {
 	Line int    `json:"line"`
@@ -70,12 +91,40 @@ type Rewrite struct {
 // Gate is what judged a change before it was written.
 //
 // It names what ran as well as what it found. "It parses" and "it
-// builds" are different promises, and a caller told only "pass" cannot
-// tell which one it was given.
+// compiles" are different promises, and a caller told only "pass" cannot
+// tell which one it was given — nor which engine gave it, which is not
+// the one that planned the change: a parser gates what a type checker
+// planned whenever no server is running.
 type Gate struct {
 	Gate   string `json:"gate"`
 	Engine string `json:"engine,omitempty"`
 	Result string `json:"result"`
+	// Fixes are what the gate said would resolve what it found, where it
+	// named one obvious change each. They are written against the result
+	// the change would have produced rather than against the files as
+	// they are, so a caller reads them and asks again rather than
+	// applying them on their own.
+	Fixes []Fix `json:"fixes,omitempty"`
+}
+
+// gated is what judged a change, and nothing where nothing did.
+//
+// The tier names what was checked. A syntactic gate says the result is
+// still the language it was; a resolved one says it still means
+// something, and only the second refuses a rename onto a name already
+// taken.
+func gated(done edit.Outcome, result string) *Gate {
+	if done.Gate == nil {
+		return nil
+	}
+	held := "parse"
+	if done.Gate.Fidelity >= trust.Resolved {
+		held = "compile"
+	}
+	return &Gate{
+		Gate: held, Engine: done.Gate.Engine, Result: result,
+		Fixes: mended(done.Diagnostics),
+	}
 }
 
 // Failed reports whether a caller should read this as a failure.
@@ -128,6 +177,9 @@ func (w Written) Render() string {
 		fmt.Fprintf(&b, "%ss (%s)", w.Verified.Gate, w.Verified.Engine)
 	default:
 		fmt.Fprintf(&b, "%s: %s (%s)", w.Verified.Gate, w.Verified.Result, w.Verified.Engine)
+		for _, one := range w.Verified.Fixes {
+			fmt.Fprintf(&b, "\n%s:%d would take %q", one.Path, one.Line, one.Now)
+		}
 	}
 	switch {
 	case w.Applied:
@@ -219,10 +271,7 @@ func reported(op edit.Operation, scope Scope, target string, done edit.Outcome) 
 
 	switch {
 	case done.Status == trust.Refused && len(done.Diagnostics) > 0:
-		out.Verified = &Gate{
-			Gate: "parse", Engine: done.Provenance.Engine,
-			Result: done.Diagnostics[0].Diagnostic.Message,
-		}
+		out.Verified = gated(done, done.Diagnostics[0].Diagnostic.Message)
 		out.Error = &Failure{Code: trust.Refused.String(), Reason: done.Reason}
 	case done.Status == trust.Refused:
 		out.Error = &Failure{Code: trust.Refused.String(), Reason: done.Reason}
@@ -232,7 +281,7 @@ func reported(op edit.Operation, scope Scope, target string, done edit.Outcome) 
 		// Nothing judged it, so no gate is reported rather than one
 		// reporting that it passed.
 	default:
-		out.Verified = &Gate{Gate: "parse", Engine: done.Provenance.Engine, Result: "pass"}
+		out.Verified = gated(done, "pass")
 	}
 	return out
 }
