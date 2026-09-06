@@ -141,6 +141,17 @@ const (
 	// modeShort names a use and then does not rewrite it, whatever the
 	// client is holding.
 	modeShort = "short"
+	// modeConflicts works the rename out and will not do it, which is
+	// what a server answers when the new name is already taken.
+	modeConflicts = "conflicts"
+	// modeUnenclosed answers a reference on the file's first line,
+	// which is outside every declaration an outline names — an import
+	// sits exactly there.
+	modeUnenclosed = "unenclosed"
+	// modeCompiles reports what is wrong with the buffer it is holding
+	// rather than a fixed list, and offers one quick fix for it, which
+	// is what a gate over content nobody has written needs.
+	modeCompiles = "compiles"
 )
 
 // buffered reports whether a mode only rewrites what it was given.
@@ -310,6 +321,10 @@ func serve(mode string) int {
 			}
 
 		case "textDocument/codeAction":
+			if mode == modeCompiles {
+				answer(out, held.ID, mends(held.Params, seen))
+				continue
+			}
 			answer(out, held.ID, actions(mode))
 		case "codeAction/resolve":
 			answer(out, held.ID, resolved(held.Params, seen, holding[seen]))
@@ -347,6 +362,12 @@ func serve(mode string) int {
 		case "textDocument/definition":
 			answer(out, held.ID, defined(mode, seen))
 		case "textDocument/references":
+			if mode == modeUnenclosed {
+				answer(out, held.ID, fmt.Sprintf(
+					`[{"uri":%q,"range":{"start":{"line":0,"character":0},`+
+						`"end":{"line":0,"character":7}}}]`, seen))
+				continue
+			}
 			if buffered(mode) {
 				// From the buffer it holds, as a server answers: a use
 				// in a file whose buffer no longer names the
@@ -418,6 +439,10 @@ func serve(mode string) int {
 		case "textDocument/prepareRename":
 			answer(out, held.ID, prepared(mode, held.Params))
 		case "textDocument/rename":
+			if mode == modeConflicts {
+				oops(out, held.ID, "renaming this type conflicts with func in same block")
+				continue
+			}
 			if buffered(mode) {
 				buffer := viewOf(holding, sibling(seen))
 				if mode == modeShort {
@@ -436,6 +461,12 @@ func serve(mode string) int {
 			}
 			answer(out, held.ID, renamed(mode, where(mode, seen)))
 		case "textDocument/diagnostic":
+			if mode == modeCompiles {
+				// About the buffer this server is holding, so a case can
+				// change the content and see the answer change.
+				answer(out, held.ID, `{"kind":"full","items":`+wrong(holding[seen])+`}`)
+				continue
+			}
 			answer(out, held.ID, reported())
 
 		case "shutdown":
@@ -660,9 +691,12 @@ func capabilities(mode string, asked json.RawMessage) string {
 		pull = ""
 	}
 	actions := ""
-	if extracts(mode) {
+	switch {
+	case extracts(mode):
 		actions = `,"codeActionProvider":{"codeActionKinds":["refactor.extract"],` +
 			`"resolveProvider":true},"executeCommandProvider":{"commands":["fake.refactor"]}`
+	case mode == modeCompiles:
+		actions = `,"codeActionProvider":{"codeActionKinds":["quickfix"]}`
 	}
 	// Offered only to a client that said it sends file operations, which
 	// is what the servers that answer it do.
@@ -858,6 +892,51 @@ func positioned(params json.RawMessage) string {
 		return ""
 	}
 	return fmt.Sprintf("%d:%d", held.Position.Line, held.Position.Character)
+}
+
+// wrong is what this server makes of a buffer: a fault on the line
+// holding the word this language will not take.
+//
+// Read out of the buffer rather than from a fixed list, because what a
+// gate asks is what the server makes of content nobody has written, and
+// a fixed answer cannot tell that from the file on disk.
+func wrong(buffer string) string {
+	for i, line := range strings.Split(buffer, "\n") {
+		at := strings.Index(line, broken)
+		if at < 0 {
+			continue
+		}
+		return fmt.Sprintf(`[{"range":{"start":{"line":%d,"character":%d},
+		  "end":{"line":%d,"character":%d}},"severity":1,"code":"E900",
+		  "source":"fakecheck","message":%q}]`,
+			i, at, i, at+len(broken), broken+" is not a name this language takes")
+	}
+	return `[]`
+}
+
+// broken is the word the compiling mode will not take. A case writes it
+// into content to make a change that parses and does not compile, which
+// is the pair a parse gate cannot tell apart.
+const broken = "undeclared"
+
+// mends is the one quick fix this server offers for the fault it
+// reported: the word it will not take, replaced with one it will.
+func mends(params json.RawMessage, of string) string {
+	var held struct {
+		Context struct {
+			Diagnostics []json.RawMessage `json:"diagnostics"`
+			Only        []string          `json:"only"`
+		} `json:"context"`
+		Range json.RawMessage `json:"range"`
+	}
+	if err := json.Unmarshal(params, &held); err != nil ||
+		len(held.Context.Diagnostics) == 0 || !slices.Contains(held.Context.Only, "quickfix") {
+		// A server offers a fix for a fault it was told about. Asked
+		// about a range with nothing wrong in it, it offers none.
+		return `[]`
+	}
+	return fmt.Sprintf(`[{"title":"Declare it","kind":"quickfix","edit":{"changes":{%q:[
+	  {"range":%s,"newText":"declared"}]}}}]`, of, held.Range)
 }
 
 // actions is the refactoring menu, which every server answers with

@@ -24,6 +24,7 @@ func For(
 	d lang.Declaration,
 	g treesitter.Grammar,
 	s lsp.Server,
+	also ...engine.Engine,
 ) ([]engine.Engine, error) {
 	parser, err := treesitter.New(w.FS, d, g)
 	if err != nil {
@@ -38,7 +39,11 @@ func For(
 	if declared {
 		out = append(out, served)
 	}
-	return out, nil
+	// Last, so an engine a module brings of its own meets a catalogue
+	// after the server: two engines claiming one tier are ordered by
+	// where they were registered, and the server is the one that is
+	// warm.
+	return append(out, also...), nil
 }
 
 // Serving returns the server engine a workspace supports for one
@@ -69,6 +74,10 @@ func Serving(w lang.Workspace, d lang.Declaration, s lsp.Server) (engine.Engine,
 // A language module's whole entry point. Nothing is registered when any
 // part of it fails, because [lang.Registry.Register] checks the
 // declaration before it touches the catalogue.
+//
+// A module with an engine of its own passes it last. Go has one: an
+// in-process type checker, which answers what a server answers on a
+// machine where no server is installed.
 func Register(
 	w lang.Workspace,
 	r *lang.Registry,
@@ -76,8 +85,9 @@ func Register(
 	d lang.Declaration,
 	g treesitter.Grammar,
 	s lsp.Server,
+	also ...engine.Engine,
 ) error {
-	built, err := For(w, d, g, s)
+	built, err := For(w, d, g, s, also...)
 	if err != nil {
 		return err
 	}

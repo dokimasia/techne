@@ -66,7 +66,6 @@ func (e *Engine) Verify(
 		return engine.Result[edit.Finding]{Skipped: true, Completeness: trust.ScopeTotal}, nil
 	}
 
-	pulls := held.capable.DiagnosticProvider != nil
 	var out []edit.Finding
 	var waited bool
 	for _, p := range paths {
@@ -80,24 +79,18 @@ func (e *Engine) Verify(
 			return engine.Result[edit.Finding]{}, opened
 		}
 
-		var reported []protocol.Diagnostic
-		if pulls {
-			reported, err = e.pull(ctx, held, p)
-			if err != nil {
-				return engine.Result[edit.Finding]{}, err
-			}
-		} else {
-			var settled bool
-			reported, settled = e.pushed.wait(ctx, uri.File(e.fullPath(p)), reporting)
-			waited = waited || !settled
+		reported, settled, err := e.diagnostics(ctx, held, p)
+		if err != nil {
+			return engine.Result[edit.Finding]{}, err
 		}
+		waited = waited || !settled
 
 		doc, err := e.read(p)
 		if err != nil {
 			return engine.Result[edit.Finding]{}, err
 		}
 		for _, one := range reported {
-			out = append(out, edit.Finding{Diagnostic: found(one, doc)})
+			out = append(out, e.finding(ctx, held, one, doc, len(out)))
 		}
 	}
 
@@ -288,6 +281,50 @@ func (p *published) keep(of uri.URI, held []protocol.Diagnostic) {
 		close(waking)
 		delete(p.waking, of)
 	}
+}
+
+// broken reports whether the server has said the workspace does not
+// compile.
+//
+// Read from what arrived unasked rather than by asking, because asking
+// per file per read would double every round trip to answer a question
+// nobody put. A server publishes when it finishes analysing, so what is
+// held here is what it has told this session so far — one fault
+// anywhere in it is enough.
+//
+// It says nothing about a server that has published nothing, which is
+// both a clean workspace and one nobody has looked at. The difference is
+// what completeness already carries.
+func (p *published) broken() bool {
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for _, held := range p.held {
+		for _, one := range held {
+			if one.Severity == protocol.DiagnosticSeverityError {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// forget drops what a server said about a file.
+//
+// Called when the buffer is replaced, because what the server said was
+// about the text it no longer holds. Left in place, the next question
+// reads the old report as the new one and a gate judges a change by
+// what was wrong before it.
+func (p *published) forget(of uri.URI) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.held, of)
 }
 
 // wait returns what a server said about a file, waiting a bounded time

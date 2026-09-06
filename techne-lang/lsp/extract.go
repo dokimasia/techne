@@ -195,10 +195,11 @@ func (e *Engine) extracting(
 
 	// The server computed an extraction and named what it made, which
 	// is as clear a view of the file as it can show.
-	covered, caveats := e.reached(ctx, held, p, true)
+	covered, reaches, caveats := e.reached(ctx, held, p, true)
 	return engine.Result[edit.Change]{
 		Items:        out,
 		Completeness: covered,
+		Lowered:      reaches,
 		Caveats:      caveats,
 	}, nil
 }

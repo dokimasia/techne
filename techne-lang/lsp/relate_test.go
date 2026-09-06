@@ -4,6 +4,7 @@
 package lsp_test
 
 import (
+	"slices"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -122,6 +123,25 @@ func TestRelate(t *testing.T) {
 				"the subtype the hierarchy named")
 		})
 
+		t.Run("names a site no declaration encloses by its file", func(t *testing.T) {
+			t.Parallel()
+			// An import, a package-level initialiser and an impl block a
+			// server does not report as a symbol all land outside every
+			// declaration an outline names. The kind for a declaration
+			// nobody classified is not one an answer may carry, and an
+			// item holding it does not validate against the shape the
+			// tool declares — a fuzzing run over a real workspace found
+			// exactly that.
+			e := serving(t, modeUnenclosed, map[string]string{"a.fake": content})
+			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
+				subject(t, e, "Store"), sema.ReferencedBy)
+
+			assert.NoError(t, err, "a site outside every declaration is still a site")
+			assert.Equal(t, got.Items[0].To.Kind, sema.KindFile, "named by the file that holds it")
+			assert.True(t, slices.Contains(sema.Kinds(), got.Items[0].To.Kind),
+				"which is a kind an answer may carry")
+		})
+
 		t.Run("declines the hierarchy where the server has none", func(t *testing.T) {
 			t.Parallel()
 			e := serving(t, modeThin, map[string]string{"a.fake": content})
@@ -207,6 +227,43 @@ func edges(held []sema.Relation) []string {
 //
 // What tells the two apart is whether the server produced a view of the
 // file at all, which is what producing diagnostics means.
+// A type checker over a program with a fault in it binds the names it
+// can and guesses at the rest. Every answer it gives is worth what a
+// half-bound program is worth, which is a property of the answer rather
+// than of the engine.
+func TestRelateOverABrokenBuild(t *testing.T) {
+	t.Parallel()
+
+	t.Run("an answer from a server that reported the workspace does not compile", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("is worth less than the engine usually is", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, modePushes, map[string]string{"a.fake": content})
+			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
+				subject(t, e, "Store"), sema.ReferencedBy)
+
+			assert.NoError(t, err, "a broken workspace is still answered about")
+			assert.Equal(t, got.Lowered, trust.Indexed,
+				"names are bound where it could bind them and matched where it could not")
+			assert.True(t, carries(got.Caveats, trust.CaveatBuildBroken),
+				"and the caveat says why")
+		})
+
+		t.Run("is worth the engine's own tier where it compiles", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, modeDefault, map[string]string{"a.fake": content})
+			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
+				subject(t, e, "Store"), sema.ReferencedBy)
+
+			assert.NoError(t, err, "relating succeeds")
+			assert.Equal(t, got.Lowered, trust.None, "nothing lowers a whole workspace's answer")
+			assert.False(t, carries(got.Caveats, trust.CaveatBuildBroken),
+				"and nothing says the build is broken")
+		})
+	})
+}
+
 func TestRelateEvidence(t *testing.T) {
 	t.Parallel()
 

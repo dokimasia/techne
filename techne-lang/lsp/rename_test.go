@@ -82,6 +82,20 @@ func TestRename(t *testing.T) {
 				"a refusal a caller can act on, not an empty plan")
 		})
 
+		t.Run("passes on a rename the server itself will not do", func(t *testing.T) {
+			t.Parallel()
+			// gopls answers that the new name conflicts with something in
+			// the same block. Naming another one is the whole of what a
+			// caller does about it, and reported as a fault it reads as a
+			// broken engine.
+			e := serving(t, modeConflicts, map[string]string{"a.fake": content})
+			_, err := renaming(t, e)
+
+			assert.ErrorIs(t, err, engine.ErrRefuse,
+				"a server that answered no is not a server that broke")
+			assert.Contains(t, err.Error(), "conflicts", "and the caller reads its own words")
+		})
+
 		t.Run("refuses a rename with no new name", func(t *testing.T) {
 			t.Parallel()
 			e := serving(t, modeDefault, map[string]string{"a.fake": content})

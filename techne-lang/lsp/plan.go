@@ -80,12 +80,12 @@ func (e *Engine) reached(
 	held *session,
 	p source.Path,
 	shown bool,
-) (trust.Completeness, []trust.Caveat) {
-	covered, caveats := e.settled(ctx)
+) (trust.Completeness, trust.Fidelity, []trust.Caveat) {
+	covered, reaches, caveats := e.bound(ctx)
 	if covered == trust.ScopeTotal && !shown && !e.analysed(ctx, held, p) {
-		return trust.ScopePartial, append(caveats, unresolved)
+		return trust.ScopePartial, reaches, append(caveats, unresolved)
 	}
-	return covered, caveats
+	return covered, reaches, caveats
 }
 
 // beyond names the first change that falls outside the workspace, or

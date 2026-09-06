@@ -128,10 +128,11 @@ func (e *Engine) relocating(
 	// file — sends exactly that.
 	changes = append(changes, edit.Change{Kind: edit.ChangeMove, Path: from, To: to})
 
-	covered, caveats := e.reached(ctx, held, from, shown)
+	covered, reaches, caveats := e.reached(ctx, held, from, shown)
 	return engine.Result[edit.Change]{
 		Items:        changes,
 		Completeness: covered,
+		Lowered:      reaches,
 		Caveats:      caveats,
 	}, nil
 }

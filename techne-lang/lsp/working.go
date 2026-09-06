@@ -234,6 +234,40 @@ func (e *Engine) settled(ctx context.Context) (trust.Completeness, []trust.Cavea
 	return trust.ScopePartial, []trust.Caveat{dynamic, warming}
 }
 
+// bound is what an answer that rests on binding is worth: how much of
+// the scope was covered, the tier the answer reaches, and the limits on
+// it.
+//
+// Every role that resolves a name uses it. Verifying does not: reporting
+// what is wrong with a workspace is the one answer a workspace being
+// wrong does not weaken.
+func (e *Engine) bound(
+	ctx context.Context,
+) (trust.Completeness, trust.Fidelity, []trust.Caveat) {
+	covered, caveats := e.settled(ctx)
+	held, why := e.lowered()
+	return covered, held, append(caveats, why...)
+}
+
+// lowered is the tier an answer is worth while the workspace does not
+// compile, and nothing while it does.
+//
+// A type checker over a program with a fault in it binds the names it
+// can and guesses at the rest: a reference list is what the last good
+// build had plus whatever survives, which is an index rather than a
+// binding. Every answer says so rather than claiming the tier the engine
+// reaches when the code is whole.
+func (e *Engine) lowered() (trust.Fidelity, []trust.Caveat) {
+	if !e.pushed.broken() {
+		return trust.None, nil
+	}
+	return trust.Indexed, []trust.Caveat{{
+		Code: trust.CaveatBuildBroken,
+		Note: "the server reports the workspace does not compile, so names are bound " +
+			"where it could bind them and matched where it could not",
+	}}
+}
+
 // settling is how long this engine's questions wait for its server.
 func (e *Engine) settling() time.Duration {
 	if e.server.Loading > 0 {

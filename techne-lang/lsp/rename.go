@@ -73,8 +73,10 @@ func (e *Engine) renaming(
 			Position:     at,
 		})
 		if refused != nil {
-			return engine.Result[edit.Change]{}, fmt.Errorf("lsp: %s: prepare rename: %w",
-				e.server.Name, refused)
+			// The server answered and the answer is no. A caller picks
+			// another position; there is nothing here that is broken.
+			return engine.Result[edit.Change]{}, fmt.Errorf("%w: %s: %s",
+				engine.ErrRefuse, e.server.Name, reasoned(refused))
 		}
 		if ready == nil {
 			return engine.Result[edit.Change]{}, fmt.Errorf(
@@ -89,7 +91,13 @@ func (e *Engine) renaming(
 		NewName:      fresh,
 	})
 	if err != nil {
-		return engine.Result[edit.Change]{}, fmt.Errorf("lsp: %s: rename: %w", e.server.Name, err)
+		// A server refuses a rename it worked out and will not do:
+		// gopls answers that the new name conflicts with something in
+		// the same block, and naming another one is the whole of what a
+		// caller does about it. Reported as a fault it reads as a broken
+		// engine, which is the one thing it is not.
+		return engine.Result[edit.Change]{}, fmt.Errorf("%w: %s: %s",
+			engine.ErrRefuse, e.server.Name, reasoned(err))
 	}
 
 	changes, err := e.changes(answered)
@@ -106,10 +114,11 @@ func (e *Engine) renaming(
 			"%w: %s: the rename reaches %s, which is outside the workspace",
 			engine.ErrRefuse, e.server.Name, outside)
 	}
-	covered, caveats := e.corroborated(ctx, held, doc, uses, changes)
+	covered, reaches, caveats := e.corroborated(ctx, held, doc, uses, changes)
 	return engine.Result[edit.Change]{
 		Items:        changes,
 		Completeness: covered,
+		Lowered:      reaches,
 		Caveats:      caveats,
 	}, nil
 }
@@ -262,25 +271,25 @@ func (e *Engine) corroborated(
 	doc document,
 	uses []protocol.Location,
 	changes []edit.Change,
-) (trust.Completeness, []trust.Caveat) {
-	covered, caveats := e.settled(ctx)
+) (trust.Completeness, trust.Fidelity, []trust.Caveat) {
+	covered, reaches, caveats := e.bound(ctx)
 	if covered != trust.ScopeTotal {
-		return covered, caveats
+		return covered, reaches, caveats
 	}
 	if len(uses) > 0 {
 		if missed, short := e.uncovered(uses, changes); short {
-			return trust.ScopePartial, append(caveats, trust.Caveat{
+			return trust.ScopePartial, reaches, append(caveats, trust.Caveat{
 				Code: trust.CaveatIndexWarming,
 				Note: "the server names a use at " + missed + " that this change does not " +
 					"rewrite, so it is not every use",
 			})
 		}
-		return covered, caveats
+		return covered, reaches, caveats
 	}
 	if !e.analysed(ctx, held, doc.path) {
-		return trust.ScopePartial, append(caveats, unresolved)
+		return trust.ScopePartial, reaches, append(caveats, unresolved)
 	}
-	return covered, caveats
+	return covered, reaches, caveats
 }
 
 // uncovered names the first use a plan leaves alone, and reports whether
@@ -314,6 +323,17 @@ func (e *Engine) uncovered(uses []protocol.Location, changes []edit.Change) (str
 		}
 	}
 	return "", false
+}
+
+// reasoned is a server's own words for why it will not do something,
+// without the framing this package would otherwise wrap them in. What a
+// caller acts on is the sentence the server wrote.
+func reasoned(err error) string {
+	held := err.Error()
+	if _, after, cut := strings.Cut(held, ": "); cut && strings.HasPrefix(held, "jsonrpc2: ") {
+		return after
+	}
+	return held
 }
 
 // rewrites reports whether an edit list covers the byte at an offset.

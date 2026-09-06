@@ -84,14 +84,16 @@ func (e *Engine) Search(
 		}
 	}
 
+	reaches, why := e.lowered()
 	return engine.Result[sema.Symbol]{
 		Items:        out,
 		Completeness: trust.ScopePartial,
-		Caveats: []trust.Caveat{dynamic, {
+		Lowered:      reaches,
+		Caveats: append([]trust.Caveat{dynamic, {
 			Code: trust.CaveatTruncated,
 			Note: "a workspace symbol query is answered from the server's own index, " +
 				"which caps what it returns without saying so",
-		}},
+		}}, why...),
 	}, nil
 }
 

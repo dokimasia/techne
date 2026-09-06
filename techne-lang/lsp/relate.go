@@ -6,6 +6,7 @@ package lsp
 import (
 	"context"
 	"fmt"
+	"path"
 	"slices"
 	"strings"
 	"unicode"
@@ -112,7 +113,7 @@ func (e *Engine) Relate(
 	}
 
 	slices.SortFunc(out, order)
-	covered, caveats := e.settled(ctx)
+	covered, reaches, caveats := e.bound(ctx)
 	if !saw {
 		covered = trust.ScopePartial
 		caveats = append(caveats, unresolved)
@@ -120,6 +121,7 @@ func (e *Engine) Relate(
 	return engine.Result[sema.Relation]{
 		Items:        out,
 		Completeness: covered,
+		Lowered:      reaches,
 		Caveats:      caveats,
 	}, nil
 }
@@ -396,17 +398,24 @@ func (e *Engine) sited(
 	return out, nil
 }
 
-// at names a site by where it is written, for a site no declaration
+// at names a site by the file that holds it, for a site no declaration
 // encloses.
 //
 // Worse than an outline and better than silence: it carries the file,
 // the line and the source, which is what a caller reading a list of
-// sites acts on.
+// sites acts on. An import, a package-level initialiser and an impl
+// block a server does not report as a symbol all land here.
+//
+// The file, rather than the kind for a declaration nobody classified.
+// [sema.Kinds] leaves that one out of the set an answer may carry, so an
+// item holding it does not validate against the shape this tool
+// declares — a fuzzing run over a real workspace found exactly that,
+// and a client checking the schema would drop the whole answer.
 func at(e *Engine, held outlined, over protocol.Range) sema.Symbol {
 	span := held.doc.span(over)
 	return sema.Symbol{
-		Name:     held.doc.sourceLine(span),
-		Kind:     sema.KindUnknown,
+		Name:     path.Base(string(held.doc.path)),
+		Kind:     sema.KindFile,
 		Language: e.declared.Language,
 		Span:     span,
 		Snippet:  held.doc.text(span),

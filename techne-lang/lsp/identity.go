@@ -57,6 +57,12 @@ func Binding() map[engine.Role]trust.Fidelity {
 		engine.RoleRelate:  trust.Resolved,
 		engine.RolePlan:    trust.Resolved,
 		engine.RoleVerify:  trust.Resolved,
+		// Gating a change is the same analysis as verifying a file, over
+		// content nobody has written yet. A parser serves it too and
+		// says only that the result is still the language it was; this
+		// says it still means something, which is what a change that
+		// renames one thing onto another needs.
+		engine.RoleCheck: trust.Resolved,
 		// Formatting is not a binding, and it is still the server's:
 		// what it returns is the language's own formatter, which no
 		// parser can reproduce and nothing else here has.

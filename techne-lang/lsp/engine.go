@@ -486,6 +486,10 @@ func (e *Engine) sync(
 		}); err != nil {
 			return false, err
 		}
+		// What the server last said about this file was about the text
+		// it no longer holds, so the next question waits for it to say
+		// something about the text it does.
+		e.pushed.forget(uri.File(full))
 		e.opened[full] = sent{version: was.version + 1, digest: digest}
 		return true, nil
 	}
@@ -557,6 +561,7 @@ var (
 	_ engine.Resolver  = (*Engine)(nil)
 	_ engine.Relator   = (*Engine)(nil)
 	_ engine.Planner   = (*Engine)(nil)
+	_ engine.Checker   = (*Engine)(nil)
 	_ engine.Formatter = (*Engine)(nil)
 	_ engine.Verifier  = (*Engine)(nil)
 )

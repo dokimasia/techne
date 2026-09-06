@@ -145,7 +145,7 @@ func TestEngine(t *testing.T) {
 				{engine.RolePlan, true},
 				{engine.RoleVerify, true},
 				{engine.RoleFormat, true},
-				{engine.RoleCheck, false},
+				{engine.RoleCheck, true},
 				{engine.RoleIndex, false},
 			} {
 				assert.Equal(t, satisfies(held, one.role), one.serves,
