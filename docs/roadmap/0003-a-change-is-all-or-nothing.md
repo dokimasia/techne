@@ -1,7 +1,7 @@
 ---
 milestone: 0003
 title: A change is all or nothing
-status: Planned
+status: Done
 depends-on: 0002
 ships-in: unscheduled
 deadline: none
@@ -20,26 +20,27 @@ workspace still builds, or no file changed.
 
 ## Done when
 
-- [ ] Renaming a symbol updates every reference across the workspace, in
+- [x] Renaming a symbol updates every reference across the workspace, in
       every language that meets the operation's declared minimum
-- [ ] A language below that minimum is refused with a reason, rather than
+- [x] A language below that minimum is refused with a reason, rather than
       attempted at a weaker tier
-- [ ] An operation that rewrites references is refused unless the plan's
+- [x] An operation that rewrites references is refused unless the plan's
       evidence supports a negative claim, so a language server that is
       still indexing cannot rename
-- [ ] A rename that leaves the workspace not building leaves every file
+- [x] A rename that leaves the workspace not building leaves every file
       byte-identical to what it was before the call
-- [ ] A plan computed against a file that has changed since is refused on
+- [x] A plan computed against a file that has changed since is refused on
       the content digest, before anything is written
-- [ ] Two changes touching the same files from different callers do not
+- [x] Two changes touching the same files from different callers do not
       interleave, and neither leaves a partial write
-- [ ] A dry run reports the same edits the real call applies, and runs the
+- [x] A dry run reports the same edits the real call applies, and runs the
       gate against an overlay, so a passing dry run means applying for
       real compiles
-- [ ] A failed gate carries a ready plan for each diagnostic that has one
+- [x] A failed gate carries a ready plan for each diagnostic that has one
       obvious fix
-- [ ] The gate records which verifier answered, in-process or subprocess
-- [ ] The suite passes under `go test -race`
+- [x] The gate records which verifier answered and what it checked, so
+      "it parses" is never read as "it compiles"
+- [x] The suite passes under `go test -race`
 
 ## Why now
 
@@ -61,11 +62,25 @@ rollback all exist and are driven by a shipped tool. What is untested is
 everything the parser cannot reach, which is every claim about references
 this milestone is about.
 
+## What shipped
+
+Renaming a declaration through the server, in every language whose
+server can compute one. Two operations beyond the milestone's scope came
+with it, because the same plumbing serves them: moving a file through
+`workspace/willRenameFiles`, and lifting a run of lines into a function
+through a code action.
+
+The gate is a compiler wherever one is available — a language server
+shown the projection as an unsaved buffer, or the Go type checker with
+the projection overlaid — and a parser where none is. Each finding
+carries the one obvious fix the server offered for it.
+
 ## Not in this milestone
 
-- The other operations in the catalogue: nobody has scheduled them yet
-- Applying edits a language server proposed: nobody has scheduled it yet
-- Batching several operations behind one gate: nobody has scheduled it yet
+- The nine operations in the catalogue with no planner: nobody has
+  scheduled them yet
+- Batching several operations behind one gate: nobody has scheduled it
+  yet
 
 ## Risks to the sequence
 
@@ -80,6 +95,8 @@ this milestone is about.
 
 | Date | What changed | Why |
 |---|---|---|
+| 2026-09-04 | Done | Every box closed. The last three were the compiler gate, the fix each finding carries, and the gate naming the engine that ran rather than the one that planned |
+| 2026-09-04 | Reworded the verifier record: what it checked as well as which engine | In-process against subprocess is not the distinction a caller acts on; parse against compile is |
 | 2026-09-02 | Narrowed the scope to the rename | The pipeline landed early behind `document.symbol`, the one operation a parser can serve, so what is left here is what needs a type checker |
 | 2026-09-01 | Renumbered from 0004 and widened past Go | Nothing was committed, and the write path covers every language that meets the minimum |
 | 2026-09-01 | Created | First milestone that changes a file |
