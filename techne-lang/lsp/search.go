@@ -90,7 +90,7 @@ func (e *Engine) Search(
 		}
 	}
 
-	reaches, why := e.lowered()
+	reaches, why := e.lowered(e.project(req.Scope))
 	return engine.Result[sema.Symbol]{
 		Items:        out,
 		Completeness: trust.ScopePartial,

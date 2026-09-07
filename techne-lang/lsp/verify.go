@@ -296,26 +296,38 @@ func (p *published) keep(of uri.URI, held []protocol.Diagnostic) {
 	}
 }
 
-// broken reports whether the server has said the workspace does not
+// broken reports whether the server has said this project does not
 // compile.
 //
 // Read from what arrived unasked rather than by asking, because asking
 // per file per read would double every round trip to answer a question
 // nobody put. A server publishes when it finishes analysing, so what is
 // held here is what it has told this session so far — one fault
-// anywhere in it is enough.
+// anywhere in the project is enough.
+//
+// # Why the project and not the workspace
+//
+// A repository is not a compilation unit. Seventeen modules in one
+// workspace do not build or fail together, and a fault in one says
+// nothing about the types in another. Asked workspace-wide, gopls
+// reporting an untidy root go.mod at error severity withdrew the tier
+// every write operation needs, in every module, for the life of the
+// session — over a workspace where go build and go vet were clean.
 //
 // It says nothing about a server that has published nothing, which is
-// both a clean workspace and one nobody has looked at. The difference is
+// both a clean project and one nobody has looked at. The difference is
 // what completeness already carries.
-func (p *published) broken() bool {
+func (p *published) broken(within source.Path, at func(uri.URI) source.Path) bool {
 	if p == nil {
 		return false
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	for _, held := range p.held {
+	for of, held := range p.held {
+		if !lang.Within(at(of), within) {
+			continue
+		}
 		for _, one := range held {
 			if one.Severity == protocol.DiagnosticSeverityError {
 				return true

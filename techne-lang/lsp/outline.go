@@ -68,7 +68,7 @@ func (e *Engine) Outline(ctx context.Context, req engine.Request) (engine.Result
 		out = append(out, found...)
 	}
 
-	covered, reaches, caveats := e.bound(ctx)
+	covered, reaches, caveats := e.bound(ctx, req.Scope)
 	if len(large) > 0 {
 		covered = trust.ScopePartial
 	}

@@ -52,9 +52,14 @@ func (e *Engine) Relate(
 	of sema.ID,
 	kind sema.RelationKind,
 ) (engine.Result[sema.Relation], error) {
-	if holds, err := e.reads(req); err != nil {
+	// Read before the server is started, and the same paths are what
+	// declaring works through: the scope is walked once either way, and
+	// a scope holding none of this language never costs a process.
+	paths, err := e.files(req)
+	if err != nil {
 		return engine.Result[sema.Relation]{}, err
-	} else if !holds {
+	}
+	if len(paths) == 0 {
 		// The scope holds no file this engine reads, so it says nothing
 		// about the declaration rather than that it has no edges.
 		return engine.Result[sema.Relation]{Skipped: true, Completeness: trust.ScopeTotal}, nil
@@ -69,7 +74,7 @@ func (e *Engine) Relate(
 			"%w: %s: no request behind %s", engine.ErrDecline, e.server.Name, kind)
 	}
 
-	subject, doc, known, read, err := e.declaring(ctx, held, req, of)
+	subject, doc, known, read, err := e.declaring(ctx, held, req, of, paths)
 	switch {
 	case err != nil:
 		return engine.Result[sema.Relation]{}, err
@@ -121,7 +126,7 @@ func (e *Engine) Relate(
 	}
 
 	slices.SortFunc(out, order)
-	covered, reaches, caveats := e.bound(ctx)
+	covered, reaches, caveats := e.bound(ctx, req.Scope)
 	if !saw {
 		covered = trust.ScopePartial
 		caveats = append(caveats, unresolved)
@@ -599,11 +604,8 @@ func (e *Engine) declaring(
 	held *session,
 	req engine.Request,
 	of sema.ID,
+	paths []source.Path,
 ) (found sema.Symbol, doc document, known, read bool, err error) {
-	paths, err := e.files(req)
-	if err != nil {
-		return sema.Symbol{}, document{}, false, false, err
-	}
 	// Collected rather than returned on the first match, because the
 	// fallback below has to know whether a name picks out one
 	// declaration or several.

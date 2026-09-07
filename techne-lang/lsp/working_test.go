@@ -10,6 +10,7 @@ import (
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/lang/lsp"
 )
 
 // A server that has not finished reading the workspace answers every
@@ -84,6 +85,60 @@ func TestWorking(t *testing.T) {
 			assert.Empty(t, got.Items, "the server had nothing to say yet")
 			assert.False(t, trust.SupportsNegativeClaim(trust.Resolved, got.Completeness),
 				"so nothing may be read out of its silence")
+		})
+	})
+}
+
+// A repository is not a compilation unit. Measured against gopls over a
+// seventeen-module workspace: one untidy root go.mod, reported at error
+// severity, withdrew the tier every write operation needs in every
+// module for the life of the session, over a workspace where go build
+// and go vet were both clean.
+func TestLoweredPerProject(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a fault the server reported in one project", func(t *testing.T) {
+		t.Parallel()
+
+		held := map[string]string{
+			"one/x.manifest": "", "one/a.fake": content,
+			"two/x.manifest": "", "two/b.fake": content,
+		}
+		build := func(t *testing.T) *lsp.Engine {
+			t.Helper()
+			d := declared()
+			d.Manifests = []string{"x.manifest"}
+			e, err := lsp.New(workspace(t, held), d, pretending(modePushesOne))
+			assert.NoError(t, err, "an engine builds over a workspace of two projects")
+			stopping(t, e)
+			return e
+		}
+
+		t.Run("lowers what that project is worth", func(t *testing.T) {
+			t.Parallel()
+			e := build(t)
+			got, err := e.Outline(t.Context(), engine.Request{Scope: "two/b.fake"})
+
+			assert.NoError(t, err, "a broken project is still answered about")
+			assert.Equal(t, got.Lowered, trust.Indexed,
+				"names are bound where it could bind them and matched where it could not")
+			assert.True(t, carries(got.Caveats, trust.CaveatBuildBroken), "and the caveat says why")
+		})
+
+		t.Run("leaves the project beside it worth what it was", func(t *testing.T) {
+			t.Parallel()
+			e := build(t)
+			// The faulty project is read first, so the server has
+			// published about it by the time the sibling is asked.
+			_, err := e.Outline(t.Context(), engine.Request{Scope: "two/b.fake"})
+			assert.NoError(t, err, "reading the broken project succeeds")
+
+			got, err := e.Outline(t.Context(), engine.Request{Scope: "one/a.fake"})
+			assert.NoError(t, err, "and so does reading the one beside it")
+			assert.Equal(t, got.Lowered, trust.None,
+				"another module failing to build says nothing about this one")
+			assert.False(t, carries(got.Caveats, trust.CaveatBuildBroken),
+				"and nothing claims otherwise")
 		})
 	})
 }

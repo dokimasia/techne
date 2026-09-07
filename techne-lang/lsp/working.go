@@ -6,12 +6,14 @@ package lsp
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strconv"
 	"sync"
 	"time"
 
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/lang"
 	"go.lsp.dev/protocol"
 )
 
@@ -259,27 +261,37 @@ func unread(paths []source.Path) []trust.Caveat {
 // wrong does not weaken.
 func (e *Engine) bound(
 	ctx context.Context,
+	scope source.Path,
 ) (trust.Completeness, trust.Fidelity, []trust.Caveat) {
 	covered, caveats := e.settled(ctx)
-	held, why := e.lowered()
+	held, why := e.lowered(e.project(scope))
 	return covered, held, append(caveats, why...)
 }
 
-// lowered is the tier an answer is worth while the workspace does not
-// compile, and nothing while it does.
+// project is the compilation unit a scope belongs to, by the manifests
+// this language declares.
+func (e *Engine) project(scope source.Path) source.Path {
+	return lang.ProjectOf(os.DirFS(e.root), scope, e.declared.Manifests)
+}
+
+// lowered is the tier an answer is worth while the project it is about
+// does not compile, and nothing while it does.
 //
 // A type checker over a program with a fault in it binds the names it
 // can and guesses at the rest: a reference list is what the last good
 // build had plus whatever survives, which is an index rather than a
 // binding. Every answer says so rather than claiming the tier the engine
 // reaches when the code is whole.
-func (e *Engine) lowered() (trust.Fidelity, []trust.Caveat) {
-	if !e.pushed.broken() {
+//
+// The project rather than the workspace, because they are not the same
+// thing and only one of them compiles. See [published.broken].
+func (e *Engine) lowered(within source.Path) (trust.Fidelity, []trust.Caveat) {
+	if !e.pushed.broken(within, e.pathOf) {
 		return trust.None, nil
 	}
 	return trust.Indexed, []trust.Caveat{{
 		Code: trust.CaveatBuildBroken,
-		Note: "the server reports the workspace does not compile, so names are bound " +
+		Note: "the server reports " + string(within) + " does not compile, so names are bound " +
 			"where it could bind them and matched where it could not",
 	}}
 }

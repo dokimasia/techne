@@ -62,7 +62,7 @@ func (e *Engine) Resolve(
 		}
 	}
 
-	covered, reaches, caveats := e.bound(ctx)
+	covered, reaches, caveats := e.bound(ctx, req.Scope)
 	return engine.Result[sema.Symbol]{
 		Items:        out,
 		Completeness: covered,

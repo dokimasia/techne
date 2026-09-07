@@ -81,7 +81,7 @@ func (e *Engine) reached(
 	p source.Path,
 	shown bool,
 ) (trust.Completeness, trust.Fidelity, []trust.Caveat) {
-	covered, reaches, caveats := e.bound(ctx)
+	covered, reaches, caveats := e.bound(ctx, p)
 	if covered == trust.ScopeTotal && !shown && !e.analysed(ctx, held, p) {
 		return trust.ScopePartial, reaches, append(caveats, unresolved)
 	}

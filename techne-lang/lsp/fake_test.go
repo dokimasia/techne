@@ -89,6 +89,10 @@ const (
 	modeStrict = "strict"
 	// modePushes reports diagnostics when it finishes rather than when asked.
 	modePushes = "pushes"
+	// modePushesOne reports a fault in one project and none in the
+	// other, which is what a workspace of several modules looks like
+	// when one of them does not build.
+	modePushesOne = "pushes-one"
 	// modeAsks interrogates the client during the handshake.
 	modeAsks = "asks"
 	// modeElsewhere answers about a file outside the workspace.
@@ -297,6 +301,19 @@ func serve(mode string) int {
 
 		case "textDocument/didOpen":
 			holding[seen] = opening(held.Params)
+			if mode == modePushesOne {
+				// Only the project called two has a fault in it. A
+				// server reports per file, so the files of the other
+				// project come back clean rather than unmentioned.
+				faults := "[]"
+				if strings.Contains(seen, "/two/") {
+					faults = problems()
+				}
+				write(out, fmt.Sprintf(
+					`{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics",`+
+						`"params":{"uri":%q,"diagnostics":%s}}`, seen, faults))
+				continue
+			}
 			if mode == modePushes && !receives(opened) {
 				// A server checks whether the client can receive
 				// diagnostics before it sends any. techne once did not

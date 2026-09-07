@@ -155,7 +155,11 @@ func (e *Engine) aimed(
 		return doc.mark(target.Span.Start), doc, true, nil
 
 	case edit.TargetSymbol:
-		subject, doc, known, read, err := e.declaring(ctx, held, req, target.Symbol)
+		paths, err := e.files(req)
+		if err != nil {
+			return protocol.Position{}, document{}, false, err
+		}
+		subject, doc, known, read, err := e.declaring(ctx, held, req, target.Symbol, paths)
 		if err != nil || !read {
 			return protocol.Position{}, document{}, false, err
 		}
@@ -272,7 +276,7 @@ func (e *Engine) corroborated(
 	uses []protocol.Location,
 	changes []edit.Change,
 ) (trust.Completeness, trust.Fidelity, []trust.Caveat) {
-	covered, reaches, caveats := e.bound(ctx)
+	covered, reaches, caveats := e.bound(ctx, doc.path)
 	if covered != trust.ScopeTotal {
 		return covered, reaches, caveats
 	}
