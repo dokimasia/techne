@@ -245,20 +245,45 @@ func (e *Engine) lifting(
 	if action.Data != nil && resolves(held.capable.CodeActionProvider) {
 		// Most servers compute the edit only when asked. Working one out
 		// for every action in a menu nobody opened is what they avoid.
-		resolved, err := held.asks.CodeActionResolve(ctx, action)
+		//
+		// A copy is sent, because the round trip writes into what it is
+		// handed: go.lsp.dev/protocol v1.0.1 returns with the action's
+		// title short of its first character, and every message that
+		// names the action afterwards names it wrongly.
+		asked := *action
+		resolved, err := held.asks.CodeActionResolve(ctx, &asked)
 		if err != nil {
 			return nil, fmt.Errorf("lsp: %s: resolve %q: %w", e.server.Name, action.Title, err)
 		}
-		if resolved != nil && resolved.Edit != nil {
-			return resolved.Edit, nil
+		if resolved != nil {
+			// Resolving produces an edit or a command, and which is the
+			// server's choice: gopls answers extract with a command, and
+			// the edit exists only once it has been run. Taken from the
+			// resolved action rather than the one sent, because the
+			// command is on the answer and not on the offer.
+			if resolved.Edit != nil {
+				return resolved.Edit, nil
+			}
+			if runs(resolved, held.capable) {
+				return e.commanded(ctx, held, resolved)
+			}
 		}
 	}
-	if action.Command.Command != "" && len(held.capable.ExecuteCommandProvider.Commands) > 0 {
+	if runs(action, held.capable) {
 		return e.commanded(ctx, held, action)
 	}
 	return nil, fmt.Errorf(
 		"%w: %s offers %q and hands back no edit for it",
 		engine.ErrDecline, e.server.Name, action.Title)
+}
+
+// runs reports whether an action is one this server will execute for us.
+//
+// A code action may carry an edit, a command, or neither until it is
+// resolved. The command is only worth sending to a server that said it
+// executes any.
+func runs(action *protocol.CodeAction, capable protocol.ServerCapabilities) bool {
+	return action.Command.Command != "" && len(capable.ExecuteCommandProvider.Commands) > 0
 }
 
 // commanded runs a code action that is a command rather than an edit,
