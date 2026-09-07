@@ -4,7 +4,7 @@ title: The read contract
 author: Roy Klopper
 status: Accepted
 created: 2026-09-01
-updated: 2026-09-02
+updated: 2026-09-06
 discussion: none
 supersedes: none
 superseded-by: none
@@ -292,6 +292,9 @@ const (
 	CaveatDynamic       CaveatCode = "dynamic"
 	CaveatInactiveBuild CaveatCode = "inactive-build-tags"
 	CaveatCrossLanguage CaveatCode = "cross-language"
+	CaveatUnrouted      CaveatCode = "unrouted"
+	CaveatUnsupported   CaveatCode = "unsupported"
+	CaveatUnread        CaveatCode = "unread"
 )
 ```
 
