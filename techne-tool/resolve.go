@@ -10,6 +10,7 @@ import (
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
+	"go.dokimi.dev/techne/core/trust"
 )
 
 // ResolveInput is the input of the resolve tool. Line and Column count from one, as an editor
@@ -30,18 +31,15 @@ type ResolveInput struct {
 func Resolve(reads Resolver) (Tool, error) {
 	return New("resolve", resolveDescription,
 		func(ctx context.Context, in ResolveInput) (Answer, error) {
-			scope, err := relative(in.Scope)
-			if err != nil {
-				return Answer{}, err
+			scope, failure := relative(in.Scope)
+			if failure != nil {
+				return failed(Scope{Language: in.Language}, failure), nil
 			}
-			at, err := position(in.Line, in.Column)
-			if err != nil {
-				return Answer{}, err
-			}
+			at, byPosition := position(in.Line, in.Column)
 			detail, byDetail := levelOf(in.Detail, scope)
 			include, byInclude := bindingsOf(in.Include)
 			preferred, byFidelity := fidelityOf(in.Preferred)
-			if failure := first(byDetail, byInclude, byFidelity); failure != nil {
+			if failure = first(byPosition, byDetail, byInclude, byFidelity); failure != nil {
 				return failed(about(scope, in.Language, engine.Answer[sema.Symbol]{}), failure), nil
 			}
 
@@ -61,13 +59,17 @@ func Resolve(reads Resolver) (Tool, error) {
 
 // position returns the position of a line and a column counted from one, as the vocabulary
 // counts them from zero. It leaves the offset unset, because only an engine reads the file
-// that the offset needs. It returns an error for a line or a column below one.
-func position(line, column int) (source.Position, error) {
+// that the offset needs. It refuses a line or a column below one with a [Failure].
+func position(line, column int) (source.Position, *Failure) {
 	if line < 1 {
-		return source.Position{}, fmt.Errorf("tool: line %d: lines count from one", line)
+		return source.Position{}, &Failure{
+			Code: trust.Refused.String(), Reason: fmt.Sprintf("line %d: lines count from one", line),
+		}
 	}
 	if column < 1 {
-		return source.Position{}, fmt.Errorf("tool: column %d: columns count from one", column)
+		return source.Position{}, &Failure{
+			Code: trust.Refused.String(), Reason: fmt.Sprintf("column %d: columns count from one", column),
+		}
 	}
 	return source.Position{Line: line - 1, Column: column - 1}, nil
 }

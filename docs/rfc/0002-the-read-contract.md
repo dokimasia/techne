@@ -330,6 +330,7 @@ const (
 	CaveatCrossLanguage CaveatCode = "cross-language"
 	CaveatUnrouted      CaveatCode = "unrouted"
 	CaveatUnsupported   CaveatCode = "unsupported"
+	CaveatRefused       CaveatCode = "refused"
 	CaveatUnread        CaveatCode = "unread"
 	CaveatDependents    CaveatCode = "dependents"
 	CaveatUnrewritten   CaveatCode = "unrewritten"

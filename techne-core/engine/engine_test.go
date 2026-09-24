@@ -47,4 +47,36 @@ func TestEngine(t *testing.T) {
 			assert.Equal(t, calls, 0, "parser calls")
 		})
 	})
+
+	t.Run("Refusal", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the reason after the text of ErrRefuse", func(t *testing.T) {
+			t.Parallel()
+			why, refused := engine.Refusal(fmt.Errorf("lang: %w", refusing("a.fx does not exist")))
+			assert.True(t, refused, "refused")
+			assert.Equal(t, why, "a.fx does not exist", "reason")
+		})
+
+		t.Run("returns the whole text of a refusal without the text of ErrRefuse", func(t *testing.T) {
+			t.Parallel()
+			why, refused := engine.Refusal(excluded{})
+			assert.True(t, refused, "refused")
+			assert.Equal(t, why, "lang: the .gitignore excludes dist", "reason")
+		})
+
+		t.Run("reports false for a decline", func(t *testing.T) {
+			t.Parallel()
+			why, refused := engine.Refusal(declining("not loaded"))
+			assert.False(t, refused, "refused")
+			assert.Empty(t, why, "reason")
+		})
+	})
 }
+
+// excluded is a refusal whose text does not contain the text of ErrRefuse.
+type excluded struct{}
+
+func (excluded) Error() string { return "lang: the .gitignore excludes dist" }
+
+func (excluded) Unwrap() error { return engine.ErrRefuse }

@@ -22,7 +22,16 @@
 // The outline, search and resolve tools return an [Answer], and the relations and verify tools
 // an output of the same parts: the [Scope], the items, the [Provenance], and a [Failure] when
 // the request was not served. A result contains the output twice: as JSON for a program, and
-// as the text of its [Renderer] for a model.
+// as the text of its [Renderer] for a model. A declaration states its path only when it is not
+// in the file of the scope.
+//
+// A tool refuses a request that the caller can correct. It returns its output with a Failure
+// of the code refused, whose reason states what is wrong. These requests are refused:
+//
+//   - a path that is absolute, leaves the workspace or does not exist
+//   - a line or a column below one, or a position outside its file
+//   - a directory as the scope of a position
+//   - a word outside the vocabulary of its field, as the next section states
 //
 // # Words
 //

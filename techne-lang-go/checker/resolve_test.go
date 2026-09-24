@@ -38,7 +38,7 @@ func TestResolve(t *testing.T) {
 			assert.Equal(t, got.Items[0].Snippet, "type Store struct {", "the snippet of Store")
 		})
 
-		t.Run("returns the declaration at a line and a column", func(t *testing.T) {
+		t.Run("returns the declaration at a position without an offset", func(t *testing.T) {
 			t.Parallel()
 			got, err := serving(t, whole()).Resolve(t.Context(), engine.Request{Scope: "use.go"},
 				source.Position{Line: 3, Column: 10})
@@ -68,10 +68,24 @@ func TestResolve(t *testing.T) {
 			assert.True(t, got.Skipped, "the answer is skipped")
 		})
 
-		t.Run("declines a directory with Go files", func(t *testing.T) {
+		t.Run("refuses a directory with Go files", func(t *testing.T) {
 			t.Parallel()
 			_, err := serving(t, whole()).Resolve(t.Context(), engine.Request{Scope: "."}, source.Position{})
-			assert.ErrorIs(t, err, engine.ErrDecline, "Resolve in the root directory")
+			assert.ErrorIs(t, err, engine.ErrRefuse, "Resolve in the root directory")
+		})
+
+		t.Run("refuses a line past the end of the file", func(t *testing.T) {
+			t.Parallel()
+			_, err := serving(t, whole()).Resolve(t.Context(), engine.Request{Scope: "use.go"},
+				source.Position{Line: 999})
+			assert.ErrorIs(t, err, engine.ErrRefuse, "Resolve past the end of use.go")
+		})
+
+		t.Run("refuses a column past the end of its line", func(t *testing.T) {
+			t.Parallel()
+			_, err := serving(t, whole()).Resolve(t.Context(), engine.Request{Scope: "use.go"},
+				source.Position{Line: 3, Column: 999})
+			assert.ErrorIs(t, err, engine.ErrRefuse, "Resolve past the end of line 4 of use.go")
 		})
 
 		t.Run("declines a file that no package compiles", func(t *testing.T) {

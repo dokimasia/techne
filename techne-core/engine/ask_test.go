@@ -40,6 +40,11 @@ func declining(reason string) error {
 	return fmt.Errorf("%w: %s", engine.ErrDecline, reason)
 }
 
+// refusing returns ErrRefuse wrapped with a reason.
+func refusing(reason string) error {
+	return fmt.Errorf("%w: %s", engine.ErrRefuse, reason)
+}
+
 func TestAsk(t *testing.T) {
 	t.Parallel()
 
@@ -233,6 +238,47 @@ func TestAsk(t *testing.T) {
 			assert.ErrorIs(t, err, context.Canceled, "AskEach")
 			assert.Equal(t, calls, 0, "other calls")
 		})
+
+		t.Run("returns the refusal when every other language skips the scope", func(t *testing.T) {
+			t.Parallel()
+			c := catalog(t,
+				fake{name: "fixture", fidelity: trust.Resolved, err: refusing("src is a directory")},
+				fake{name: "other", language: other, fidelity: trust.Syntactic, skipped: true})
+			_, _, err := engine.AskEach(t.Context(), c, router{}, directory, engine.RoleOutline, outline)
+			assert.ErrorIs(t, err, engine.ErrRefuse, "AskEach")
+		})
+
+		t.Run("returns the answer of a language that examines the scope beside a refusal", func(t *testing.T) {
+			t.Parallel()
+			c := catalog(t,
+				fake{name: "fixture", fidelity: trust.Resolved, err: refusing("src is a directory")},
+				fake{name: "other", language: other, fidelity: trust.Syntactic})
+			got, declined, err := engine.AskEach(t.Context(), c, router{}, directory, engine.RoleOutline, outline)
+			assert.NoError(t, err, "AskEach")
+			assert.Length(t, got, 1, "answers")
+			assert.Equal(t, declined, engine.Declined{"fixture: engine: refuse: src is a directory"}, "Declined")
+		})
+	})
+
+	t.Run("Examined", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("reports false for answers that are all skipped", func(t *testing.T) {
+			t.Parallel()
+			skipped := []engine.Answer[sema.Symbol]{{Skipped: true}, {Skipped: true}}
+			assert.False(t, engine.Examined(skipped), "Examined")
+		})
+
+		t.Run("reports true for an answer that is not skipped", func(t *testing.T) {
+			t.Parallel()
+			mixed := []engine.Answer[sema.Symbol]{{Skipped: true}, {}}
+			assert.True(t, engine.Examined(mixed), "Examined")
+		})
+
+		t.Run("reports false for no answer", func(t *testing.T) {
+			t.Parallel()
+			assert.False(t, engine.Examined[sema.Symbol](nil), "Examined")
+		})
 	})
 
 	t.Run("AskAny", func(t *testing.T) {
@@ -330,6 +376,21 @@ func TestAsk(t *testing.T) {
 			assert.Equal(t, got.Provenance.Caveats, []trust.Caveat{{
 				Code: trust.CaveatUnsupported,
 				Note: "no engine serves fixture",
+			}}, "caveats")
+		})
+	})
+
+	t.Run("Refused", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns status Refused with the reason as a caveat", func(t *testing.T) {
+			t.Parallel()
+			got := engine.Refused[sema.Symbol]("a.fx does not exist")
+			assert.Equal(t, got.Status, trust.Refused, "status")
+			assert.Empty(t, got.Items, "items")
+			assert.Equal(t, got.Provenance.Caveats, []trust.Caveat{{
+				Code: trust.CaveatRefused,
+				Note: "a.fx does not exist",
 			}}, "caveats")
 		})
 	})

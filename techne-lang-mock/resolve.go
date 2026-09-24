@@ -20,9 +20,10 @@ import (
 // names. The scope of req is the file of the position, and a use can refer to a declaration of
 // any file. A position with an offset takes its line and column from the file.
 //
-// Resolve returns a skipped result for a scope without a file of the language. It declines a
-// directory with files of the language, because a position belongs to one file, and a file of
-// the language that the workspace does not contain or that is too large to read.
+// Resolve returns a skipped result for a scope without a file of the language. It refuses a
+// directory with files of the language, because a position belongs to one file, a file of the
+// language that the workspace does not contain, and a position outside its file by the rule of
+// [lang.Offset]. It declines a file that is too large to read.
 func (e *Engine) Resolve(
 	ctx context.Context,
 	req engine.Request,
@@ -40,11 +41,10 @@ func (e *Engine) Resolve(
 		return engine.Result[sema.Symbol]{}, fmt.Errorf("%w: mock: %s is larger than %d bytes",
 			engine.ErrDecline, p, lang.Largest)
 	case lang.Claims(string(p), e.declared.Extensions):
-		return engine.Result[sema.Symbol]{}, fmt.Errorf("%w: mock: the workspace contains no %s",
-			engine.ErrDecline, p)
+		return engine.Result[sema.Symbol]{}, fmt.Errorf("%w: %s does not exist", engine.ErrRefuse, p)
 	case w.claims(p):
 		return engine.Result[sema.Symbol]{}, fmt.Errorf(
-			"%w: mock: a position names a file, and %s is a directory", engine.ErrDecline, p)
+			"%w: mock: a position names a file, and %s is a directory", engine.ErrRefuse, p)
 	default:
 		return result(e, []sema.Symbol(nil), w, p), nil
 	}
@@ -52,6 +52,8 @@ func (e *Engine) Resolve(
 	line, column := at.Line, at.Column
 	if at.Offset > 0 {
 		line, column = placed(w.content[p], at.Offset)
+	} else if _, outside := lang.Offset(p, w.content[p], line, column); outside != nil {
+		return engine.Result[sema.Symbol]{}, outside
 	}
 	named := naming(lines, line, column)
 	var out []sema.Symbol

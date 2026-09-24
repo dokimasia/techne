@@ -31,9 +31,10 @@ type ExtractInput struct {
 func Extract(writes Writer) (Tool, error) {
 	return New(string(edit.ExtractFunction), extractDescription,
 		func(ctx context.Context, in ExtractInput) (Written, error) {
-			path, err := relative(in.Path)
-			if err != nil {
-				return Written{}, err
+			path, failure := relative(in.Path)
+			if failure != nil {
+				return declined(edit.ExtractFunction, Scope{Language: in.Language}, in.NewName,
+					failure.Code, failure.Reason), nil
 			}
 			held := writing(path, in.Language)
 

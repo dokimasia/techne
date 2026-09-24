@@ -14,6 +14,7 @@ import (
 	"testing/fstest"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/lang"
 )
@@ -176,6 +177,15 @@ func TestIgnored(t *testing.T) {
 			t.Parallel()
 			got := lang.GeneratedError{Scope: "web/dist"}.Error()
 			assert.Equal(t, got, "lang: the .gitignore files of the workspace exclude web/dist", "message")
+		})
+	})
+
+	t.Run("GeneratedError.Unwrap", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns ErrRefuse", func(t *testing.T) {
+			t.Parallel()
+			assert.ErrorIs(t, lang.GeneratedError{Scope: "web/dist"}, engine.ErrRefuse, "GeneratedError")
 		})
 	})
 }

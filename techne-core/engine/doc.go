@@ -28,12 +28,20 @@
 // [AskEach] and [AskAny] apply Ask to the languages of a request:
 //
 //   - AskEach asks every language for the read path. A failed language is
-//     recorded in [Declined], and the other languages still answer.
+//     recorded in [Declined], and the other languages still answer. A
+//     refusal is returned when no answer [Examined] a file of its language.
 //   - AskAny returns the first answer for the write path that is not
 //     skipped. A skipped answer moves on to the next language, because the
 //     scope contains no file of the language that skipped it. Any error
 //     stops it, because the next language can answer about a different
 //     declaration.
+//
+// # Refusals
+//
+// An engine refuses a request that the caller must change with [ErrRefuse],
+// such as a request about a path that does not exist. [Refusal] returns the
+// reason of a refusal. A service returns it in the answer of [Refused], as it
+// returns a request that no engine serves in the answer of [Unsupported].
 //
 // # Dependency position
 //

@@ -10,6 +10,7 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
+	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
@@ -82,11 +83,27 @@ func TestResolve(t *testing.T) {
 			assert.True(t, got.Skipped, "Skipped of the answer")
 		})
 
-		t.Run("declines a directory with files of the language", func(t *testing.T) {
+		t.Run("refuses a directory with files of the language", func(t *testing.T) {
 			t.Parallel()
 			_, err := serving(t, lsptest.Default, sample()).
 				Resolve(t.Context(), engine.Request{Scope: "."}, store())
-			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Resolve in a directory")
+			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of Resolve in a directory")
+		})
+
+		t.Run("refuses a line past the end of the file", func(t *testing.T) {
+			t.Parallel()
+			log := filepath.Join(t.TempDir(), "requests")
+			_, err := serving(t, lsptest.Default, sample(), lsptest.RecordRequests(log)).
+				Resolve(t.Context(), engine.Request{Scope: "a.fake"}, source.Position{Line: 999})
+			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of Resolve past the end")
+			assert.Equal(t, requested(t, log, "textDocument/definition"), 0, "the requests for a definition")
+		})
+
+		t.Run("refuses a column past the end of its line", func(t *testing.T) {
+			t.Parallel()
+			_, err := serving(t, lsptest.Default, sample()).
+				Resolve(t.Context(), engine.Request{Scope: "a.fake"}, source.Position{Line: 2, Column: 999})
+			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of Resolve past the end of a line")
 		})
 
 		t.Run("declines a server without definitions", func(t *testing.T) {

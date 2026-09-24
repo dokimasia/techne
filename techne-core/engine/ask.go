@@ -90,7 +90,10 @@ func Ask[T any](
 // AskEach asks every language the request is about and returns every
 // answer. A language that fails is recorded in Declined with its error, and
 // the other languages are still asked. AskEach returns the first failure
-// only when no language answered or ctx is done.
+// only when no language answered or ctx is done. It returns the first
+// refusal, an error that wraps ErrRefuse, when no answer [Examined] a file
+// of its language, because the request must change before a language can
+// serve it.
 //
 // The read path calls AskEach and merges the answers. A merge marks the
 // coverage of an answer with a Declined entry as partial.
@@ -104,7 +107,7 @@ func AskEach[T any](
 ) ([]Answer[T], Declined, error) {
 	var out []Answer[T]
 	var declined Declined
-	var failed error
+	var failed, refused error
 	for _, language := range Languages(r, req) {
 		answered, ok, why, err := Ask(ctx, c, language, role, req.Preferred, call)
 		declined = append(declined, why...)
@@ -115,15 +118,32 @@ func AskEach[T any](
 			if failed == nil {
 				failed = err
 			}
+			if refused == nil && errors.Is(err, ErrRefuse) {
+				refused = err
+			}
 			declined = append(declined, string(language)+": "+err.Error())
 		case ok:
 			out = append(out, answered)
 		}
 	}
-	if len(out) == 0 && failed != nil {
+	switch {
+	case refused != nil && !Examined(out):
+		return nil, nil, refused
+	case len(out) == 0 && failed != nil:
 		return nil, nil, failed
 	}
 	return out, declined, nil
+}
+
+// Examined reports whether an answer of answers examined a file of its
+// language. A skipped answer did not.
+func Examined[T any](answers []Answer[T]) bool {
+	for _, one := range answers {
+		if !one.Skipped {
+			return true
+		}
+	}
+	return false
 }
 
 // AskAny asks the languages the request is about, in order, and returns the
@@ -163,6 +183,18 @@ func Unsupported[T any](reason string) Answer[T] {
 		Status: trust.Unsupported,
 		Provenance: trust.Provenance{
 			Caveats: []trust.Caveat{{Code: trust.CaveatUnsupported, Note: reason}},
+		},
+	}
+}
+
+// Refused returns the answer for a request that an engine refused, for a
+// reason that the caller can act on: no items, status Refused, and a caveat
+// with the reason.
+func Refused[T any](reason string) Answer[T] {
+	return Answer[T]{
+		Status: trust.Refused,
+		Provenance: trust.Provenance{
+			Caveats: []trust.Caveat{{Code: trust.CaveatRefused, Note: reason}},
 		},
 	}
 }

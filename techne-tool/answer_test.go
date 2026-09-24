@@ -38,7 +38,7 @@ func TestAnswer(t *testing.T) {
 	t.Run("Render", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("writes text and no JSON", func(t *testing.T) {
+		t.Run("writes text without JSON", func(t *testing.T) {
 			t.Parallel()
 			got := answered().Render()
 			assert.NotContains(t, got, `"name":`, "the render")
@@ -49,6 +49,13 @@ func TestAnswer(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, strings.Count(answered().Render(), "core/sema/symbol.go"), 1,
 				"the occurrences of the path in the render")
+		})
+
+		t.Run("writes the path of a declaration that states one", func(t *testing.T) {
+			t.Parallel()
+			a := answered()
+			a.Items[0].Path = "core/sema/kind.go"
+			assert.Contains(t, a.Render(), "\ncore/sema/kind.go:33  type Symbol struct", "the line of Symbol")
 		})
 
 		t.Run("writes a member one level under its declaration", func(t *testing.T) {
@@ -88,7 +95,7 @@ func TestAnswer(t *testing.T) {
 			assert.Contains(t, a.Render(), "nothing declared", "the render")
 		})
 
-		t.Run("writes the code and the reason of a failure", func(t *testing.T) {
+		t.Run("writes only the failure of a failed answer", func(t *testing.T) {
 			t.Parallel()
 			a := answered()
 			a.Error = &tool.Failure{Code: "unsupported", Reason: "no engine serves rust"}

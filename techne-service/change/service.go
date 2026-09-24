@@ -79,9 +79,10 @@ func (s *Service) Apply(ctx context.Context, req edit.Request) (edit.Outcome, er
 	}
 
 	plan, declined, err := s.plan(ctx, req, spec)
+	why, refusal := engine.Refusal(err)
 	switch {
-	case errors.Is(err, engine.ErrRefuse):
-		return refused(req.Operation, trimmed(err)), nil
+	case refusal:
+		return refused(req.Operation, why), nil
 	case err != nil:
 		return edit.Outcome{}, err
 	case plan.Provenance.Engine == "" && len(declined) > 0:
@@ -349,15 +350,6 @@ func named(k edit.TargetKind) string {
 	default:
 		return "nothing"
 	}
-}
-
-// trimmed returns the reason of a refusal of a planner without the text of
-// [engine.ErrRefuse].
-func trimmed(err error) string {
-	if _, why, cut := strings.Cut(err.Error(), engine.ErrRefuse.Error()+": "); cut {
-		return why
-	}
-	return reason(err)
 }
 
 // reason returns the text of err without the name of the package of the write path that

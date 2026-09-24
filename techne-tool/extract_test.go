@@ -78,5 +78,12 @@ func TestExtract(t *testing.T) {
 			got := extracted(t, &recorder{}, `{"path":"a.fx","first_line":1,"last_line":2,"new_name":""}`)
 			assert.True(t, got.Failed(), "the failure of the output")
 		})
+
+		t.Run("refuses a path that leaves the workspace", func(t *testing.T) {
+			t.Parallel()
+			got := extracted(t, &recorder{}, `{"path":"../b.fx","first_line":1,"last_line":2,"new_name":"parsed"}`)
+			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
+			assert.Equal(t, got.Error.Reason, `"../b.fx" leaves the workspace root`, "the reason of the failure")
+		})
 	})
 }

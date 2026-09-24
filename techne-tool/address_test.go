@@ -22,13 +22,20 @@ import (
 func addressing(t *testing.T, found []sema.Symbol, input string) (tool.Written, edit.Request) {
 	t.Helper()
 	writer := &recorder{}
-	built, err := tool.Document(serving(found...), writer)
+	return addressedOver(t, serving(found...), writer, input), writer.asked
+}
+
+// addressedOver runs the document.symbol tool over reads and writer with input, and decodes the
+// output.
+func addressedOver(t *testing.T, reads tool.Outliner, writer *recorder, input string) tool.Written {
+	t.Helper()
+	built, err := tool.Document(reads, writer)
 	assert.NoError(t, err, "the error of Document")
 	result, err := built.Execute(t.Context(), json.RawMessage(input))
 	assert.NoError(t, err, "the error of Execute")
 	var out tool.Written
 	assert.NoError(t, json.Unmarshal(result.Payload, &out), "the decoding of the output")
-	return out, writer.asked
+	return out
 }
 
 // stored returns the declarations of [addressable].
@@ -99,14 +106,16 @@ func TestAddress(t *testing.T) {
 			t.Parallel()
 			over := addressable()
 			over.engine.found = nil
-			writer := &recorder{}
-			built, err := tool.Document(unreadOver(over), writer)
-			assert.NoError(t, err, "the error of Document")
-			result, err := built.Execute(t.Context(), json.RawMessage(`{"scope":"a.fx","name":"Store","doc":"x"}`))
-			assert.NoError(t, err, "the error of Execute")
-			var got tool.Written
-			assert.NoError(t, json.Unmarshal(result.Payload, &got), "the decoding of the output")
+			got := addressedOver(t, unreadOver(over), &recorder{}, `{"scope":"a.fx","name":"Store","doc":"x"}`)
 			assert.Contains(t, got.Error.Reason, "big.fx", "the reason of the failure")
+		})
+
+		t.Run("refuses a scope that the read service refuses with its reason", func(t *testing.T) {
+			t.Parallel()
+			got := addressedOver(t, refusedOver(addressable(), "gone.fx does not exist"), &recorder{},
+				`{"scope":"gone.fx","name":"Store","doc":"x"}`)
+			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
+			assert.Equal(t, got.Error.Reason, "gone.fx does not exist", "the reason of the failure")
 		})
 
 		t.Run("addresses an import of one name in several files once", func(t *testing.T) {
@@ -211,4 +220,18 @@ func (u unread) Outline(ctx context.Context, req engine.Request) (engine.Answer[
 		Code: trust.CaveatUnread, Note: "larger than an engine reads", Paths: []source.Path{"big.fx"},
 	})
 	return answered, err
+}
+
+// refusedOver returns over with each outline refused for the reason why, as a service refuses a
+// scope that does not exist.
+func refusedOver(over *reads, why string) tool.Outliner { return refusing{over, why} }
+
+// refusing is a read service whose outline is refused.
+type refusing struct {
+	*reads
+	why string
+}
+
+func (r refusing) Outline(context.Context, engine.Request) (engine.Answer[sema.Symbol], error) {
+	return engine.Refused[sema.Symbol](r.why), nil
 }

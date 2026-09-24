@@ -21,7 +21,7 @@ func TestWrite(t *testing.T) {
 	t.Run("Render", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("starts with the operation, the target and the state", func(t *testing.T) {
+		t.Run("starts with the heading of the change", func(t *testing.T) {
 			t.Parallel()
 			for _, one := range []tool.Written{
 				{Operation: "rename.symbol", Target: "Kind"},
@@ -136,6 +136,13 @@ func TestWrite(t *testing.T) {
 			writer := &recorder{gate: &trust.Provenance{Engine: "treesitter/fx", Fidelity: trust.Syntactic}}
 			got := documenting(t, writer, `{"scope":"a.fx","name":"Store","doc":"x"}`)
 			assert.Equal(t, got.Verified.Gate, "parse", "the kind of the gate")
+		})
+
+		t.Run("returns the weakest tiers for a refused request", func(t *testing.T) {
+			t.Parallel()
+			got := documenting(t, &recorder{}, `{"scope":"a.fx","name":"Store","doc":""}`)
+			assert.Equal(t, got.Provenance.Fidelity, "none", "the fidelity")
+			assert.Equal(t, got.Provenance.Completeness, "unknown", "the completeness")
 		})
 	})
 

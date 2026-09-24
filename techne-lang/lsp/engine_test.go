@@ -283,7 +283,7 @@ func TestEngine(t *testing.T) {
 			assert.Contains(t, messages(got.Items), "holding=a.fake", "the buffers after b.fake is gone")
 		})
 
-		t.Run("reads no file whose size and modification time are unchanged", func(t *testing.T) {
+		t.Run("reads no open file that is unchanged on disk", func(t *testing.T) {
 			t.Parallel()
 			if os.Geteuid() == 0 {
 				t.Skip("root reads a file without read permission")
@@ -324,7 +324,7 @@ func TestEngine(t *testing.T) {
 			root := lsptest.Workspace(t, map[string]string{"a.fake": lsptest.Content, "b.fake": "nothing\n"})
 			e := lsptest.Engine(t, root, lsptest.Server(lsptest.Opened))
 			for _, scope := range []source.Path{"a.fake", "b.fake"} {
-				_, err := e.Resolve(t.Context(), engine.Request{Scope: scope}, store())
+				_, err := e.Resolve(t.Context(), engine.Request{Scope: scope}, source.Position{})
 				assert.NoError(t, err, "Resolve opens "+string(scope))
 			}
 

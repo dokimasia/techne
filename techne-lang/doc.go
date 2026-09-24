@@ -8,7 +8,7 @@
 //
 // A language module constructs one [Declaration] and registers it with
 // [Registry.Register] from a composition root. The declaration states the
-// facts that hold for every engine of the language: its extensions, its
+// facts that every engine of the language shares: its extensions, its
 // project manifests, its comment forms, and its rules for test files, units
 // and visibility. Register checks the declaration and its engines before it
 // changes anything.
@@ -27,6 +27,15 @@
 // [Vendored] names and the paths the .gitignore files of the workspace
 // exclude, by the rules of gitignore(5). [Readable] applies the .gitignore
 // rules and the size limit to one path.
+//
+// A request that the caller can correct is refused with
+// [go.dokimi.dev/techne/core/engine.ErrRefuse]:
+//
+//   - Walk and Readable refuse a path that does not exist.
+//   - [GeneratedError] wraps ErrRefuse for a path that the .gitignore files
+//     exclude.
+//   - [Offset] converts a line and a column to an offset, and refuses a
+//     position outside the file.
 //
 // # Lowered answers
 //

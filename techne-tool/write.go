@@ -340,11 +340,12 @@ func Touched(changes []edit.Change, rewrites []edit.Rewrite, wrote map[string]bo
 // reads it.
 func declined(op edit.Operation, scope Scope, target, code, why string) Written {
 	return Written{
-		Scope:     scope,
-		Operation: string(op),
-		Target:    target,
-		Items:     []Changed{},
-		Error:     &Failure{Code: code, Reason: why},
+		Scope:      scope,
+		Operation:  string(op),
+		Target:     target,
+		Items:      []Changed{},
+		Provenance: unserved(),
+		Error:      &Failure{Code: code, Reason: why},
 	}
 }
 

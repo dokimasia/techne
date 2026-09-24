@@ -19,10 +19,10 @@ import (
 // tools call it, so a name addresses the same declaration in each of them. A line of zero
 // narrows nothing, as [pick] states.
 //
-// It returns a refused [Failure] when the name addresses no declaration or more than one, and
-// an unsupported Failure when no engine outlines the scope. A name that addresses nothing in a
-// scope with a file larger than an engine reads is refused with the name of that file, because
-// the declaration can be in it.
+// It returns a refused [Failure] when an engine refuses the outline, with its reason, and when
+// the name addresses no declaration or more than one. It returns an unsupported Failure when no
+// engine outlines the scope. A name that addresses nothing in a scope with a file larger than
+// an engine reads is refused with the name of that file, because the declaration can be in it.
 func addressed(
 	ctx context.Context,
 	reads Outliner,
@@ -41,7 +41,13 @@ func addressed(
 			Reason: fmt.Sprintf("%q could not be read: %v", scope, err),
 		}
 	}
-	if !answered.Status.Answered() {
+	switch {
+	case answered.Status == trust.Refused:
+		return sema.Symbol{}, &Failure{
+			Code:   trust.Refused.String(),
+			Reason: reasonFrom(provenance(answered.Provenance).Caveats),
+		}
+	case !answered.Status.Answered():
 		return sema.Symbol{}, &Failure{
 			Code:   trust.Unsupported.String(),
 			Reason: fmt.Sprintf("no engine outlines %q, so no declaration in it can be found", scope),

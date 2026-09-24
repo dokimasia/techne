@@ -12,6 +12,7 @@ import (
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
+	"go.dokimi.dev/techne/core/trust"
 )
 
 // OutlineInput is the input of the outline tool.
@@ -35,15 +36,15 @@ type OutlineInput struct {
 func Outline(reads Outliner) (Tool, error) {
 	return New("outline", outlineDescription,
 		func(ctx context.Context, in OutlineInput) (Answer, error) {
-			scope, err := relative(in.Scope)
-			if err != nil {
-				return Answer{}, err
+			scope, failure := relative(in.Scope)
+			if failure != nil {
+				return failed(Scope{Language: in.Language}, failure), nil
 			}
 			kind, byKind := kindOf(in.Kind)
 			detail, byDetail := levelOf(in.Detail, scope)
 			include, byInclude := bindingsOf(in.Include)
 			preferred, byFidelity := fidelityOf(in.Preferred)
-			if failure := first(byKind, byDetail, byInclude, byFidelity); failure != nil {
+			if failure = first(byKind, byDetail, byInclude, byFidelity); failure != nil {
 				return failed(about(scope, in.Language, engine.Answer[sema.Symbol]{}), failure), nil
 			}
 
@@ -104,19 +105,22 @@ func names(scope source.Path) bool {
 	return suffix != "" && suffix != base
 }
 
-// relative returns p as a path of the workspace, and the root for the empty path. It refuses
-// a path that leaves the workspace: an absolute path of any platform, and a path that climbs
-// out of the root. A backslash inside a path is a character of a file name.
-func relative(p string) (source.Path, error) {
+// relative returns p as a path of the workspace, and the root for the empty path. A backslash
+// inside a path is a character of a file name. It returns a refused [Failure] for an absolute
+// path of any platform, and for a path that is .. or starts with ../ after [path.Clean].
+func relative(p string) (source.Path, *Failure) {
 	if p == "" {
 		return engine.Root, nil
 	}
 	if absolute(p) {
-		return "", fmt.Errorf("tool: %q is absolute, not relative to the workspace root", p)
+		return "", &Failure{
+			Code:   trust.Refused.String(),
+			Reason: fmt.Sprintf("%q is absolute, not relative to the workspace root", p),
+		}
 	}
 	clean := path.Clean(p)
 	if clean == ".." || strings.HasPrefix(clean, "../") {
-		return "", fmt.Errorf("tool: %q leaves the workspace root", p)
+		return "", &Failure{Code: trust.Refused.String(), Reason: fmt.Sprintf("%q leaves the workspace root", p)}
 	}
 	return source.Path(clean), nil
 }

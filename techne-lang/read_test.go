@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/lang"
 )
 
@@ -82,14 +83,73 @@ func TestRead(t *testing.T) {
 			assert.NoError(t, lang.Readable(fsys, "src"), "Readable")
 		})
 
-		t.Run("returns another error for a path that does not exist", func(t *testing.T) {
+		t.Run("refuses a path that does not exist", func(t *testing.T) {
 			t.Parallel()
 			err := lang.Readable(fstest.MapFS{}, "nowhere.ts")
-			_, generated := errors.AsType[lang.GeneratedError](err)
-			_, large := errors.AsType[lang.LargeError](err)
-			assert.HasError(t, err, "Readable")
-			assert.False(t, generated || large, "error type")
+			assert.ErrorIs(t, err, engine.ErrRefuse, "Readable")
+			why, _ := engine.Refusal(err)
+			assert.Equal(t, why, "nowhere.ts does not exist", "reason")
 		})
+	})
+
+	t.Run("Offset", func(t *testing.T) {
+		t.Parallel()
+
+		content := []byte("one\ntwo\r\n\nfour")
+		placed := []struct {
+			name         string
+			line, column int
+			want         int
+		}{
+			{name: "returns the offset of a column inside its line", line: 1, column: 2, want: 6},
+			{name: "returns the end of a line for a column at its length", line: 0, column: 3, want: 3},
+			{name: "returns the end of a CRLF line before its carriage return", line: 1, column: 3, want: 7},
+			{name: "returns the offset of an empty line", line: 2, column: 0, want: 9},
+			{name: "returns the end of the file for the end of the last line", line: 3, column: 4, want: 14},
+		}
+		for _, tt := range placed {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				got, err := lang.Offset("a.fx", content, tt.line, tt.column)
+				assert.NoError(t, err, "Offset")
+				assert.Equal(t, got, tt.want, "offset")
+			})
+		}
+
+		t.Run("returns the end of the file for the line after a final line break", func(t *testing.T) {
+			t.Parallel()
+			got, err := lang.Offset("a.fx", []byte("a\n"), 1, 0)
+			assert.NoError(t, err, "Offset")
+			assert.Equal(t, got, 2, "offset")
+		})
+
+		refused := []struct {
+			name         string
+			line, column int
+			reason       string
+		}{
+			{
+				name: "refuses a line past the last line", line: 4, column: 0,
+				reason: "line 5 is past the end of a.fx, which has 4 lines",
+			},
+			{
+				name: "refuses a column past the end of its line", line: 1, column: 4,
+				reason: "column 5 is past the end of line 2 of a.fx, which ends at column 4",
+			},
+			{
+				name: "refuses a negative line", line: -1, column: 0,
+				reason: "line 0, column 1 is outside a.fx",
+			},
+		}
+		for _, tt := range refused {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				_, err := lang.Offset("a.fx", content, tt.line, tt.column)
+				assert.ErrorIs(t, err, engine.ErrRefuse, "Offset")
+				why, _ := engine.Refusal(err)
+				assert.Equal(t, why, tt.reason, "reason")
+			})
+		}
 	})
 
 	t.Run("Large", func(t *testing.T) {
@@ -110,7 +170,7 @@ func TestRead(t *testing.T) {
 	t.Run("LargeError.Error", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("names the path and the size", func(t *testing.T) {
+		t.Run("names the file with its size", func(t *testing.T) {
 			t.Parallel()
 			got := lang.LargeError{Path: "dist/app.js", Size: 3_400_000}.Error()
 			assert.Equal(t, got, "lang: dist/app.js is 3400000 bytes, larger than the 2097152 bytes an engine reads",

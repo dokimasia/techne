@@ -8,13 +8,20 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/tool"
 )
 
 // resolved runs the resolve tool over [addressable] with input, and decodes the answer.
 func resolved(t *testing.T, input string) tool.Answer {
 	t.Helper()
-	built, err := tool.Resolve(addressable())
+	return resolvedOver(t, addressable(), input)
+}
+
+// resolvedOver runs the resolve tool over service with input, and decodes the answer.
+func resolvedOver(t *testing.T, service *reads, input string) tool.Answer {
+	t.Helper()
+	built, err := tool.Resolve(service)
 	assert.NoError(t, err, "the error of Resolve")
 	result, err := built.Execute(t.Context(), json.RawMessage(input))
 	assert.NoError(t, err, "the error of Execute")
@@ -45,12 +52,21 @@ func TestResolve(t *testing.T) {
 
 		t.Run("refuses a line or a column of zero", func(t *testing.T) {
 			t.Parallel()
-			built, err := tool.Resolve(addressable())
-			assert.NoError(t, err, "the error of Resolve")
-			for _, at := range []string{`{"scope":"a.fx","line":0,"column":1}`, `{"scope":"a.fx","line":1,"column":0}`} {
-				_, err := built.Execute(t.Context(), json.RawMessage(at))
-				assert.HasError(t, err, "the error of Execute for "+at)
+			for at, want := range map[string]string{
+				`{"scope":"a.fx","line":0,"column":1}`: "line 0: lines count from one",
+				`{"scope":"a.fx","line":1,"column":0}`: "column 0: columns count from one",
+			} {
+				got := resolved(t, at)
+				assert.Equal(t, got.Error.Code, "refused", "the code of the failure for "+at)
+				assert.Equal(t, got.Error.Reason, want, "the reason of the failure for "+at)
 			}
+		})
+
+		t.Run("refuses a path that leaves the workspace", func(t *testing.T) {
+			t.Parallel()
+			got := resolved(t, `{"scope":"../b.fx","line":1,"column":1}`)
+			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
+			assert.Equal(t, got.Error.Reason, `"../b.fx" leaves the workspace root`, "the reason of the failure")
 		})
 
 		t.Run("returns an unsupported failure for a scope that no engine serves", func(t *testing.T) {
@@ -63,6 +79,15 @@ func TestResolve(t *testing.T) {
 			t.Parallel()
 			got := resolved(t, `{"scope":"a.fx","line":3,"column":10}`)
 			assert.False(t, got.Provenance.SupportsNegativeClaim, "the negative claim of the answer")
+		})
+
+		t.Run("returns the path of a declaration in another file", func(t *testing.T) {
+			t.Parallel()
+			elsewhere := declared("Store", sema.KindStruct, "", 2, 10)
+			elsewhere.Span.Path = "b.fx"
+			got := resolvedOver(t, serving(elsewhere), `{"scope":"a.fx","line":1,"column":1}`)
+			assert.Equal(t, got.Items[0].Path, "b.fx", "the path of Store")
+			assert.Contains(t, got.Render(), "b.fx:3  struct Store", "the render")
 		})
 	})
 }

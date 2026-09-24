@@ -55,11 +55,17 @@ func TestSearch(t *testing.T) {
 			assert.Equal(t, names(got.Items), []string{"Digest", "DigestAll"}, "the matches")
 		})
 
-		t.Run("returns the name, the kind and the line of each match", func(t *testing.T) {
+		t.Run("returns the kind of each match", func(t *testing.T) {
 			t.Parallel()
 			got := searched(t, serving(function("Digest", "one"), function("DigestAll", "two")),
 				`{"text":"Digest","scope":"a.fx"}`)
 			assert.Equal(t, got.Items[0].Kind, sema.KindFunction, "the kind of Digest")
+		})
+
+		t.Run("returns the line of each match counted from one", func(t *testing.T) {
+			t.Parallel()
+			got := searched(t, serving(function("Digest", "one"), function("DigestAll", "two")),
+				`{"text":"Digest","scope":"a.fx"}`)
 			assert.Equal(t, got.Items[0].Line, 1, "the line of Digest")
 		})
 
@@ -96,6 +102,15 @@ func TestSearch(t *testing.T) {
 			searched(t, over, `{"text":"f","scope":"a.fx","private":true,"limit":20}`)
 			assert.Equal(t, over.searched[0].Include, engine.Bindings(0), "the bindings of the query")
 			assert.Equal(t, over.searched[0].Limit, 20, "the limit of the query")
+		})
+
+		t.Run("refuses a path that leaves the workspace", func(t *testing.T) {
+			t.Parallel()
+			over := serving()
+			got := searched(t, over, `{"text":"f","scope":"../b.fx"}`)
+			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
+			assert.Equal(t, got.Error.Reason, `"../b.fx" leaves the workspace root`, "the reason of the failure")
+			assert.Empty(t, over.searched, "the queries of the engine")
 		})
 	})
 

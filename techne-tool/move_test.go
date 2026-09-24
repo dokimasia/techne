@@ -37,7 +37,7 @@ func TestMove(t *testing.T) {
 			assert.HasPrefix(t, built.Description(), "PREFER OVER ", "the description")
 		})
 
-		t.Run("points the write path at the file and its destination", func(t *testing.T) {
+		t.Run("asks the write path to move the file to its destination", func(t *testing.T) {
 			t.Parallel()
 			writer := &recorder{}
 			got := moved(t, writer, `{"path":"a/b.fx","to":"c/d.fx"}`)
@@ -62,11 +62,11 @@ func TestMove(t *testing.T) {
 
 		t.Run("refuses a path that leaves the workspace", func(t *testing.T) {
 			t.Parallel()
-			built, err := tool.Move(&recorder{})
-			assert.NoError(t, err, "the error of Move")
 			for _, call := range []string{`{"path":"../escaped.fx","to":"a.fx"}`, `{"path":"a.fx","to":"../escaped.fx"}`} {
-				_, err := built.Execute(t.Context(), json.RawMessage(call))
-				assert.HasError(t, err, "the error of Execute for "+call)
+				got := moved(t, &recorder{}, call)
+				assert.Equal(t, got.Error.Code, "refused", "the code of the failure for "+call)
+				assert.Equal(t, got.Error.Reason, `"../escaped.fx" leaves the workspace root`,
+					"the reason of the failure for "+call)
 			}
 		})
 	})

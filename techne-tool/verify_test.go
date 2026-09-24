@@ -66,7 +66,7 @@ func TestVerify(t *testing.T) {
 			assert.HasPrefix(t, built.Description(), "PREFER OVER ", "the description")
 		})
 
-		t.Run("returns each issue with its severity and its message", func(t *testing.T) {
+		t.Run("returns each issue that the check reports", func(t *testing.T) {
 			t.Parallel()
 			got := verified(t, `{"scope":"a.fx"}`)
 			assert.False(t, got.Failed(), "the failure of the output")
@@ -84,10 +84,15 @@ func TestVerify(t *testing.T) {
 			assert.False(t, result.Failed, "Failed of the result")
 		})
 
-		t.Run("returns the source line of an issue and its line counted from one", func(t *testing.T) {
+		t.Run("returns the source line of an issue", func(t *testing.T) {
 			t.Parallel()
 			got := verified(t, `{"scope":"a.fx"}`)
 			assert.Equal(t, got.Items[0].At, "for part := range strings.Fields(x) {", "the source line")
+		})
+
+		t.Run("returns the line of an issue counted from one", func(t *testing.T) {
+			t.Parallel()
+			got := verified(t, `{"scope":"a.fx"}`)
 			assert.Equal(t, got.Items[0].Line, 228, "the line")
 		})
 
@@ -113,12 +118,27 @@ func TestVerify(t *testing.T) {
 			assert.True(t, got.Failed(), "the failure of the output")
 			assert.Equal(t, got.Error.Code, "unsupported", "the code of the failure")
 		})
+
+		t.Run("refuses a path that leaves the workspace", func(t *testing.T) {
+			t.Parallel()
+			got := verified(t, `{"scope":"../b.fx"}`)
+			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
+			assert.Equal(t, got.Error.Reason, `"../b.fx" leaves the workspace root`, "the reason of the failure")
+		})
+
+		t.Run("returns the weakest tiers for a refused request", func(t *testing.T) {
+			t.Parallel()
+			got := verified(t, `{"scope":"a.fx","preferred_fidelity":"exact"}`)
+			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
+			assert.Equal(t, got.Provenance.Fidelity, "none", "the fidelity")
+			assert.Equal(t, got.Provenance.Completeness, "unknown", "the completeness")
+		})
 	})
 
 	t.Run("Render", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("writes each issue with its site, its code and its fix", func(t *testing.T) {
+		t.Run("writes each issue from its site to its fix", func(t *testing.T) {
 			t.Parallel()
 			got := verified(t, `{"scope":"a.fx"}`)
 			assert.ContainsInOrder(t, got.Render(), []string{

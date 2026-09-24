@@ -109,6 +109,9 @@ func symbol(name string) []sema.Symbol {
 // declining returns an error that wraps engine.ErrDecline with why.
 func declining(why string) error { return fmt.Errorf("%w: %s", engine.ErrDecline, why) }
 
+// refusing returns an error that wraps engine.ErrRefuse with why.
+func refusing(why string) error { return fmt.Errorf("%w: %s", engine.ErrRefuse, why) }
+
 func TestService(t *testing.T) {
 	t.Parallel()
 
@@ -171,7 +174,7 @@ func TestService(t *testing.T) {
 			}}, "the caveats of the answer")
 		})
 
-		t.Run("returns unsupported with the reason when every answer is skipped and one declines", func(t *testing.T) {
+		t.Run("returns unsupported with the reason of a decline beside a skipped answer", func(t *testing.T) {
 			t.Parallel()
 			c := catalogue(t,
 				answering{name: "checker", fidelity: trust.Resolved, err: declining("src is a directory")},
@@ -185,6 +188,29 @@ func TestService(t *testing.T) {
 				Code: trust.CaveatUnsupported,
 				Note: "checker: src is a directory",
 			}}, "the caveats of the answer")
+		})
+
+		t.Run("returns a refused answer with the reason of a refusal", func(t *testing.T) {
+			t.Parallel()
+			missing := answering{name: "parser", fidelity: trust.Syntactic, err: refusing("a.fx does not exist")}
+			got, err := query.New(catalogue(t, missing), routes).Outline(t.Context(), engine.Request{Scope: "a.fx"})
+			assert.NoError(t, err, "Outline of a.fx")
+			assert.Equal(t, got.Status, trust.Refused, "the status of the answer")
+			assert.Equal(t, got.Provenance.Caveats, []trust.Caveat{{
+				Code: trust.CaveatRefused,
+				Note: "a.fx does not exist",
+			}}, "the caveats of the answer")
+		})
+
+		t.Run("returns a refused answer when every other answer is skipped", func(t *testing.T) {
+			t.Parallel()
+			c := catalogue(t,
+				answering{name: "checker", fidelity: trust.Resolved, err: refusing("src is a directory")},
+				answering{name: "server", language: other, fidelity: trust.Resolved, skipped: true},
+			)
+			got, err := query.New(c, suffixes{fixture, other}).Outline(t.Context(), engine.Request{Scope: "src"})
+			assert.NoError(t, err, "Outline of src")
+			assert.Equal(t, got.Status, trust.Refused, "the status of the answer")
 		})
 
 		t.Run("returns unsupported with a caveat for a path that no language claims", func(t *testing.T) {

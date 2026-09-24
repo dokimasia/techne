@@ -26,10 +26,11 @@ import (
 // name that the type checker bound.
 //
 // The scope of req is the file that contains the position. Resolve returns a skipped result for
-// a scope without a Go file, and declines a directory with Go files, because a position belongs
+// a scope without a Go file, and refuses a directory with Go files, because a position belongs
 // to one file. It declines a file outside every loaded package, such as a file that its build
-// constraints exclude. A position with a line and a column and no offset gets its offset from
-// the content of the file.
+// constraints exclude. A position without an offset gets its offset from its line and column by
+// the rule of [lang.Offset], which refuses a position outside the file before the packages
+// load.
 //
 // An error on the line of the position lowers the answer, and so does any error of the program
 // of the file when the answer is empty.
@@ -48,7 +49,7 @@ func (e *Engine) Resolve(
 			return engine.Result[sema.Symbol]{Skipped: true, Completeness: trust.ScopeTotal}, nil
 		}
 		return engine.Result[sema.Symbol]{}, fmt.Errorf("%w: checker: a position names a file, and %s is a directory",
-			engine.ErrDecline, p)
+			engine.ErrRefuse, p)
 	}
 	if unreadable := lang.Readable(os.DirFS(e.root), p); unreadable != nil {
 		return engine.Result[sema.Symbol]{}, unreadable
@@ -56,6 +57,12 @@ func (e *Engine) Resolve(
 	content, err := os.ReadFile(e.fullPath(p))
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, fmt.Errorf("checker: read %s: %w", p, err)
+	}
+	offset := at.Offset
+	if offset <= 0 {
+		if offset, err = lang.Offset(p, content, at.Line, at.Column); err != nil {
+			return engine.Result[sema.Symbol]{}, err
+		}
 	}
 
 	v, err := e.current(ctx, w)
@@ -72,10 +79,6 @@ func (e *Engine) Resolve(
 			engine.ErrDecline, p, reason)
 	}
 
-	offset := at.Offset
-	if offset <= 0 && (at.Line > 0 || at.Column > 0) {
-		offset = byteAt(content, at.Line, at.Column)
-	}
 	var out []sema.Symbol
 	if named := identAt(file, v.fset, offset); named != nil {
 		of := pkg.TypesInfo.Uses[named]
@@ -131,6 +134,20 @@ func snippet(full string, offset int) string {
 	return strings.TrimSpace(lang.LineAt(content, offset))
 }
 
+// byteAt returns the offset of a zero-based line and column of content, or the length of
+// content for a line past its end. The checker calls it for the positions that the loader
+// reports, which are in the file.
+func byteAt(content []byte, line, column int) int {
+	at, seen := 0, 0
+	for seen < line && at < len(content) {
+		if content[at] == '\n' {
+			seen++
+		}
+		at++
+	}
+	return min(at+column, len(content))
+}
+
 // identAt returns the identifier of file that contains offset, or nil for none.
 func identAt(file *ast.File, fset *token.FileSet, offset int) *ast.Ident {
 	var found *ast.Ident
@@ -146,17 +163,4 @@ func identAt(file *ast.File, fset *token.FileSet, offset int) *ast.Ident {
 		return found == nil
 	})
 	return found
-}
-
-// byteAt returns the offset of a zero-based line and column of content, or the length of
-// content for a line past its end.
-func byteAt(content []byte, line, column int) int {
-	at, seen := 0, 0
-	for seen < line && at < len(content) {
-		if content[at] == '\n' {
-			seen++
-		}
-		at++
-	}
-	return min(at+column, len(content))
 }

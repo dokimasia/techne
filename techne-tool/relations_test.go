@@ -195,12 +195,26 @@ func TestRelations(t *testing.T) {
 			got := relatedOver(t, calling(), store)
 			assert.False(t, got.Provenance.SupportsNegativeClaim, "the negative claim of the answer")
 		})
+
+		t.Run("refuses a path that leaves the workspace", func(t *testing.T) {
+			t.Parallel()
+			got := relatedOver(t, calling(), `{"scope":"../b.fx","name":"Store","relation":"calls"}`)
+			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
+			assert.Equal(t, got.Error.Reason, `"../b.fx" leaves the workspace root`, "the reason of the failure")
+		})
+
+		t.Run("returns the weakest tiers for a refused request", func(t *testing.T) {
+			t.Parallel()
+			got := relatedOver(t, calling(), `{"scope":"a.fx","name":"Get","relation":"calls"}`)
+			assert.Equal(t, got.Provenance.Fidelity, "none", "the fidelity")
+			assert.Equal(t, got.Provenance.Completeness, "unknown", "the completeness")
+		})
 	})
 
 	t.Run("Render", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("writes each site with its far end and its source line", func(t *testing.T) {
+		t.Run("writes each site with its far end over its source line", func(t *testing.T) {
 			t.Parallel()
 			got := relatedOver(t, calling(), store)
 			assert.ContainsInOrder(t, got.Render(), []string{

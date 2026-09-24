@@ -54,6 +54,13 @@ func TestRename(t *testing.T) {
 			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
 		})
 
+		t.Run("refuses a path that leaves the workspace", func(t *testing.T) {
+			t.Parallel()
+			got := renamed(t, &recorder{}, `{"scope":"../b.fx","name":"Store","new_name":"Vault"}`)
+			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
+			assert.Equal(t, got.Error.Reason, `"../b.fx" leaves the workspace root`, "the reason of the failure")
+		})
+
 		t.Run("refuses an ambiguous name with the site of each declaration", func(t *testing.T) {
 			t.Parallel()
 			got := renamed(t, &recorder{}, `{"scope":"a.fx","name":"Get","new_name":"Fetch"}`)

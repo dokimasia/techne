@@ -29,9 +29,8 @@ func keep(into, from []trust.Caveat) []trust.Caveat {
 
 // merge combines the answers of the languages of one scope, of which parts contains at
 // least one. It returns one answer unchanged, and [combined] of two or more. A language in
-// silent, whose engines declined,
-// makes the merged answer partial, with a [trust.CaveatUnsupported] caveat that contains
-// their reasons.
+// silent, whose engines declined, makes the merged answer partial, with a
+// [trust.CaveatUnsupported] caveat that contains their reasons.
 func merge[T any](
 	parts []engine.Answer[T],
 	want trust.Fidelity,
@@ -66,7 +65,7 @@ func combined[T any](parts []engine.Answer[T], want trust.Fidelity) engine.Answe
 			Completeness: trust.ScopeTotal,
 		},
 	}
-	read := spoke(parts)
+	read := engine.Examined(parts)
 
 	names := make([]string, 0, len(parts))
 	for _, part := range parts {
@@ -96,15 +95,4 @@ func statused(p trust.Provenance, want trust.Fidelity) trust.Status {
 	default:
 		return trust.OK
 	}
-}
-
-// spoke reports whether an answer of parts read a file of the scope, which a skipped
-// answer did not.
-func spoke[T any](parts []engine.Answer[T]) bool {
-	for _, part := range parts {
-		if !part.Skipped {
-			return true
-		}
-	}
-	return false
 }

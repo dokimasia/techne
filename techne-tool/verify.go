@@ -106,11 +106,14 @@ func coded(reporter, code string) string {
 func Verify(gates Verifier) (Tool, error) {
 	return New("verify", verifyDescription,
 		func(ctx context.Context, in VerifyInput) (VerifyOutput, error) {
-			scope, err := relative(in.Scope)
-			if err != nil {
-				return VerifyOutput{}, err
+			scope, failure := relative(in.Scope)
+			out := VerifyOutput{
+				Scope: Scope{Language: in.Language, Unit: string(scope)}, Items: []Reported{}, Provenance: unserved(),
 			}
-			out := VerifyOutput{Scope: Scope{Language: in.Language, Unit: string(scope)}, Items: []Reported{}}
+			if failure != nil {
+				out.Scope.Unit, out.Error = "", failure
+				return out, nil
+			}
 			if names(scope) {
 				out.Scope.Path, out.Scope.Unit = string(scope), ""
 			}

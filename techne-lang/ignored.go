@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 
+	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
 )
 
@@ -21,8 +22,8 @@ import (
 //
 //   - The last matching pattern decides, and a deeper file takes precedence
 //     over the files above it.
-//   - A path under an excluded directory is excluded, whatever a later
-//     pattern says about the path.
+//   - A path under an excluded directory is excluded. No pattern
+//     re-includes it.
 //   - A pattern without a slash matches the base name at any depth. A
 //     pattern with a slash matches from the directory of its file.
 //   - A trailing slash matches directories only. A trailing /** matches
@@ -73,8 +74,8 @@ func (i *ignores) read(fsys fs.FS, dir string) {
 }
 
 // skips reports whether the patterns exclude p itself. It does not check
-// the directories above p. A walk prunes an excluded directory before it
-// reaches the paths inside it.
+// the directories above p. A walk prunes an excluded directory, so it does
+// not visit the paths inside it.
 func (i *ignores) skips(p string, isDir bool) bool {
 	if len(i.rules) == 0 {
 		return false
@@ -233,10 +234,14 @@ func covers(parts, segments []string) bool {
 }
 
 // GeneratedError reports a path that the .gitignore files of the workspace
-// exclude.
+// exclude. It wraps [go.dokimi.dev/techne/core/engine.ErrRefuse], because
+// the caller can name the source of the generated file.
 type GeneratedError struct{ Scope source.Path }
 
 // Error returns the path.
 func (g GeneratedError) Error() string {
 	return "lang: the .gitignore files of the workspace exclude " + string(g.Scope)
 }
+
+// Unwrap returns engine.ErrRefuse.
+func (GeneratedError) Unwrap() error { return engine.ErrRefuse }

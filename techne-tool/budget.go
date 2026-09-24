@@ -148,7 +148,7 @@ func fitting(a Answer, ceiling int) *fit {
 			at := len(f.nodes)
 			own := item
 			own.Members = nil
-			f.nodes = append(f.nodes, costed(own, depth, a.Scope.Path == ""))
+			f.nodes = append(f.nodes, costed(own, depth))
 			flatten(item.Members, depth+1)
 			f.nodes[at].end = len(f.nodes)
 		}
@@ -158,18 +158,18 @@ func fitting(a Answer, ceiling int) *fit {
 }
 
 // costed returns the node of d at depth, with the bytes of each part of its render.
-func costed(d Declaration, depth int, withPath bool) node {
+func costed(d Declaration, depth int) node {
 	out := node{d: d, depth: depth}
 	indent := strings.Repeat("  ", depth)
 	head, rest := parts(d)
-	out.head = len(headLine(indent, d, head, withPath))
+	out.head = len(headLine(indent, d, head))
 	for _, line := range rest {
 		out.rest += len(bodyLine(indent, line))
 	}
 	thin := d
 	thin.Snippet = ""
 	thinHead, _ := parts(thin)
-	out.thin = len(headLine(indent, d, thinHead, withPath))
+	out.thin = len(headLine(indent, d, thinHead))
 	if d.Doc != "" {
 		for line := range strings.SplitSeq(d.Doc, "\n") {
 			out.doc += len(bodyLine(indent, line))

@@ -11,14 +11,15 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
 )
 
 // Largest is the size in bytes above which an engine does not read a file.
 // An outline call through the outline tool of a JavaScript file of 69,000
 // declarations per MiB takes 0.75s at 1 MiB, 1.50s at 2 MiB and 2.21s at
-// 3 MiB, so 2 MiB is the largest size of the three that answers within 2
-// seconds.
+// 3 MiB, so 2 MiB is the largest of the three sizes whose outline returns
+// within 2 seconds.
 const Largest = 2 << 20
 
 // LargeError reports a file larger than [Largest].
@@ -35,8 +36,9 @@ func (e LargeError) Error() string {
 
 // Readable returns nil if an engine may read the file at p. It returns
 // [GeneratedError] when the .gitignore files of the workspace exclude p,
-// [LargeError] when the file is larger than [Largest], and an error when p
-// does not exist. It reads the .gitignore files above p on every call.
+// [LargeError] when the file is larger than [Largest], and an error that
+// wraps [go.dokimi.dev/techne/core/engine.ErrRefuse] when p does not exist.
+// It reads the .gitignore files above p on every call.
 func Readable(fsys fs.FS, p source.Path) error {
 	_, info, _, err := located(fsys, p)
 	if err != nil || info.IsDir() {
@@ -53,6 +55,40 @@ func Large(p source.Path, size int64) error {
 		return LargeError{Path: p, Size: size}
 	}
 	return nil
+}
+
+// Offset returns the byte offset of a zero-based line and a zero-based byte
+// column of content, the content of the file at p. A column can equal the
+// length of its line, which is the end of the line. A line ends before its
+// "\n", and before a "\r" that precedes the "\n". Offset returns an error
+// that wraps [go.dokimi.dev/techne/core/engine.ErrRefuse] for a negative line
+// or column, a line past the last line and a column past the end of its line.
+// The error counts lines and columns from one, as an editor does.
+func Offset(p source.Path, content []byte, line, column int) (int, error) {
+	if line < 0 || column < 0 {
+		return 0, fmt.Errorf("%w: line %d, column %d is outside %s", engine.ErrRefuse, line+1, column+1, p)
+	}
+	start := 0
+	for n := range line {
+		at := bytes.IndexByte(content[start:], '\n')
+		if at < 0 {
+			return 0, fmt.Errorf("%w: line %d is past the end of %s, which has %d lines",
+				engine.ErrRefuse, line+1, p, n+1)
+		}
+		start += at + 1
+	}
+	end := len(content)
+	if at := bytes.IndexByte(content[start:], '\n'); at >= 0 {
+		end = start + at
+		if end > start && content[end-1] == '\r' {
+			end--
+		}
+	}
+	if column > end-start {
+		return 0, fmt.Errorf("%w: column %d is past the end of line %d of %s, which ends at column %d",
+			engine.ErrRefuse, column+1, line+1, p, end-start+1)
+	}
+	return start + column, nil
 }
 
 // LineLimit is the length in bytes at which an engine cuts a line of source

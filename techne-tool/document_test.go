@@ -110,6 +110,13 @@ func TestDocument(t *testing.T) {
 			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
 		})
 
+		t.Run("refuses a path that leaves the workspace", func(t *testing.T) {
+			t.Parallel()
+			got := documenting(t, &recorder{}, `{"scope":"../b.fx","name":"Store","doc":"x"}`)
+			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
+			assert.Equal(t, got.Error.Reason, `"../b.fx" leaves the workspace root`, "the reason of the failure")
+		})
+
 		t.Run("previews a request without dry_run", func(t *testing.T) {
 			t.Parallel()
 			writer := &recorder{}

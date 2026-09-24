@@ -14,6 +14,7 @@ import (
 	"testing/fstest"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/lang"
 )
@@ -100,10 +101,12 @@ func TestFiles(t *testing.T) {
 			})
 		}
 
-		t.Run("returns an error for a scope that does not exist", func(t *testing.T) {
+		t.Run("refuses a scope that does not exist", func(t *testing.T) {
 			t.Parallel()
 			_, err := lang.Walk(tree(), "nowhere", claimed)
-			assert.HasError(t, err, "Walk")
+			assert.ErrorIs(t, err, engine.ErrRefuse, "Walk")
+			why, _ := engine.Refusal(err)
+			assert.Equal(t, why, "nowhere does not exist", "reason")
 		})
 
 		t.Run("returns a file larger than Largest in Unread", func(t *testing.T) {

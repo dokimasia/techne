@@ -58,15 +58,15 @@ func (m Matches) Render() string {
 func Search(reads Searcher) (Tool, error) {
 	return New("search", searchDescription,
 		func(ctx context.Context, in SearchInput) (Matches, error) {
-			scope, err := relative(in.Scope)
-			if err != nil {
-				return Matches{}, err
+			scope, failure := relative(in.Scope)
+			if failure != nil {
+				return Matches{Answer: failed(Scope{Language: in.Language}, failure), Text: in.Text}, nil
 			}
 			kind, byKind := kindOf(in.Kind)
 			detail, byDetail := levelOf(in.Detail, scope)
 			include, byInclude := bindingsOf(in.Include)
 			preferred, byFidelity := fidelityOf(in.Preferred)
-			if failure := first(byKind, byDetail, byInclude, byFidelity); failure != nil {
+			if failure = first(byKind, byDetail, byInclude, byFidelity); failure != nil {
 				return Matches{
 					Answer: failed(about(scope, in.Language, engine.Answer[sema.Symbol]{}), failure),
 					Text:   in.Text,

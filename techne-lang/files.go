@@ -4,11 +4,13 @@
 package lang
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"path"
 	"slices"
 
+	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
 )
 
@@ -27,8 +29,9 @@ type Files struct {
 // Walk does not enter a directory that [Vendored] names or that the
 // .gitignore files of the workspace exclude, unless that directory is the
 // scope. It returns [GeneratedError] when the .gitignore files exclude the
-// scope, and an error when the scope does not exist. A file scope with an
-// extension outside extensions returns no files.
+// scope, and an error that wraps
+// [go.dokimi.dev/techne/core/engine.ErrRefuse] when the scope does not
+// exist. A file scope with an extension outside extensions returns no files.
 func Walk(fsys fs.FS, scope source.Path, extensions []string) (Files, error) {
 	name, info, rules, err := located(fsys, scope)
 	if err != nil {
@@ -87,13 +90,17 @@ func (f *Files) add(p source.Path, size int64) {
 
 // located cleans scope, reads the .gitignore files of every directory above
 // it, and returns the result with the FileInfo of scope. It returns
-// GeneratedError when those files exclude scope, and an error when scope
-// does not exist. Walk and Readable call it before they apply their own
+// GeneratedError when those files exclude scope, and an error that wraps
+// engine.ErrRefuse when scope does not exist, because the caller can name a
+// path that exists. Walk and Readable call it before they apply their own
 // rules.
 func located(fsys fs.FS, scope source.Path) (string, fs.FileInfo, *ignores, error) {
 	name := path.Clean(string(scope))
 	info, err := fs.Stat(fsys, name)
-	if err != nil {
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return "", nil, nil, fmt.Errorf("%w: %s does not exist", engine.ErrRefuse, scope)
+	case err != nil:
 		return "", nil, nil, fmt.Errorf("lang: %q: %w", scope, err)
 	}
 	rules := &ignores{}

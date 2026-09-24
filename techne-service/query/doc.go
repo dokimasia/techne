@@ -31,6 +31,13 @@
 //   - a path of an extension that the router does not claim
 //   - a scope without an answer, or where every answer is skipped and a language declined
 //
+// # Refused answers
+//
+// A request that an engine refuses with [engine.ErrRefuse], such as a request about a path
+// that does not exist, returns [trust.Refused] with a caveat that contains the reason, and no
+// error. A refusal of one language counts as a failure when another language examined the
+// scope.
+//
 // # Dependency position
 //
 // Imports the standard library, core/edit, core/engine, core/sema, core/source and

@@ -25,16 +25,16 @@ type MoveInput struct {
 func Move(writes Writer) (Tool, error) {
 	return New(string(edit.MoveFile), moveDescription,
 		func(ctx context.Context, in MoveInput) (Written, error) {
-			from, err := relative(in.Path)
-			if err != nil {
-				return Written{}, err
+			from, failure := relative(in.Path)
+			if failure != nil {
+				return declined(edit.MoveFile, Scope{Language: in.Language}, in.Path, failure.Code, failure.Reason), nil
 			}
-			to, err := relative(in.To)
-			if err != nil {
-				return Written{}, err
+			held := writing(from, in.Language)
+			to, failure := relative(in.To)
+			if failure != nil {
+				return declined(edit.MoveFile, held, string(from), failure.Code, failure.Reason), nil
 			}
 
-			held := writing(from, in.Language)
 			if in.To == "" {
 				return declined(edit.MoveFile, held, string(from), trust.Refused.String(),
 					"to is empty: to is the destination of the file"), nil

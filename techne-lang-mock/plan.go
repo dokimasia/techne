@@ -168,14 +168,22 @@ func above(content []byte, of sema.Symbol) (from, to int) {
 	return from, start
 }
 
-// moving returns the move of the file that target names to to. It refuses a target that names
-// no file of the workspace, and a move without a destination.
+// moving returns the move of the file that target names to to. It refuses a target that is not
+// a file, a directory of the workspace, a file of the language that the workspace does not
+// contain, and a move without a destination.
 func moving(w workspace, target edit.Target, to string) (engine.Result[edit.Change], error) {
 	switch {
-	case target.Kind != edit.TargetFile || !slices.Contains(w.claimed, target.Path):
+	case target.Kind != edit.TargetFile:
 		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"%w: mock: %s names a file of the workspace, and the target names none", engine.ErrRefuse, edit.MoveFile)
-	case to == "":
+			"%w: mock: %s moves a file, and the target is not a file", engine.ErrRefuse, edit.MoveFile)
+	case slices.Contains(w.claimed, target.Path):
+	case w.claims(target.Path):
+		return engine.Result[edit.Change]{}, fmt.Errorf(
+			"%w: mock: %s moves a file, and %s is a directory", engine.ErrRefuse, edit.MoveFile, target.Path)
+	default:
+		return engine.Result[edit.Change]{}, fmt.Errorf("%w: %s does not exist", engine.ErrRefuse, target.Path)
+	}
+	if to == "" {
 		return engine.Result[edit.Change]{}, fmt.Errorf(
 			"%w: mock: %s needs %s", engine.ErrRefuse, edit.MoveFile, edit.ArgDestination)
 	}

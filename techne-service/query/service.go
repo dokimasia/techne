@@ -92,10 +92,10 @@ func (s *Service) Verify(
 		})
 }
 
-// ask runs one read role through [engine.AskEach] and merges the answers. It returns an
-// unsupported answer with the reasons of the engines that declined when every answer is
-// skipped. It returns an unsupported answer about the scope when no engine answered or
-// declined.
+// ask runs one read role through [engine.AskEach] and merges the answers. It returns a
+// refused answer with the reason of a refusal, and an unsupported answer with the reasons of
+// the engines that declined when every answer is skipped. It returns an unsupported answer
+// about the scope when no engine answered or declined.
 func ask[T any](
 	ctx context.Context,
 	s *Service,
@@ -106,8 +106,11 @@ func ask[T any](
 	answered, declined, err := engine.AskEach(ctx, s.catalog, s.router, req, role, call)
 	switch {
 	case err != nil:
+		if why, refused := engine.Refusal(err); refused {
+			return engine.Refused[T](why), nil
+		}
 		return engine.Answer[T]{}, err
-	case !spoke(answered) && len(declined) > 0:
+	case !engine.Examined(answered) && len(declined) > 0:
 		return engine.Unsupported[T](declined.Reason()), nil
 	case len(answered) == 0:
 		return engine.Unsupported[T](fmt.Sprintf("no engine serves %q for this role", req.Scope)), nil

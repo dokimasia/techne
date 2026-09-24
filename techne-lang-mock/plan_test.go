@@ -200,6 +200,8 @@ func TestPlan(t *testing.T) {
 			_, err := built(t).Plan(t.Context(), engine.Request{Scope: "src"}, edit.MoveFile,
 				edit.Target{Kind: edit.TargetFile, Path: "src/absent.mock"}, edit.Args{edit.ArgDestination: "b.mock"})
 			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of the move of src/absent.mock")
+			why, _ := engine.Refusal(err)
+			assert.Equal(t, why, "src/absent.mock does not exist", "the reason of the refusal")
 		})
 
 		t.Run("refuses a move of a directory", func(t *testing.T) {
@@ -207,6 +209,18 @@ func TestPlan(t *testing.T) {
 			_, err := built(t).Plan(t.Context(), engine.Request{Scope: "src"}, edit.MoveFile,
 				edit.Target{Kind: edit.TargetFile, Path: "src"}, edit.Args{edit.ArgDestination: "lib"})
 			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of the move of src")
+			why, _ := engine.Refusal(err)
+			assert.Equal(t, why, "mock: move.file moves a file, and src is a directory", "the reason of the refusal")
+		})
+
+		t.Run("refuses a move of a target that is not a file", func(t *testing.T) {
+			t.Parallel()
+			_, err := built(t).Plan(t.Context(), engine.Request{Scope: "src"}, edit.MoveFile,
+				pointing(t, "Store"), edit.Args{edit.ArgDestination: "lib/store.mock"})
+			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of the move of a declaration")
+			why, _ := engine.Refusal(err)
+			assert.Equal(t, why, "mock: move.file moves a file, and the target is not a file",
+				"the reason of the refusal")
 		})
 
 		t.Run("refuses a move without a destination", func(t *testing.T) {

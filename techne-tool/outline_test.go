@@ -276,15 +276,47 @@ func TestOutline(t *testing.T) {
 		t.Run("refuses an absolute path of each platform", func(t *testing.T) {
 			t.Parallel()
 			for _, absolute := range []string{`/etc/passwd`, `C:\\Windows`, `c:/Windows`, `\\\\server\\share`, `//server/share`} {
-				_, err := outlining(t).Execute(t.Context(), json.RawMessage(`{"scope":"`+absolute+`"}`))
-				assert.HasError(t, err, "the error of Execute for "+absolute)
+				got := outlined(t, `{"scope":"`+absolute+`"}`)
+				assert.Equal(t, got.Error.Code, "refused", "the code of the failure for "+absolute)
+				assert.Contains(t, got.Error.Reason, "is absolute", "the reason of the failure for "+absolute)
 			}
 		})
 
 		t.Run("refuses a path that leaves the workspace", func(t *testing.T) {
 			t.Parallel()
-			_, err := outlining(t).Execute(t.Context(), json.RawMessage(`{"scope":"a/../../b.fx"}`))
-			assert.HasError(t, err, "the error of Execute for a/../../b.fx")
+			got := outlined(t, `{"scope":"a/../../b.fx"}`)
+			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
+			assert.Equal(t, got.Error.Reason, `"a/../../b.fx" leaves the workspace root`, "the reason of the failure")
+		})
+
+		t.Run("returns the weakest tiers for a refused request", func(t *testing.T) {
+			t.Parallel()
+			got := outlined(t, `{"scope":"../b.fx"}`)
+			assert.Equal(t, got.Provenance.Fidelity, "none", "the fidelity")
+			assert.Equal(t, got.Provenance.Completeness, "unknown", "the completeness")
+		})
+
+		t.Run("returns a refused failure with the reason of a refused answer", func(t *testing.T) {
+			t.Parallel()
+			built, err := tool.Outline(refusedOver(serving(), "gone.fx does not exist"))
+			assert.NoError(t, err, "the error of Outline")
+			result, err := built.Execute(t.Context(), json.RawMessage(`{"scope":"gone.fx"}`))
+			assert.NoError(t, err, "the error of Execute")
+			var got tool.Answer
+			assert.NoError(t, json.Unmarshal(result.Payload, &got), "the decoding of the answer")
+			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
+			assert.Equal(t, got.Error.Reason, "gone.fx does not exist", "the reason of the failure")
+		})
+
+		t.Run("returns no path for a declaration in the file of the scope", func(t *testing.T) {
+			t.Parallel()
+			outer := function("S", "")
+			outer.Kind, outer.Span.End.Offset = sema.KindStruct, 100
+			inner := function("x", "")
+			inner.Kind, inner.Span.Start.Offset, inner.Span.End.Offset = sema.KindField, 10, 20
+			got := outlined(t, `{"scope":"a.fx"}`, outer, inner)
+			assert.Empty(t, got.Items[0].Path, "the path of S")
+			assert.Empty(t, got.Items[0].Members[0].Path, "the path of the field x")
 		})
 	})
 }

@@ -77,7 +77,7 @@ func TestResolve(t *testing.T) {
 			assert.False(t, got.Skipped, "the skip of src/store.mock")
 		})
 
-		t.Run("reads the line and the column of a position from its offset", func(t *testing.T) {
+		t.Run("reads a position from its offset", func(t *testing.T) {
 			t.Parallel()
 			content := string(workspace()["src/client.mock"].Data)
 			got, err := built(t).Resolve(t.Context(), engine.Request{Scope: "src/client.mock"},
@@ -93,16 +93,32 @@ func TestResolve(t *testing.T) {
 			assert.True(t, got.Skipped, "the skip of notes.md")
 		})
 
-		t.Run("declines a directory with files of the language", func(t *testing.T) {
+		t.Run("refuses a directory with files of the language", func(t *testing.T) {
 			t.Parallel()
 			_, err := built(t).Resolve(t.Context(), engine.Request{Scope: "src"}, source.Position{})
-			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Resolve in src")
+			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of Resolve in src")
 		})
 
-		t.Run("declines a file of the language that the workspace does not contain", func(t *testing.T) {
+		t.Run("refuses a file of the language that the workspace does not contain", func(t *testing.T) {
 			t.Parallel()
 			_, err := built(t).Resolve(t.Context(), engine.Request{Scope: "src/absent.mock"}, source.Position{})
-			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Resolve in src/absent.mock")
+			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of Resolve in src/absent.mock")
+			why, _ := engine.Refusal(err)
+			assert.Equal(t, why, "src/absent.mock does not exist", "the reason of the refusal")
+		})
+
+		t.Run("refuses a line past the end of the file", func(t *testing.T) {
+			t.Parallel()
+			_, err := built(t).Resolve(t.Context(), engine.Request{Scope: "src/store.mock"},
+				source.Position{Line: 999})
+			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of Resolve past the end of src/store.mock")
+		})
+
+		t.Run("refuses a column past the end of its line", func(t *testing.T) {
+			t.Parallel()
+			_, err := built(t).Resolve(t.Context(), engine.Request{Scope: "src/store.mock"},
+				source.Position{Line: 1, Column: 999})
+			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of Resolve past the end of line 2")
 		})
 
 		t.Run("declines a file larger than Largest", func(t *testing.T) {

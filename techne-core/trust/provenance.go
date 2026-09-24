@@ -54,6 +54,10 @@ const (
 	// CaveatUnsupported means no engine serves this language and role for at
 	// least part of the scope.
 	CaveatUnsupported CaveatCode = "unsupported"
+	// CaveatRefused means an engine refused the request for a reason that the
+	// caller can act on, such as a path that does not exist. The note states
+	// the reason.
+	CaveatRefused CaveatCode = "refused"
 	// CaveatUnread means the files in Caveat.Paths exceed the size an engine
 	// reads.
 	CaveatUnread CaveatCode = "unread"

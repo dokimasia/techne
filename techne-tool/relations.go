@@ -103,14 +103,14 @@ func (c Connected) render() string {
 func Relations(reads Outliner, relates Relator) (Tool, error) {
 	return New("relations", relationsDescription,
 		func(ctx context.Context, in RelationsInput) (RelationsOutput, error) {
-			scope, err := relative(in.Scope)
-			if err != nil {
-				return RelationsOutput{}, err
+			scope, failure := relative(in.Scope)
+			if failure != nil {
+				return relationsRefused("", in, failure), nil
 			}
 			kind, byRelation := relationOf(in.Relation)
 			declaredKind, byKind := kindOf(in.Kind)
 			preferred, byFidelity := fidelityOf(in.Preferred)
-			if failure := first(byRelation, byKind, byFidelity); failure != nil {
+			if failure = first(byRelation, byKind, byFidelity); failure != nil {
 				return relationsRefused(scope, in, failure), nil
 			}
 
@@ -226,11 +226,12 @@ func (o RelationsOutput) fitted(b Budget) RelationsOutput {
 // reads it.
 func relationsRefused(scope source.Path, in RelationsInput, f *Failure) RelationsOutput {
 	return RelationsOutput{
-		Scope:    about(scope, in.Language, engine.Answer[sema.Symbol]{}),
-		Of:       in.Name,
-		Relation: string(in.Relation),
-		Items:    []Connected{},
-		Error:    f,
+		Scope:      about(scope, in.Language, engine.Answer[sema.Symbol]{}),
+		Of:         in.Name,
+		Relation:   string(in.Relation),
+		Items:      []Connected{},
+		Provenance: unserved(),
+		Error:      f,
 	}
 }
 

@@ -69,7 +69,8 @@ type Declaration struct {
 	Kind sema.Kind `json:"kind"`
 	// Line is the line on which the declaration starts, counted from one.
 	Line int `json:"line"`
-	// Path is the file of the declaration in an answer about more than one file.
+	// Path is the file of the declaration when it is not the file of the scope, as in an answer
+	// about more than one file.
 	Path string `json:"path,omitempty"`
 	// Signature is the declaration without its body, from [Signatures] on.
 	Signature string `json:"signature,omitempty"`

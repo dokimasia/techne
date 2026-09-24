@@ -21,15 +21,16 @@ import (
 // a method of an interface with two or more implementations.
 //
 // The scope of req is the file that contains the position. For a scope without a file of the
-// language the result is skipped. A directory that contains files of the language returns
-// [engine.ErrDecline], because a position belongs to one file.
+// language the result is skipped. A directory that contains files of the language is refused
+// with [engine.ErrRefuse], because a position belongs to one file, and so is a position outside
+// its file, by the rule of [lang.Offset].
 //
 // A location contains no name and no kind. Resolve reads the declarations of each file that a
 // location names, through the outline engine of the language when the engine has one, and
 // returns the innermost declaration at the location. An error on the line of
 // the position lowers the answer, and so does any error of the project when the answer is
-// empty. An empty answer is partial, because a server binds nothing inside a macro, for
-// dynamic dispatch and for a name that nothing declares alike. A server that does not answer
+// empty. An empty answer is partial, because a server returns no definition inside a macro,
+// at a dynamic dispatch or for a name that nothing declares. A server that does not answer
 // within [Server.Answering] returns [engine.ErrDecline].
 func (e *Engine) Resolve(
 	ctx context.Context,
@@ -49,6 +50,11 @@ func (e *Engine) resolving(
 	held, doc, skipped, err := e.pointed(ctx, req)
 	if err != nil || skipped {
 		return engine.Result[sema.Symbol]{Skipped: skipped, Completeness: trust.ScopeTotal}, err
+	}
+	if at.Offset <= 0 {
+		if _, outside := lang.Offset(doc.path, doc.content, at.Line, at.Column); outside != nil {
+			return engine.Result[sema.Symbol]{}, outside
+		}
 	}
 	ctx, done := e.answered(ctx)
 	defer done()
@@ -101,8 +107,8 @@ var unbound = trust.Caveat{
 
 // pointed opens the file that the scope of req names, and returns the running server and the
 // document. It reports true when the scope contains no file of the language. It returns
-// [engine.ErrDecline] for a directory that contains files of the language and for a server
-// that does not start.
+// [engine.ErrRefuse] for a directory that contains files of the language, and
+// [engine.ErrDecline] for a server that does not start.
 func (e *Engine) pointed(ctx context.Context, req engine.Request) (*session, document, bool, error) {
 	if !lang.Claims(string(req.Scope), e.declared.Extensions) {
 		files, err := e.walk(req)
@@ -113,7 +119,7 @@ func (e *Engine) pointed(ctx context.Context, req engine.Request) (*session, doc
 			return nil, document{}, true, nil
 		}
 		return nil, document{}, false, fmt.Errorf("%w: %s: a position names a file, and %s is a directory",
-			engine.ErrDecline, e.server.Name, req.Scope)
+			engine.ErrRefuse, e.server.Name, req.Scope)
 	}
 
 	held, err := e.running(ctx)

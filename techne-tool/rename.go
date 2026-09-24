@@ -26,9 +26,10 @@ type RenameInput struct {
 func Rename(reads Outliner, writes Writer) (Tool, error) {
 	return New(string(edit.RenameSymbol), renameDescription,
 		func(ctx context.Context, in RenameInput) (Written, error) {
-			scope, err := relative(in.Scope)
-			if err != nil {
-				return Written{}, err
+			scope, failure := relative(in.Scope)
+			if failure != nil {
+				return declined(edit.RenameSymbol, Scope{Language: in.Language}, in.Name,
+					failure.Code, failure.Reason), nil
 			}
 			held := writing(scope, in.Language)
 			if in.NewName == "" {

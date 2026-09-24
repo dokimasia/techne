@@ -14,7 +14,8 @@ import (
 )
 
 // Scope is what an answer is about: the language, the unit and the file of the request. An
-// item states its own path only in an answer about more than one file.
+// item states its own path only when it is not in the file of the scope, as in an answer about
+// more than one file.
 type Scope struct {
 	Language string `json:"language,omitempty"`
 	Unit     string `json:"unit,omitempty"`
@@ -78,12 +79,13 @@ func provenance(p trust.Provenance) Provenance {
 }
 
 // published returns the answer of a read tool: the declarations of a at the level d with the
-// bindings of include, nested by [Declared], and the evidence of a. An answer that no engine
-// served has a [Failure] whose reason is the first note of its caveats.
+// bindings of include, nested by [Declared], and the evidence of a. A declaration in the file
+// of scope states no path, by the rule of [stated]. An answer that no engine served has a
+// [Failure] whose reason is the first note of its caveats.
 func published(a engine.Answer[sema.Symbol], scope Scope, d Detail, include engine.Bindings) Answer {
 	out := Answer{
 		Scope:      scope,
-		Items:      Declared(a.Items, d, include),
+		Items:      stated(Declared(a.Items, d, include), scope.Path),
 		Provenance: provenance(a.Provenance),
 	}
 	switch a.Status {
@@ -98,7 +100,24 @@ func published(a engine.Answer[sema.Symbol], scope Scope, d Detail, include engi
 
 // failed returns the answer of a request that the tool refuses before an engine reads it.
 func failed(scope Scope, f *Failure) Answer {
-	return Answer{Scope: scope, Items: []Declaration{}, Error: f}
+	return Answer{Scope: scope, Items: []Declaration{}, Provenance: unserved(), Error: f}
+}
+
+// unserved returns the provenance of a request that no engine served: the tiers none and
+// unknown, as [trust.Provenance] states them at its zero value.
+func unserved() Provenance { return provenance(trust.Provenance{}) }
+
+// stated returns items without the path of each declaration in file, members included,
+// because the scope of the answer states file. An answer about more than one file has no file
+// in its scope, so every declaration keeps its path.
+func stated(items []Declaration, file string) []Declaration {
+	for i := range items {
+		if items[i].Path == file {
+			items[i].Path = ""
+		}
+		items[i].Members = stated(items[i].Members, file)
+	}
+	return items
 }
 
 // reasonFrom returns the first note of caveats, where a service states why no engine served a
@@ -152,7 +171,7 @@ func (a Answer) body(b *strings.Builder, none string) {
 		b.WriteString(none + "\n")
 	}
 	for _, item := range a.Items {
-		item.render(b, 0, a.Scope.Path == "")
+		item.render(b, 0)
 	}
 	b.WriteString("\n")
 	b.WriteString(evidence(a.Provenance))
@@ -185,10 +204,10 @@ func plural(n int, one, many string) string {
 
 // render writes d and then each of its members one level deeper. It writes all the
 // documentation and all the source text of d.
-func (d Declaration) render(b *strings.Builder, depth int, withPath bool) {
+func (d Declaration) render(b *strings.Builder, depth int) {
 	indent := strings.Repeat("  ", depth)
 	head, rest := parts(d)
-	b.WriteString(headLine(indent, d, head, withPath))
+	b.WriteString(headLine(indent, d, head))
 	for _, line := range rest {
 		b.WriteString(bodyLine(indent, line))
 	}
@@ -198,7 +217,7 @@ func (d Declaration) render(b *strings.Builder, depth int, withPath bool) {
 		}
 	}
 	for _, member := range d.Members {
-		member.render(b, depth+1, withPath)
+		member.render(b, depth+1)
 	}
 }
 
@@ -218,10 +237,10 @@ func parts(d Declaration) (string, []string) {
 	return head, rest
 }
 
-// headLine returns the first line of the render of d: its path and its line in an answer about
-// more than one file, its line otherwise, and then head.
-func headLine(indent string, d Declaration, head string, withPath bool) string {
-	if withPath && d.Path != "" {
+// headLine returns the first line of the render of d: its path and its line when d states its
+// path, its line otherwise, and then head.
+func headLine(indent string, d Declaration, head string) string {
+	if d.Path != "" {
 		return fmt.Sprintf("%s%s:%d  %s\n", indent, d.Path, d.Line, head)
 	}
 	return fmt.Sprintf("%s%5d  %s\n", indent, d.Line, head)

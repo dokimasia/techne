@@ -6,6 +6,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
@@ -19,8 +20,22 @@ var ErrDecline = errors.New("engine: decline")
 // ErrRefuse reports that an engine understands a request and will not serve
 // it, for a reason the caller can act on. [Ask] returns it without trying
 // another engine, because the request must change before any engine can
-// serve it. The write path reports it as a refusal with the reason.
+// serve it. The read path and the write path report it as a refusal with the
+// reason that [Refusal] returns.
 var ErrRefuse = errors.New("engine: refuse")
+
+// Refusal returns the reason of err, the text after the text of ErrRefuse,
+// and reports whether err wraps ErrRefuse. An error that wraps ErrRefuse
+// without its text returns its whole text.
+func Refusal(err error) (string, bool) {
+	if !errors.Is(err, ErrRefuse) {
+		return "", false
+	}
+	if _, why, cut := strings.Cut(err.Error(), ErrRefuse.Error()+": "); cut {
+		return why, true
+	}
+	return err.Error(), true
+}
 
 // Engine is the interface every adapter implements. An adapter also
 // implements the port of each role it serves.
