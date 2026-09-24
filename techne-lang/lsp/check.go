@@ -92,7 +92,7 @@ func (e *Engine) checking(ctx context.Context, files map[source.Path][]byte) (en
 	by := time.Now().Add(reporting)
 	var out []edit.Finding
 	for _, p := range mine {
-		reported, said, err := e.diagnostics(ctx, held, p, by)
+		reported, said, err := e.diagnostics(ctx, held, p, by, false)
 		if err != nil {
 			return engine.Result[edit.Finding]{}, err
 		}
@@ -108,11 +108,7 @@ func (e *Engine) checking(ctx context.Context, files map[source.Path][]byte) (en
 
 	caveats := []trust.Caveat{dynamic}
 	if e.server.Unchecked != "" {
-		caveats = append(caveats, trust.Caveat{
-			Code: trust.CaveatPartialCheck,
-			Note: e.server.Name + " does not check " + e.server.Unchecked + ", which the compiler checks, " +
-				"so the build can still refuse a change that this check passes",
-		})
+		caveats = append(caveats, e.partly())
 	}
 	if !workspaceWide(held.capable.DiagnosticProvider) {
 		return engine.Result[edit.Finding]{
@@ -132,6 +128,16 @@ func (e *Engine) checking(ctx context.Context, files map[source.Path][]byte) (en
 		out = append(out, others...)
 	}
 	return engine.Result[edit.Finding]{Items: out, Completeness: trust.ScopeTotal, Caveats: caveats}, nil
+}
+
+// partly returns the [trust.CaveatPartialCheck] caveat of a check by a server whose
+// diagnostics leave out what [Server.Unchecked] names.
+func (e *Engine) partly() trust.Caveat {
+	return trust.Caveat{
+		Code: trust.CaveatPartialCheck,
+		Note: e.server.Name + " does not check " + e.server.Unchecked + ", which the compiler checks, " +
+			"so the build can still refuse a change that this check passes",
+	}
 }
 
 // finding converts one diagnostic of doc into a finding. An error finding contains the fix

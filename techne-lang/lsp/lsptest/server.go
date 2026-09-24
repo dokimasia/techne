@@ -30,6 +30,10 @@ const (
 // closing is how long [Engine] waits for the scripted server to shut down when a test ends.
 const closing = 5 * time.Second
 
+// Unchecked is what the diagnostics of the DiskChecks and DiskStuck modes leave out, as their
+// declarations state it: the fault of [Unsound], which only their check on disk reports.
+const Unchecked = "a name defined twice"
+
 // Main runs the scripted server and exits when the process was started by a declaration
 // from [Server]. Otherwise it runs the tests and exits with their status. A test package
 // calls it from TestMain.
@@ -49,8 +53,8 @@ func RecordStarts(path string) Option {
 	return func(s *lsp.Server) { s.Env[envStarts] = path }
 }
 
-// RecordRequests makes the scripted server append the method of each request it receives to
-// the file at path, one line per request.
+// RecordRequests makes the scripted server append the method of each request and of each
+// textDocument/didSave notification that it receives to the file at path, one line per message.
 func RecordRequests(path string) Option {
 	return func(s *lsp.Server) { s.Env[envRequests] = path }
 }
@@ -71,9 +75,11 @@ func Renames(edit string) Option {
 
 // Server returns a declaration that runs the current test binary as the scripted server in
 // mode. The declaration claims [trust.Resolved] for resolve, relate, plan, check and verify,
-// and no tier for format. The Asks mode is declared with settings, the Loading and Stuck
-// modes with a loading time, the Extracts and Commands modes with the extraction they offer,
-// and the Quiet mode as [lsp.Server.Quiet].
+// and no tier for format. The Asks mode is declared with settings, the Loading, Created and
+// Stuck modes with a loading time, the Extracts and Commands modes with the extraction they
+// offer, and the Quiet mode as [lsp.Server.Quiet]. The DiskChecks and DiskStuck modes are
+// declared with the check on disk of [DiskPrefix] and with [Unchecked], and the DiskStuck mode
+// with a loading time of one second.
 func Server(mode Mode, options ...Option) lsp.Server {
 	server := lsp.Server{
 		Name:       Name,
@@ -91,7 +97,7 @@ func Server(mode Mode, options ...Option) lsp.Server {
 	switch mode {
 	case Asks:
 		server.Settings = map[string]any{configured: map[string]any{"strict": true}}
-	case Loading:
+	case Loading, Created:
 		server.Loading = 3 * LoadTime
 	case Stuck:
 		server.Loading = time.Second
@@ -99,6 +105,10 @@ func Server(mode Mode, options ...Option) lsp.Server {
 		server.Extracts = lsp.Refactor{Kind: extractKind, Titles: []string{"into function"}}
 	case Quiet:
 		server.Quiet = true
+	case DiskChecks:
+		server.DiskCheck, server.Unchecked = DiskPrefix, Unchecked
+	case DiskStuck:
+		server.DiskCheck, server.Unchecked, server.Loading = DiskPrefix, Unchecked, time.Second
 	}
 	for _, option := range options {
 		option(&server)

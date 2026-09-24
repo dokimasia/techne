@@ -36,9 +36,6 @@ type answers struct {
 
 	root     string
 	settings map[string]any
-
-	reports  *reports
-	working  *working
 	offering *asking
 }
 

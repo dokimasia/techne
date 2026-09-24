@@ -292,6 +292,10 @@ type sent struct {
 	version int32
 	digest  [sha256.Size]byte
 	stamp   stamp
+	// saved is the stamp of the file that the last check on disk of the server covers: the stamp
+	// at the last textDocument/didSave, or the stamp at the open of a file that did not change
+	// after the server started. The zero stamp is covered by no check.
+	saved stamp
 }
 
 // snapshot reads the file at full and returns its content with the stamp of the open file.
@@ -395,22 +399,55 @@ func (e *Engine) read(p source.Path) (document, error) {
 // told sends the server the content of a file on disk as its buffer. When the buffer changes,
 // told also sends workspace/didChangeWatchedFiles, because jdtls refuses a rename while its
 // model of the disk differs from the disk and a changed buffer does not update that model.
+// Then [Engine.save] tells a server that checks the files on disk about a changed file.
 func (e *Engine) told(ctx context.Context, held *session, full string, content []byte, at stamp) error {
 	changed, err := e.sync(ctx, held, full, content, at)
-	if err != nil || !changed {
+	if err != nil {
 		return err
 	}
-	return held.asks.DidChangeWatchedFiles(ctx, &protocol.DidChangeWatchedFilesParams{
-		Changes: []protocol.FileEvent{{URI: uri.File(full), Type: protocol.FileChangeTypeChanged}},
-	})
+	if changed {
+		if err := held.asks.DidChangeWatchedFiles(ctx, &protocol.DidChangeWatchedFilesParams{
+			Changes: []protocol.FileEvent{{URI: uri.File(full), Type: protocol.FileChangeTypeChanged}},
+		}); err != nil {
+			return err
+		}
+	}
+	return e.save(ctx, held, full, at)
+}
+
+// save sends textDocument/didSave for the buffer of the file at full to a server that declares
+// [Server.DiskCheck], when at, the stamp of the file on disk, differs from the stamp that the
+// last check of the server covers. The save starts a new check on disk.
+func (e *Engine) save(ctx context.Context, held *session, full string, at stamp) error {
+	if e.server.DiskCheck == "" {
+		return nil
+	}
+	held.opening.Lock()
+	was, open := held.opened[full]
+	due := open && was.saved != at
+	if due {
+		was.saved = at
+		held.opened[full] = was
+	}
+	held.opening.Unlock()
+	if !due {
+		return nil
+	}
+	held.working.save()
+	if err := held.asks.DidSave(ctx, &protocol.DidSaveTextDocumentParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(full)},
+	}); err != nil {
+		return fmt.Errorf("lsp: %s: didSave %s: %w", e.server.Name, full, err)
+	}
+	return nil
 }
 
 // sync makes content the buffer of the server for the file at full, and reports whether it
 // replaced a different buffer. It sends textDocument/didOpen for a file without a buffer, and
 // nothing for a buffer with the same content. For a buffer with other content it sends
 // textDocument/didChange with the whole content, or for a [Server.Quiet] server the close and
-// the open of [Engine.reopen]. A replaced buffer drops the diagnostics the server published for
-// it. The stamp is the zero stamp for content that is not on disk.
+// the open of [Engine.reopen]. A replaced buffer drops the diagnostics that [reports.forget]
+// drops. The stamp is the zero stamp for content that is not on disk.
 func (e *Engine) sync(
 	ctx context.Context,
 	held *session,
@@ -434,7 +471,7 @@ func (e *Engine) sync(
 			return false, err
 		}
 		held.working.touched()
-		held.opened[full] = sent{version: was.version + 1, digest: digest, stamp: at}
+		held.opened[full] = sent{version: was.version + 1, digest: digest, stamp: at, saved: was.saved}
 		return true, nil
 	case open:
 		if err := held.asks.DidChange(ctx, &protocol.DidChangeTextDocumentParams{
@@ -450,7 +487,7 @@ func (e *Engine) sync(
 		}
 		held.reports.forget(uri.File(full))
 		held.working.touched()
-		held.opened[full] = sent{version: was.version + 1, digest: digest, stamp: at}
+		held.opened[full] = sent{version: was.version + 1, digest: digest, stamp: at, saved: was.saved}
 		return true, nil
 	}
 
@@ -465,26 +502,24 @@ func (e *Engine) sync(
 		return false, fmt.Errorf("lsp: %s: didOpen %s: %w", e.server.Name, full, err)
 	}
 	held.working.touched()
-	held.opened[full] = sent{version: 1, digest: digest, stamp: at}
+	opened := sent{version: 1, digest: digest, stamp: at}
+	if at != (stamp{}) && at.modified.Before(held.started) {
+		opened.saved = at
+	}
+	held.opened[full] = opened
 	return false, nil
 }
 
-// fencing is how long [Engine.reopen] waits for the report of a closed file after the reply
-// that follows it on the stream. The client handles each message on a goroutine of its own, so
-// the reply can arrive before the report is kept.
-const fencing = 100 * time.Millisecond
-
 // reopen replaces the buffer of the file at full with content under version, for a
-// [Server.Quiet] server: textDocument/didClose, and then textDocument/didOpen.
+// [Server.Quiet] server. It sends textDocument/didClose and then textDocument/didOpen.
 //
-// The server publishes an empty report when it closes the file, and that report describes no
-// content. reopen drops it before the open, so the first report that the engine keeps for the
-// file describes content. A textDocument/documentSymbol request after the close fences the
-// report: the server sends it before its reply, and reopen waits up to [fencing] after the
-// reply for the report to be kept. A server that has no diagnostics of the file sends no report.
+// The server publishes an empty report when it closes the file. That report describes no
+// content, and reopen drops it before the open. The first report that the engine keeps for the
+// file then describes content. A textDocument/documentSymbol request after the close fences the
+// report. The server sends the report before its reply, and the stream of the session keeps the
+// report before it reads the reply. A server without diagnostics of the file sends no report.
 func (e *Engine) reopen(ctx context.Context, held *session, full string, content []byte, version int32) error {
 	of := uri.File(full)
-	before := held.reports.count(of)
 	if err := held.asks.DidClose(ctx, &protocol.DidCloseTextDocumentParams{
 		TextDocument: protocol.TextDocumentIdentifier{URI: of},
 	}); err != nil {
@@ -497,7 +532,6 @@ func (e *Engine) reopen(ctx context.Context, held *session, full string, content
 		&fenced); err != nil && ctx.Err() != nil {
 		return fmt.Errorf("lsp: %s: fence the close of %s: %w", e.server.Name, full, ctx.Err())
 	}
-	held.reports.after(ctx, of, before, time.Now().Add(fencing))
 	held.reports.forget(of)
 
 	if err := held.asks.DidOpen(ctx, &protocol.DidOpenTextDocumentParams{

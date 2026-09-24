@@ -20,6 +20,9 @@ import (
 type verdict struct {
 	// checked reports whether an engine judged the projection.
 	checked bool
+	// partial reports whether that engine checks less than the compiler of the language: its
+	// answer has a [trust.CaveatPartialCheck] caveat.
+	partial bool
 	// worse reports whether the projection has more errors than the content it replaces.
 	worse bool
 	// found are the errors of the projection that the gate counted.
@@ -46,12 +49,14 @@ func (s *Service) gate(
 	if err != nil || !checked {
 		return verdict{checked: checked}, err
 	}
+	out := verdict{checked: true, partial: partial(by.Caveats)}
 	after, left := imports(plan, after)
 	if len(left) > 0 {
 		by.Caveats = append(slices.Clone(by.Caveats), unverified(left))
 	}
+	out.by = by
 	if len(after) == 0 {
-		return verdict{checked: true, by: by}, nil
+		return out, nil
 	}
 
 	was := map[source.Path][]byte{}
@@ -67,7 +72,8 @@ func (s *Service) gate(
 	if by.Fidelity < trust.Resolved {
 		after, before = edited(plan, sealed, projected, after, before)
 	}
-	return verdict{checked: true, worse: len(after) > len(before), found: after, by: by}, nil
+	out.worse, out.found = len(after) > len(before), after
+	return out, nil
 }
 
 // check asks the engine of the strongest tier that checks the language of req for the
@@ -128,6 +134,11 @@ func imports(plan edit.Plan, found []edit.Finding) (kept, left []edit.Finding) {
 		}
 	}
 	return kept, left
+}
+
+// partial reports whether caveats contain a [trust.CaveatPartialCheck] caveat.
+func partial(caveats []trust.Caveat) bool {
+	return slices.ContainsFunc(caveats, func(c trust.Caveat) bool { return c.Code == trust.CaveatPartialCheck })
 }
 
 // unverified returns the caveat that lists the errors that the gate of a move left out, by

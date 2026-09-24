@@ -107,6 +107,13 @@ func (w *workspace) writes(p source.Path) int {
 	return w.wrote[p]
 }
 
+// held reports whether a writer has the lock.
+func (w *workspace) held() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.locked
+}
+
 func (w *workspace) Read(p source.Path) ([]byte, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -263,11 +270,13 @@ func replacing(p source.Path, start, end int, text string) edit.Change {
 }
 
 // checker is a gate of the language fixture. Its tier is syntactic unless the case sets
-// one, and faults returns the errors of each file, or none when faults is nil.
+// one, faults returns the errors of each file, or none when faults is nil, and caveats are
+// the caveats of each answer.
 type checker struct {
 	name     string
 	fidelity trust.Fidelity
 	faults   func(p source.Path, content string) []diag.Diagnostic
+	caveats  []trust.Caveat
 }
 
 // clean returns a gate that does not find an error.
@@ -291,7 +300,7 @@ func (c checker) Check(_ context.Context, files map[source.Path][]byte) (engine.
 			out = append(out, edit.Finding{Diagnostic: one})
 		}
 	}
-	return engine.Result[edit.Finding]{Items: out, Completeness: trust.ScopeTotal}, nil
+	return engine.Result[edit.Finding]{Items: out, Completeness: trust.ScopeTotal, Caveats: c.caveats}, nil
 }
 
 // marked returns the faults of an error on each line that contains mark.

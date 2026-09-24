@@ -266,22 +266,42 @@ type Checker interface {
 }
 ```
 
-A build gate still needs files on disk and still runs after the write,
-with the rollback behind it. Both report which of them answered, because
-"it parses" and "it builds" are different promises and a caller told only
-that a gate passed cannot tell which one it was given.
+A check that needs files on disk runs after the write, with the rollback
+behind it. It runs when the engine of the gate reports that it checks
+less than the compiler of the language, with a `partial-check` caveat of
+its own. rust-analyzer is such an engine: its diagnostics leave out
+E0428, a name defined twice, and its `cargo check` reads the files on
+disk. The verifier of the language then checks two sets of files under
+the workspace lock: the files that the change reads, before the write,
+and the files that it writes, after the write.
+
+| The two checks | Outcome |
+|---|---|
+| Both are whole, and the files have more errors after the write | The write is taken back, and the change is refused with the errors on disk |
+| Both are whole, and the files have no more errors | The change is kept, and its gate has no `partial-check` caveat |
+| One is partial or below `resolved`, or the check after the write fails | The change is kept, and a `partial-check` caveat of its gate states the reason |
+
+The write path returns the error of a check that fails before the write,
+and writes nothing. Each change runs one `cargo check`. On 24 September
+2026 an apply of a rename over a crate of one file took 907 ms, with both
+checks.
+
+Every gate reports which engine answered, because "it parses" and "it
+builds" are different promises and a caller told only that a gate passed
+cannot tell which one it was given.
 
 **A gate judges what a change replaces as well as what it produces.** A
 file that did not parse before is not made worse by a comment written
 into it, and refusing on inherited faults would make the code that most
 wants fixing the code nothing may touch.
 
-**Locks are held from the seal to the write.** Per-path, in-process,
-acquired in sorted path order so two changes touching the same files in
-different orders cannot deadlock, plus one advisory workspace lock for a
-second process. Releasing between pinning the content and writing it back
-would let another change land in between, and the byte ranges would then
-describe a file nobody computed them against.
+**Locks are held from the seal to the end of the check after the
+write.** Per-path, in-process, acquired in sorted path order so two
+changes touching the same files in different orders cannot deadlock,
+plus one advisory workspace lock for a second process. Releasing between
+pinning the content and writing it back would let another change be
+written in between, and the byte ranges would then describe a file nobody
+computed them against.
 
 ### A dry run is gated, not just previewed
 

@@ -99,6 +99,92 @@ func TestVerify(t *testing.T) {
 			assert.True(t, took < 3*time.Second, "Verify of ten files took "+took.String())
 		})
 
+		t.Run("returns the findings of the check on disk beside the pulled diagnostics", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.DiskChecks, map[string]string{
+				"a.fake": lsptest.Content + lsptest.Broken + " " + lsptest.Unsound + "\n",
+			}).Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify with a server that checks the files on disk")
+			assert.Equal(t, mentions(got.Items, lsptest.Broken), 1, "the pulled findings of a.fake")
+			assert.Equal(t, mentions(got.Items, lsptest.Unsound), 1, "the findings of the check on disk")
+		})
+
+		t.Run("waits for the check on disk after a file changes on disk", func(t *testing.T) {
+			t.Parallel()
+			e, root := rooted(t, lsptest.DiskChecks, sample())
+			_, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify before the change")
+			rewrite(t, root, "a.fake", lsptest.Content+lsptest.Unsound+"\n")
+
+			got, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify after the change")
+			assert.Equal(t, mentions(got.Items, lsptest.Unsound), 1, "the findings of the check on disk")
+		})
+
+		t.Run("checks a file that the workspace gained after the server started", func(t *testing.T) {
+			t.Parallel()
+			e, root := rooted(t, lsptest.DiskChecks, sample())
+			_, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify starts the server")
+			rewrite(t, root, "b.fake", lsptest.Content+lsptest.Unsound+"\n")
+
+			got, err := e.Verify(t.Context(), engine.Request{Scope: "b.fake"}, nil)
+			assert.NoError(t, err, "Verify of the new file")
+			assert.Equal(t, mentions(got.Items, lsptest.Unsound), 1, "the findings of the check on disk")
+		})
+
+		t.Run("starts no check on disk after a check of other content", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, lsptest.DiskChecks, sample())
+			_, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify before the check")
+			_, err = e.Check(t.Context(), map[source.Path][]byte{"a.fake": []byte(lsptest.Content + "\n")})
+			assert.NoError(t, err, "Check of other content")
+
+			got, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify after the check")
+			assert.Equal(t, mentions(got.Items, "checks=1"), 1, "the note of the first check on disk")
+		})
+
+		t.Run("keeps the findings of the check on disk after a check of other content", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, lsptest.DiskChecks, map[string]string{"a.fake": lsptest.Content + lsptest.Unsound + "\n"})
+			_, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify before the check")
+			_, err = e.Check(t.Context(), map[source.Path][]byte{"a.fake": []byte(lsptest.Content)})
+			assert.NoError(t, err, "Check of other content")
+
+			got, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify after the check")
+			assert.Equal(t, mentions(got.Items, lsptest.Unsound), 1, "the findings of the check on disk")
+		})
+
+		t.Run("adds no partial-check caveat after the check on disk ends", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.DiskChecks, sample()).
+				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify with a server that checks the files on disk")
+			assert.False(t, hasCaveat(got.Caveats, trust.CaveatPartialCheck), "the answer has a partial-check caveat")
+		})
+
+		t.Run("adds a partial-check caveat when the check on disk does not end", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.DiskStuck, sample()).
+				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify with a check on disk that never ends")
+			assert.True(t, hasCaveat(got.Caveats, trust.CaveatPartialCheck), "the answer has a partial-check caveat")
+		})
+
+		t.Run("adds a partial-check caveat for a server that leaves checks out", func(t *testing.T) {
+			t.Parallel()
+			server := lsptest.Server(lsptest.Compiles)
+			server.Unchecked = lsptest.Unchecked
+			got, err := lsptest.Engine(t, lsptest.Workspace(t, sample()), server).
+				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify with a server that leaves checks out")
+			assert.True(t, hasCaveat(got.Caveats, trust.CaveatPartialCheck), "the answer has a partial-check caveat")
+		})
+
 		t.Run("returns a partial answer for a scope with a file larger than lang.Largest", func(t *testing.T) {
 			t.Parallel()
 			got, err := serving(t, lsptest.Default, map[string]string{

@@ -103,4 +103,17 @@ func TestSession(t *testing.T) {
 			assert.True(t, time.Since(began) < time.Minute, "Resolve returns within a minute")
 		})
 	})
+
+	t.Run("Verify", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("keeps the last of two reports of a file in the order of the stream", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.DiskChecks, sample()).
+				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify after an interim report and the report of the check")
+			assert.Equal(t, mentions(got.Items, "interim"), 0, "the notes of the interim report")
+			assert.Equal(t, mentions(got.Items, "checks=1"), 1, "the note of the report of the check")
+		})
+	})
 }

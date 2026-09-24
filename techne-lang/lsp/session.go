@@ -46,6 +46,9 @@ type session struct {
 	capable protocol.ServerCapabilities
 	// stderr keeps the last [stderrSize] bytes that the server wrote to stderr.
 	stderr *tail
+	// started is the time before the process started. The first check on disk of a server
+	// covers a file that did not change after it.
+	started time.Time
 
 	// opening guards opened, the buffer of the server for each absolute path.
 	opening sync.Mutex
@@ -66,9 +69,10 @@ type session struct {
 func start(ctx context.Context, declared Server, root string) (*session, error) {
 	held := &session{
 		stderr:   &tail{},
+		started:  time.Now(),
 		opened:   map[string]sent{},
-		reports:  newReports(),
-		working:  newWorking(),
+		reports:  newReports(declared.DiskCheck != ""),
+		working:  newWorking(declared.DiskCheck),
 		offering: &asking{},
 	}
 
@@ -96,16 +100,59 @@ func start(ctx context.Context, declared Server, root string) (*session, error) 
 	}
 	held.cmd = cmd
 
-	client := answers{
-		root:     root,
-		settings: declared.Settings,
-		reports:  held.reports,
-		working:  held.working,
-		offering: held.offering,
+	client := answers{root: root, settings: declared.Settings, offering: held.offering}
+	stream := ordered{
+		Stream: jsonrpc2.NewStream(pipes{out: out, in: in}), reports: held.reports, working: held.working,
 	}
-	_, held.conn, held.asks = protocol.NewClient(
-		context.WithoutCancel(ctx), client, jsonrpc2.NewStream(pipes{out: out, in: in}))
+	_, held.conn, held.asks = protocol.NewClient(context.WithoutCancel(ctx), client, stream)
 	return held, nil
+}
+
+// ordered is the stream of a session. It records the diagnostics that the server publishes
+// and the work-done progress jobs that it reports when it reads each message, before the
+// connection passes the message to a handler. So the records follow the order of the stream:
+// a report is kept before the next message is read, such as the reply to a later request or
+// the end of the job that produced the report.
+//
+// A handler cannot record them in that order. go.lsp.dev/protocol v1.0.1 wraps every handler
+// in jsonrpc2.AsyncHandler, which releases the reader before the handler runs, so the handlers
+// of two messages run concurrently.
+type ordered struct {
+	jsonrpc2.Stream
+	reports *reports
+	working *working
+}
+
+// Read returns the next message of the stream. It first records a publishDiagnostics
+// notification, a $/progress notification and a window/workDoneProgress/create request. A
+// message whose params do not decode is returned without a record.
+//
+// ordered does not implement the frame reader of the stream it wraps, so the connection reads
+// every message through Read.
+func (o ordered) Read(ctx context.Context) (jsonrpc2.Message, int64, error) {
+	msg, n, err := o.Stream.Read(ctx)
+	request, isRequest := msg.(jsonrpc2.RequestMessage)
+	if err != nil || !isRequest {
+		return msg, n, err
+	}
+	switch request.Method() {
+	case protocol.MethodTextDocumentPublishDiagnostics:
+		var params protocol.PublishDiagnosticsParams
+		if protocol.Unmarshal(request.Params(), &params) == nil {
+			o.reports.keep(params.URI, params.Diagnostics)
+		}
+	case protocol.MethodProgress:
+		var params protocol.ProgressParams
+		if protocol.Unmarshal(request.Params(), &params) == nil {
+			o.working.progressed(&params)
+		}
+	case protocol.MethodWindowWorkDoneProgressCreate:
+		var params protocol.WorkDoneProgressCreateParams
+		if protocol.Unmarshal(request.Params(), &params) == nil {
+			o.working.began(tokened(params.Token))
+		}
+	}
+	return msg, n, err
 }
 
 // stop ends the server and returns the error of its shutdown.

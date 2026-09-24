@@ -25,25 +25,35 @@ const reporting = 2 * time.Second
 
 // diagnostics returns the diagnostics of the server for the file at p, and reports whether
 // the server reported on p. It asks a server with pull diagnostics. For a server without them
-// it waits until by for the server to publish.
+// it waits until by for the server to publish. For the file on disk, which ondisk reports, the
+// diagnostics of a server that declares [Server.DiskCheck] add the findings of its check on
+// disk, which the server publishes.
 func (e *Engine) diagnostics(
 	ctx context.Context,
 	held *session,
 	p source.Path,
 	by time.Time,
+	ondisk bool,
 ) ([]protocol.Diagnostic, bool, error) {
-	if held.capable.DiagnosticProvider != nil {
-		reported, _, err := e.pull(ctx, held, p)
-		return reported, true, err
+	of := uri.File(e.fullPath(p))
+	if held.capable.DiagnosticProvider == nil {
+		reported, said := held.reports.wait(ctx, of, by)
+		return reported, said, nil
 	}
-	reported, said := held.reports.wait(ctx, uri.File(e.fullPath(p)), by)
-	return reported, said, nil
+	reported, _, err := e.pull(ctx, held, p)
+	if err != nil {
+		return nil, false, err
+	}
+	if ondisk && e.server.DiskCheck != "" {
+		reported = append(reported, held.reports.published(of)...)
+	}
+	return reported, true, nil
 }
 
 // pull asks the server for the diagnostics of the file at p with textDocument/diagnostic, and
-// reports whether the reply is a full report. A full report replaces the diagnostics that the
-// session keeps for p. An unchanged report contains no diagnostics: a server sends one only in
-// reply to a previous result id, and pull sends none.
+// reports whether the reply is a full report. A full report replaces the pulled diagnostics
+// that the session keeps for p. An unchanged report contains no diagnostics: a server sends
+// one only in reply to a previous result id, and pull sends none.
 func (e *Engine) pull(
 	ctx context.Context,
 	held *session,
@@ -60,7 +70,7 @@ func (e *Engine) pull(
 	if !isFull {
 		return nil, false, nil
 	}
-	held.reports.keep(of, full.Items)
+	held.reports.pulled(of, full.Items)
 	return full.Items, true, nil
 }
 
@@ -157,113 +167,98 @@ func coded(code protocol.ProgressToken) string {
 	return ""
 }
 
-// reports keeps the latest diagnostics that a server reported for each file, published or
-// pulled. A report replaces the previous one, because a publish and a full pull report both
-// contain every diagnostic of the file. reports is safe for concurrent use.
+// reports keeps the latest diagnostics that a server reported for each file, in two kinds: the
+// diagnostics that it published, and the diagnostics of its reply to textDocument/diagnostic.
+// A report replaces the previous report of its kind, because a publish and a full pull report
+// each contain every diagnostic of the file that they cover. reports is safe for concurrent
+// use.
 type reports struct {
-	mu   sync.Mutex
-	kept map[uri.URI][]protocol.Diagnostic
-	// counted is the number of reports of each file since the session started, which
-	// [reports.forget] does not reset.
-	counted map[uri.URI]int
-	// waking has one channel per file that a caller waits on, which the next report closes.
+	mu sync.Mutex
+	// ondisk reports whether a publish describes the file on disk, as the check on disk of a
+	// server that declares [Server.DiskCheck] publishes it, so a change of a buffer keeps it.
+	ondisk bool
+	// kept are the published diagnostics, and pulls the pulled diagnostics, of each file.
+	kept, pulls map[uri.URI][]protocol.Diagnostic
+	// waking has one channel per file that a caller waits on, which the next publish closes.
 	waking map[uri.URI]chan struct{}
 }
 
-// newReports returns an empty store.
-func newReports() *reports {
+// newReports returns an empty store. ondisk reports whether the publishes describe the files
+// on disk.
+func newReports(ondisk bool) *reports {
 	return &reports{
-		kept:    map[uri.URI][]protocol.Diagnostic{},
-		counted: map[uri.URI]int{},
-		waking:  map[uri.URI]chan struct{}{},
+		ondisk: ondisk,
+		kept:   map[uri.URI][]protocol.Diagnostic{},
+		pulls:  map[uri.URI][]protocol.Diagnostic{},
+		waking: map[uri.URI]chan struct{}{},
 	}
 }
 
-// keep stores the diagnostics of the file of, and wakes the callers that wait for them.
+// keep stores the published diagnostics of the file of, and wakes the callers that wait for
+// them.
 func (r *reports) keep(of uri.URI, diagnostics []protocol.Diagnostic) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.kept[of] = slices.Clone(diagnostics)
-	r.counted[of]++
 	if waking, waiting := r.waking[of]; waiting {
 		close(waking)
 		delete(r.waking, of)
 	}
 }
 
-// count returns the number of reports of the file of since the session started.
-func (r *reports) count(of uri.URI) int {
+// pulled stores the pulled diagnostics of the file of.
+func (r *reports) pulled(of uri.URI, diagnostics []protocol.Diagnostic) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.counted[of]
+	r.pulls[of] = slices.Clone(diagnostics)
 }
 
-// after waits until the file of has more than before reports, until by or until ctx ends, and
-// reports whether it has.
-func (r *reports) after(ctx context.Context, of uri.URI, before int, by time.Time) bool {
-	for {
-		r.mu.Lock()
-		if r.counted[of] > before {
-			r.mu.Unlock()
-			return true
-		}
-		left := time.Until(by)
-		if left <= 0 {
-			r.mu.Unlock()
-			return false
-		}
-		waking, waiting := r.waking[of]
-		if !waiting {
-			waking = make(chan struct{})
-			r.waking[of] = waking
-		}
-		r.mu.Unlock()
-
-		timer := time.NewTimer(left)
-		select {
-		case <-waking:
-			timer.Stop()
-		case <-timer.C:
-			return false
-		case <-ctx.Done():
-			timer.Stop()
-			return false
-		}
-	}
+// published returns the published diagnostics of the file of, or nil for a file without a
+// publish.
+func (r *reports) published(of uri.URI) []protocol.Diagnostic {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.kept[of])
 }
 
-// forget drops the diagnostics of the file of. The engine calls it when it replaces the buffer
-// of the file, because the diagnostics describe the replaced content.
+// forget drops the diagnostics of the buffer of the file of. The engine calls it when it
+// replaces the buffer, because the diagnostics describe the replaced content. A publish that
+// describes the file on disk is kept.
 func (r *reports) forget(of uri.URI) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	delete(r.kept, of)
+	delete(r.pulls, of)
+	if !r.ondisk {
+		delete(r.kept, of)
+	}
 }
 
-// errors returns the zero-based start lines of the kept diagnostics of error severity, by the
-// workspace path of their file, for the files in the directory within. at maps a URI to its
-// workspace path. A server that reported nothing returns an empty map.
+// errors returns the zero-based start lines of the kept diagnostics of error severity of both
+// kinds, by the workspace path of their file, for the files in the directory within. at maps a
+// URI to its workspace path. A server that reported nothing returns an empty map.
 func (r *reports) errors(within source.Path, at func(uri.URI) source.Path) map[source.Path][]int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := map[source.Path][]int{}
-	for of, diagnostics := range r.kept {
-		p := at(of)
-		if !lang.Within(p, within) {
-			continue
-		}
-		for _, one := range diagnostics {
-			if one.Severity == protocol.DiagnosticSeverityError {
-				out[p] = append(out[p], int(one.Range.Start.Line))
+	for _, kind := range []map[uri.URI][]protocol.Diagnostic{r.kept, r.pulls} {
+		for of, diagnostics := range kind {
+			p := at(of)
+			if !lang.Within(p, within) {
+				continue
+			}
+			for _, one := range diagnostics {
+				if one.Severity == protocol.DiagnosticSeverityError {
+					out[p] = append(out[p], int(one.Range.Start.Line))
+				}
 			}
 		}
 	}
 	return out
 }
 
-// wait returns the diagnostics of the file of, and reports whether the server reported on it.
-// It waits for a report until by or until ctx ends, and returns at once when a report is kept
-// or by has passed.
+// wait returns the published diagnostics of the file of, and reports whether the server
+// published a report of it. It waits for a report until by or until ctx ends, and returns at
+// once when a report is kept or by has passed.
 func (r *reports) wait(ctx context.Context, of uri.URI, by time.Time) ([]protocol.Diagnostic, bool) {
 	r.mu.Lock()
 	if kept, said := r.kept[of]; said {
@@ -298,8 +293,8 @@ func (r *reports) wait(ctx context.Context, of uri.URI, by time.Time) ([]protoco
 	return kept, said
 }
 
-// PublishDiagnostics keeps the diagnostics that the server published for a file.
-func (a answers) PublishDiagnostics(_ context.Context, params *protocol.PublishDiagnosticsParams) error {
-	a.reports.keep(params.URI, params.Diagnostics)
+// PublishDiagnostics returns nil without a record, because [ordered] keeps the diagnostics when
+// the stream of the session reads the notification.
+func (answers) PublishDiagnostics(context.Context, *protocol.PublishDiagnosticsParams) error {
 	return nil
 }

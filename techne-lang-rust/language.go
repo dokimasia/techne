@@ -81,9 +81,14 @@ func Server() lsp.Server {
 		Extracts: lsp.Refactor{
 			Kind: "refactor.extract", Titles: []string{"into function"},
 		},
-		// rust-analyzer does not report an undeclared lifetime, E0261, or a
-		// returned reference that does not live long enough. rustc reports both.
-		Unchecked: "lifetimes or borrows",
+		// The diagnostics of rust-analyzer leave out a name defined twice,
+		// E0428, an undeclared lifetime, E0261, and a returned reference that
+		// does not live long enough. rustc reports them.
+		Unchecked: "a name defined twice, lifetimes or borrows",
+		// rust-analyzer runs cargo check over the files on disk after it
+		// loads the workspace and after each textDocument/didSave, and
+		// publishes the errors of rustc.
+		DiskCheck: "rust-analyzer/flycheck/",
 	}
 }
 

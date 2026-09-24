@@ -21,6 +21,7 @@ import (
 	"go.dokimi.dev/techne/lang"
 	"go.dokimi.dev/techne/lang/lsp"
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
+	"go.lsp.dev/protocol"
 )
 
 // TestMain runs the scripted server of lsptest when a test starts this binary as one, and the
@@ -32,6 +33,25 @@ func TestMain(m *testing.M) { lsptest.Main(m) }
 func serving(t *testing.T, mode lsptest.Mode, files map[string]string, options ...lsptest.Option) *lsp.Engine {
 	t.Helper()
 	return lsptest.Engine(t, lsptest.Workspace(t, files), lsptest.Server(mode, options...))
+}
+
+// rooted returns an engine over a new workspace of files that runs the scripted server in mode,
+// and the root of the workspace.
+func rooted(t *testing.T, mode lsptest.Mode, files map[string]string) (*lsp.Engine, string) {
+	t.Helper()
+	root := lsptest.Workspace(t, files)
+	return lsptest.Engine(t, root, lsptest.Server(mode)), root
+}
+
+// mentions returns the number of findings whose message contains word.
+func mentions(findings []edit.Finding, word string) int {
+	var out int
+	for _, one := range findings {
+		if strings.Contains(one.Diagnostic.Message, word) {
+			out++
+		}
+	}
+	return out
 }
 
 // sample returns a workspace with [lsptest.Content] in a.fake.
@@ -299,6 +319,22 @@ func TestEngine(t *testing.T) {
 			got, err := e.Verify(t.Context(), engine.Request{Scope: "b.fake"}, nil)
 			assert.NoError(t, err, "Verify of b.fake")
 			assert.Contains(t, messages(got.Items), "holding=a.fake,b.fake", "the buffers after a.fake is unreadable")
+		})
+
+		t.Run("sends no didSave to a server without a check on disk", func(t *testing.T) {
+			t.Parallel()
+			log := filepath.Join(t.TempDir(), "requests")
+			root := lsptest.Workspace(t, sample())
+			e := lsptest.Engine(t, root, lsptest.Server(lsptest.Default, lsptest.RecordRequests(log)))
+			_, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "the first Verify")
+
+			rewrite(t, root, "a.fake", lsptest.Content+"\n")
+			_, err = e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "the second Verify")
+			recorded, err := os.ReadFile(log)
+			assert.NoError(t, err, "the test reads "+log)
+			assert.NotContains(t, string(recorded), protocol.MethodTextDocumentDidSave, "the messages of the server")
 		})
 	})
 

@@ -154,5 +154,17 @@ func TestCheck(t *testing.T) {
 			assert.NoError(t, err, "Check of faulty content")
 			assert.False(t, hasCaveat(got.Caveats, trust.CaveatPartialCheck), "the answer has a partial-check caveat")
 		})
+
+		t.Run("leaves out the findings of the check on disk", func(t *testing.T) {
+			t.Parallel()
+			unsound := lsptest.Content + lsptest.Unsound + "\n"
+			e := serving(t, lsptest.DiskChecks, map[string]string{"a.fake": unsound})
+			_, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify waits for the check on disk")
+
+			got, err := e.Check(t.Context(), map[source.Path][]byte{"a.fake": []byte(unsound + "\n")})
+			assert.NoError(t, err, "Check of content that is not on disk")
+			assert.Equal(t, mentions(got.Items, lsptest.Unsound), 0, "the findings of the check on disk")
+		})
 	})
 }

@@ -65,6 +65,11 @@ func Bundle(n int) string {
 // error.
 const Broken = "undeclared"
 
+// Unsound is the word that the check on disk of the DiskChecks mode reports as an error. Its
+// pull diagnostics do not report it, as the diagnostics of rust-analyzer do not report a name
+// defined twice.
+const Unsound = "unsound"
+
 // Faulty is the declaration of Store from [Content] with [Broken] as the type of size. It
 // parses and does not compile.
 const Faulty = "package a\n\ntype Store struct {\n\tsize " + Broken + "\n}\n"

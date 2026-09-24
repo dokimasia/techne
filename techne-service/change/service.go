@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"slices"
 	"strings"
 
@@ -43,8 +44,8 @@ type Files interface {
 }
 
 // Service applies operations to one workspace. It is safe for concurrent use: a change
-// locks its paths in this process from the seal to the write, and [Files.Lock] serialises
-// the writes of every process.
+// locks its paths in this process from the seal until the write and the check after it end,
+// and [Files.Lock] serialises the writes of every process.
 type Service struct {
 	catalog *engine.Catalog
 	router  Router
@@ -129,6 +130,11 @@ func (s *Service) Commit(ctx context.Context, handle string) (edit.Outcome, erro
 // run takes a sealed plan through the steps that Apply and Commit share: the paths that it
 // creates, [edit.Policy.Admit], the projection, the gate, and the write or, for a dry run,
 // a handle. A change gets the status [trust.Degraded] when no engine checks its language.
+//
+// The write takes the lock of the workspace. When the engine of the gate checks less than the
+// compiler of the language, the verifier of the language checks the files that the change
+// reads before the write, under the same lock, and [Service.confirm] checks the files that it
+// wrote against them.
 func (s *Service) run(
 	ctx context.Context,
 	req edit.Request,
@@ -184,7 +190,19 @@ func (s *Service) run(
 		return out, nil
 	}
 
-	written, why, err := s.write(ctx, plan, sealed, projected)
+	unlock, err := s.files.Lock(ctx)
+	if err != nil {
+		return edit.Outcome{}, fmt.Errorf("change: lock the workspace: %w", err)
+	}
+	defer unlock()
+
+	var before disk
+	if gated.partial {
+		if before, err = s.verified(ctx, req, slices.Sorted(maps.Keys(sealed))); err != nil {
+			return edit.Outcome{}, err
+		}
+	}
+	done, why, err := s.write(plan, sealed, projected)
 	switch {
 	case err != nil:
 		return edit.Outcome{}, err
@@ -193,7 +211,10 @@ func (s *Service) run(
 		stopped.Rewrites = rewrites
 		return stopped, nil
 	}
-	out.Applied, out.Changed = true, written
+	if gated.partial {
+		return s.confirm(ctx, req, plan, arrived(projected), before, done, out), nil
+	}
+	out.Applied, out.Changed = true, touched(done)
 	return out, nil
 }
 

@@ -5,7 +5,6 @@ package change
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"maps"
 	"slices"
@@ -73,21 +72,11 @@ type step struct {
 	undo  func() error
 }
 
-// write puts the projection on disk under the lock of the workspace, and returns the paths
-// that it changed. It takes the steps of [Service.steps] in order. A step that is refused or
-// fails stops the write, the steps already taken are taken back, and the refusal or the error
-// states whether that succeeded.
-func (s *Service) write(
-	ctx context.Context,
-	plan edit.Plan,
-	sealed, projected map[source.Path][]byte,
-) ([]source.Path, string, error) {
-	unlock, err := s.files.Lock(ctx)
-	if err != nil {
-		return nil, "", fmt.Errorf("change: lock the workspace: %w", err)
-	}
-	defer unlock()
-
+// write puts the projection on disk, and returns the steps that it took, which [restore] takes
+// back. The caller has the lock of the workspace. write takes the steps of [Service.steps] in
+// order. A step that is refused or fails stops the write, the steps already taken are taken
+// back, and the refusal or the error states whether that succeeded.
+func (s *Service) write(plan edit.Plan, sealed, projected map[source.Path][]byte) ([]step, string, error) {
 	var done []step
 	for _, one := range s.steps(plan, sealed, projected) {
 		switch why, err := one.check(); {
@@ -101,13 +90,17 @@ func (s *Service) write(
 		}
 		done = append(done, one)
 	}
+	return done, "", nil
+}
 
-	var changed []source.Path
+// touched returns the paths that the steps of done changed, sorted.
+func touched(done []step) []source.Path {
+	var out []source.Path
 	for _, one := range done {
-		changed = append(changed, one.paths...)
+		out = append(out, one.paths...)
 	}
-	slices.Sort(changed)
-	return slices.Compact(changed), "", nil
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
 // steps returns the steps that take the workspace from sealed to projected, in this order:

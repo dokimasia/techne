@@ -31,7 +31,7 @@ const extractKind = "refactor.extract"
 // performed is the command that the Commands mode performs an extraction with.
 const performed = "fake.refactor"
 
-// progressToken is the work-done progress token of the Loading and Stuck modes.
+// progressToken is the work-done progress token of the Loading, Created and Stuck modes.
 const progressToken = "loading"
 
 // The ids of the requests that the script sends to the client.
@@ -100,9 +100,9 @@ type script struct {
 	mode Mode
 	in   *bufio.Reader
 
-	// sending guards out, loaded, reported and opens. In the Loading mode a timer goroutine
-	// writes the end of the progress job, and in the Quiet mode a goroutine publishes the report
-	// of an open.
+	// sending guards out, loaded, reported, opens and checks. In the Loading mode a timer
+	// goroutine writes the end of the progress job, in the Quiet mode a goroutine publishes the
+	// report of an open, and in the DiskChecks mode a goroutine runs each check on disk.
 	sending sync.Mutex
 	out     io.Writer
 	loaded  bool
@@ -110,6 +110,8 @@ type script struct {
 	// and the closes of each document, so a delayed report of an earlier open is dropped.
 	reported map[string]string
 	opens    map[string]int
+	// checks counts the checks on disk of the DiskChecks mode.
+	checks int
 
 	// root is the workspace URI of initialize. seen is the document URI of the latest
 	// request with a text document.
@@ -165,7 +167,7 @@ func serve(mode Mode) int {
 		if m.Method == "" {
 			continue
 		}
-		if requests != "" && m.ID != nil {
+		if requests != "" && (m.ID != nil || m.Method == "textDocument/didSave") {
 			if err := record(requests, m.Method); err != nil {
 				return 4
 			}
@@ -212,6 +214,17 @@ func (s *script) handle(m message) (int, bool) {
 		}
 	case "workspace/didChangeWatchedFiles":
 		s.synced = true
+	case "initialized":
+		switch s.mode {
+		case DiskChecks:
+			go s.diskCheck()
+		case DiskStuck:
+			s.send(progressOf(DiskToken, `{"kind":"begin","title":"check"}`))
+		}
+	case "textDocument/didSave":
+		if s.mode == DiskChecks {
+			go s.diskCheck()
+		}
 	default:
 		if m.ID != nil {
 			s.request(m)
@@ -221,7 +234,7 @@ func (s *script) handle(m message) (int, bool) {
 }
 
 // initialize responds to the handshake. Before the response it sends a log message and a
-// registration, and the Asks, Loading and Stuck modes send their own requests.
+// registration, and the Asks, Loading, Created and Stuck modes send their own requests.
 func (s *script) initialize(m message) (int, bool) {
 	s.client = m.Params
 	s.root = s.canonical(stringAt(m.Params, "rootUri"))
@@ -245,28 +258,67 @@ func (s *script) initialize(m message) (int, bool) {
 		s.replies["folders"] = s.ask(idFolders, `"workspace/workspaceFolders","params":null`)
 		s.replies["edit"] = s.ask(idApplyEdit, `"workspace/applyEdit","params":{"edit":{"changes":{}}}`)
 	}
-	if s.mode == Loading || s.mode == Stuck {
+	if s.mode == Loading || s.mode == Stuck || s.mode == Created {
 		s.send(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"window/workDoneProgress/create",`+
 			`"params":{"token":%q}}`, idProgress, progressToken))
+	}
+	switch s.mode {
+	case Loading, Stuck:
 		s.send(progressed(`{"kind":"begin","title":"Loading"}`))
 		if s.mode == Loading {
-			go func() {
-				time.Sleep(LoadTime)
-				s.sending.Lock()
-				defer s.sending.Unlock()
-				write(s.out, progressed(`{"kind":"end"}`))
-				s.loaded = true
-			}()
+			go s.load(0)
 		}
+	case Created:
+		go s.load(CreateTime)
 	}
 	s.answer(m.ID, s.capabilities())
 	return 0, false
 }
 
 // progressed is a $/progress notification of the loading job with value.
-func progressed(value string) string {
+func progressed(value string) string { return progressOf(progressToken, value) }
+
+// progressOf is a $/progress notification of the job token with value.
+func progressOf(token, value string) string {
 	return fmt.Sprintf(`{"jsonrpc":"2.0","method":"$/progress","params":{"token":%q,"value":%s}}`,
-		progressToken, value)
+		token, value)
+}
+
+// diskCheck runs one check on disk of the DiskChecks mode after [DiskDelay]: the begin of the
+// job [DiskToken], the interim report and the report of each file with the [Extension] suffix
+// under the workspace root as the file is on disk, and the end of the job.
+func (s *script) diskCheck() {
+	time.Sleep(DiskDelay)
+	s.sending.Lock()
+	defer s.sending.Unlock()
+	s.checks++
+	write(s.out, progressOf(DiskToken, `{"kind":"begin","title":"check"}`))
+	interim := strings.TrimSuffix(strings.Repeat(note("interim")+",", DiskInterim), ",")
+	for _, doc := range s.onDisk() {
+		content, err := os.ReadFile(uri.URI(doc).FsPath())
+		if err != nil {
+			continue
+		}
+		reported := append(unsound(string(content)), note("checks="+strconv.Itoa(s.checks)))
+		write(s.out, published(doc, "["+interim+"]"))
+		write(s.out, published(doc, "["+strings.Join(reported, ",")+"]"))
+	}
+	write(s.out, progressOf(DiskToken, `{"kind":"end"}`))
+}
+
+// load runs the Loading job of the Loading and Created modes: after waiting for begun, it
+// begins the job unless begun is zero, which states that the job has begun, and it ends the job
+// [LoadTime] later.
+func (s *script) load(begun time.Duration) {
+	if begun > 0 {
+		time.Sleep(begun)
+		s.send(progressed(`{"kind":"begin","title":"Loading"}`))
+	}
+	time.Sleep(LoadTime)
+	s.sending.Lock()
+	defer s.sending.Unlock()
+	write(s.out, progressed(`{"kind":"end"}`))
+	s.loaded = true
 }
 
 // isLoaded reports whether the Loading mode has ended its progress job.
@@ -580,7 +632,7 @@ func (s *script) references() string {
 			return "[]"
 		}
 		return "[" + location(other, at) + "]"
-	case (s.mode == Loading || s.mode == Stuck) && !s.isLoaded():
+	case (s.mode == Loading || s.mode == Stuck || s.mode == Created) && !s.isLoaded():
 		return "[]"
 	case s.mode == Receivers || s.mode == Impls:
 		return "[]"
@@ -795,7 +847,7 @@ func (s *script) nameExtracted(fresh string) string {
 // diagnose is the list of diagnostics for the document doc, for the mode.
 func (s *script) diagnose(doc string) string {
 	switch s.mode {
-	case Compiles, Unbound:
+	case Compiles, Unbound, DiskChecks, DiskStuck:
 		return "[" + strings.Join(broken(s.view(doc)), ",") + "]"
 	case WorkspaceDiagnostics:
 		return "[" + strings.Join(s.faults(doc), ",") + "]"
@@ -859,13 +911,7 @@ func (s *script) workspaceReport() string {
 // files returns the URIs of the files with the [Extension] suffix under the workspace root and
 // of the buffers of the server, sorted.
 func (s *script) files() []string {
-	var out []string
-	_ = filepath.WalkDir(uri.URI(s.root).FsPath(), func(at string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && filepath.Ext(at) == Extension {
-			out = append(out, string(uri.File(at)))
-		}
-		return nil
-	})
+	out := s.onDisk()
 	for doc := range s.holding {
 		if !slices.Contains(out, doc) {
 			out = append(out, doc)
@@ -875,20 +921,45 @@ func (s *script) files() []string {
 	return out
 }
 
+// onDisk returns the URIs of the files with the [Extension] suffix under the workspace root,
+// sorted. It reads no buffer, so a goroutine of the DiskChecks mode can call it.
+func (s *script) onDisk() []string {
+	var out []string
+	_ = filepath.WalkDir(uri.URI(s.root).FsPath(), func(at string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && filepath.Ext(at) == Extension {
+			out = append(out, string(uri.File(at)))
+		}
+		return nil
+	})
+	return out
+}
+
 // broken is one error diagnostic at each occurrence of [Broken] in text.
 func broken(text string) []string {
+	return occurrences(text, Broken, `"code":"E900","source":"fakecheck"`, Broken+" is not a name this language takes")
+}
+
+// unsound is one error diagnostic at each occurrence of [Unsound] in text, as the check on disk
+// of the DiskChecks mode reports it.
+func unsound(text string) []string {
+	return occurrences(text, Unsound, `"code":"E428","source":"fakedisk"`, Unsound+" is defined twice")
+}
+
+// occurrences is one error diagnostic at each occurrence of word in text, with the code and the
+// source that labels writes and message.
+func occurrences(text, word, labels, message string) []string {
 	var out []string
 	for i, line := range strings.Split(text, "\n") {
 		for from := 0; ; {
-			at := strings.Index(line[from:], Broken)
+			at := strings.Index(line[from:], word)
 			if at < 0 {
 				break
 			}
 			at += from
 			out = append(out, fmt.Sprintf(`{"range":{"start":{"line":%d,"character":%d},`+
-				`"end":{"line":%d,"character":%d}},"severity":1,"code":"E900","source":"fakecheck",`+
-				`"message":%q}`, i, at, i, at+len(Broken), Broken+" is not a name this language takes"))
-			from = at + len(Broken)
+				`"end":{"line":%d,"character":%d}},"severity":1,%s,"message":%q}`,
+				i, at, i, at+len(word), labels, message))
+			from = at + len(word)
 		}
 	}
 	return out

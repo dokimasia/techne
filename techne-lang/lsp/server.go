@@ -68,6 +68,16 @@ type Server struct {
 	// then has a [trust.CaveatPartialCheck] caveat.
 	Unchecked string
 
+	// DiskCheck is the prefix of the work-done progress token of the check that the server runs
+	// over the files on disk after textDocument/didSave, such as rust-analyzer/flycheck/ for the
+	// cargo check of rust-analyzer, or empty for a server without one. The server publishes the
+	// findings of that check, and the findings describe the files on disk.
+	//
+	// The engine sends textDocument/didSave for a file whose content on disk changed since the
+	// last check. A verification waits for a check that began after the last save to end, and
+	// its findings contain those of the check. It then has no [trust.CaveatPartialCheck] caveat.
+	DiskCheck string
+
 	// Answering is how long a question waits for the reply of the server, from the moment the
 	// server runs. Zero waits one minute. A question that waits the whole time returns
 	// [engine.ErrDecline], so the next engine serves it, and the server receives a

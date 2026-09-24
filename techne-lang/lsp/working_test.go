@@ -37,6 +37,23 @@ func TestWorking(t *testing.T) {
 			assert.False(t, hasCaveat(got.Caveats, trust.CaveatIndexWarming), "the answer has a warming caveat")
 		})
 
+		t.Run("waits for a job whose token the server created before the job began", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.Created, sample()).Relate(t.Context(),
+				engine.Request{Scope: "a.fake"}, declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate with a server that creates the token of a job first")
+			assert.Equal(t, edges(got.Items), []string{"Get", "After"}, "the declarations that use Store")
+		})
+
+		t.Run("returns a total answer while a check on disk runs", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.DiskStuck, sample()).Relate(t.Context(),
+				engine.Request{Scope: "a.fake"}, declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate with a check on disk that never ends")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the answer")
+			assert.False(t, hasCaveat(got.Caveats, trust.CaveatIndexWarming), "the answer has a warming caveat")
+		})
+
 		t.Run("returns a partial answer from a server that never settles", func(t *testing.T) {
 			t.Parallel()
 			got, err := serving(t, lsptest.Stuck, sample()).Relate(t.Context(),

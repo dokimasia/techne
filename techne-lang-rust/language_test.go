@@ -75,7 +75,13 @@ func TestLanguage(t *testing.T) {
 
 		t.Run("names the checks that its diagnostics leave out", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, rust.Server().Unchecked, "lifetimes or borrows", "the unchecked of rust-analyzer")
+			assert.Equal(t, rust.Server().Unchecked, "a name defined twice, lifetimes or borrows",
+				"the unchecked of rust-analyzer")
+		})
+
+		t.Run("declares the flycheck of rust-analyzer as its check on disk", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, rust.Server().DiskCheck, "rust-analyzer/flycheck/", "the check on disk of rust-analyzer")
 		})
 	})
 }

@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -20,8 +21,18 @@ import (
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
 
-// publishing is the method of the notification with the diagnostics of a document.
-const publishing = "textDocument/publishDiagnostics"
+// publishing is the method of the notification with the diagnostics of a document, and
+// progressing the method of the notification of a work-done progress job.
+const (
+	publishing  = "textDocument/publishDiagnostics"
+	progressing = "$/progress"
+)
+
+// The kinds of work-done progress value that begin and end a job.
+const (
+	beginning = "begin"
+	ending    = "end"
+)
 
 // process is one run of the scripted server, driven frame by frame.
 type process struct {
@@ -63,15 +74,24 @@ func (p *process) send(t *testing.T, body string) {
 	assert.NoError(t, err, "the test writes a frame")
 }
 
-// frame is one message of the scripted server. It is either a reply to a request of the test
-// or a notification with the diagnostics of a document.
+// frame is one message of the scripted server: a reply to a request of the test, a
+// notification with the diagnostics of a document, or a notification of a progress job.
 type frame struct {
 	ID     *int            `json:"id"`
 	Method string          `json:"method"`
 	Result json.RawMessage `json:"result"`
 	Params struct {
 		Diagnostics json.RawMessage `json:"diagnostics"`
+		Token       string          `json:"token"`
+		Value       struct {
+			Kind string `json:"kind"`
+		} `json:"value"`
 	} `json:"params"`
+}
+
+// of reports whether m is a progress notification of kind for the check on disk.
+func (m frame) of(kind string) bool {
+	return m.Method == progressing && m.Params.Token == lsptest.DiskToken && m.Params.Value.Kind == kind
 }
 
 // next reads one framed message.
@@ -134,6 +154,40 @@ func (p *process) report(t *testing.T) string {
 	}
 }
 
+// check reads frames until the end of a check on disk, and returns the diagnostics of each
+// report after the begin of the check, in order.
+func (p *process) check(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	for begun := false; ; {
+		m := p.next(t)
+		switch {
+		case m.of(beginning):
+			begun = true
+		case m.of(ending):
+			return out
+		case begun && m.Method == publishing:
+			out = append(out, string(m.Params.Diagnostics))
+		}
+	}
+}
+
+// jobs reads frames until the reply to the request id, and returns the kinds of the
+// notifications of the check on disk before the reply, in order.
+func (p *process) jobs(t *testing.T, id int) []string {
+	t.Helper()
+	var out []string
+	for {
+		m := p.next(t)
+		switch {
+		case m.of(beginning), m.of(ending):
+			out = append(out, m.Params.Value.Kind)
+		case m.Method == "" && m.ID != nil && *m.ID == id:
+			return out
+		}
+	}
+}
+
 // opening is the didOpen notification of a.fake with text, in the root of [process.initialize].
 func opening(text string) string {
 	quoted, _ := json.Marshal(text)
@@ -159,16 +213,40 @@ func asking(id int) string {
 		`{"textDocument":{"uri":"file:///tmp/a.fake"}}}`, id)
 }
 
-// initialize sends initialize and returns the capabilities of the reply.
+// initialized is the notification that follows the reply to initialize. saving is the didSave
+// notification of a.fake.
+const (
+	initialized = `{"jsonrpc":"2.0","method":"initialized","params":{}}`
+	saving      = `{"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":` +
+		`{"uri":"file:///tmp/a.fake"}}}`
+)
+
+// initialize sends initialize with the root /tmp and returns the capabilities of the reply.
 func (p *process) initialize(t *testing.T) map[string]any {
 	t.Helper()
-	p.send(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":"file:///tmp",`+
-		`"capabilities":{}}}`)
+	return p.initializeAt(t, "/tmp")
+}
+
+// initializeAt sends initialize with the root at the absolute path root and returns the
+// capabilities of the reply.
+func (p *process) initializeAt(t *testing.T, root string) map[string]any {
+	t.Helper()
+	p.send(t, fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":"file://%s",`+
+		`"capabilities":{}}}`, root))
 	var result struct {
 		Capabilities map[string]any `json:"capabilities"`
 	}
 	assert.NoError(t, json.Unmarshal(p.reply(t, 1), &result), "the reply to initialize")
 	return result.Capabilities
+}
+
+// placed writes content to a.fake in a new directory and returns the directory.
+func placed(t *testing.T, content string) string {
+	t.Helper()
+	root := t.TempDir()
+	assert.NoError(t, os.WriteFile(filepath.Join(root, "a"+lsptest.Extension), []byte(content), 0o644),
+		"the test writes a.fake")
+	return root
 }
 
 func TestScript(t *testing.T) {
@@ -257,6 +335,43 @@ func TestScript(t *testing.T) {
 			p.send(t, closing)
 			p.send(t, asking(2))
 			assert.Equal(t, p.reports(t, 2), []string{"[]"}, "the reports of the close")
+		})
+
+		t.Run("checks the files on disk after initialized in the DiskChecks mode", func(t *testing.T) {
+			t.Parallel()
+			p := run(t, lsptest.DiskChecks)
+			p.initializeAt(t, placed(t, lsptest.Unsound+"\n"))
+			sent := time.Now()
+			p.send(t, initialized)
+			got := strings.Join(p.check(t), "")
+			assert.True(t, time.Since(sent) >= lsptest.DiskDelay, "the delay of the check")
+			assert.Contains(t, got, lsptest.Unsound, "the report of the check")
+			assert.Contains(t, got, "checks=1", "the note of the check")
+		})
+
+		t.Run("checks the files on disk after didSave in the DiskChecks mode", func(t *testing.T) {
+			t.Parallel()
+			root := placed(t, lsptest.Content)
+			p := run(t, lsptest.DiskChecks)
+			p.initializeAt(t, root)
+			p.send(t, initialized)
+			assert.NotContains(t, strings.Join(p.check(t), ""), lsptest.Unsound, "the report of the first check")
+
+			assert.NoError(t, os.WriteFile(filepath.Join(root, "a"+lsptest.Extension), []byte(lsptest.Unsound+"\n"),
+				0o644), "the test writes a.fake")
+			p.send(t, saving)
+			got := strings.Join(p.check(t), "")
+			assert.Contains(t, got, lsptest.Unsound, "the report of the check after the save")
+			assert.Contains(t, got, "checks=2", "the note of the check after the save")
+		})
+
+		t.Run("begins a check on disk that never ends in the DiskStuck mode", func(t *testing.T) {
+			t.Parallel()
+			p := run(t, lsptest.DiskStuck)
+			p.initializeAt(t, placed(t, lsptest.Content))
+			p.send(t, initialized)
+			p.send(t, asking(2))
+			assert.Equal(t, p.jobs(t, 2), []string{beginning}, "the notifications of the check before the reply")
 		})
 	})
 }

@@ -19,6 +19,8 @@
 //  4. The projection is the workspace as the plan leaves it, and a gate checks it.
 //  5. A dry run keeps the plan and its request under a handle for Commit. Every other call
 //     writes the projection.
+//  6. When the engine of the gate checks less than the compiler of the language, the
+//     verifier of the language checks the written files on disk.
 //
 // # The gate
 //
@@ -38,14 +40,31 @@
 //
 // A change is written with the status [trust.Degraded] when no engine checks its language.
 //
+// # The check on disk
+//
+// An engine whose check has a [trust.CaveatPartialCheck] caveat checks less than the compiler
+// of the language, such as a language server whose diagnostics leave out checks that the
+// compiler makes. After such a gate, the verifier of the language checks the files that the
+// change reads before the write, and the files that it writes after the write. The outcome
+// follows from the two checks:
+//
+//   - More errors after the write. The write is taken back, and the change is refused with
+//     the errors after the write.
+//   - No more errors. The change is kept, and its gate has no [trust.CaveatPartialCheck]
+//     caveat.
+//   - A check below [trust.Resolved], a partial check, or a check that fails after the write.
+//     The change is kept. A [trust.CaveatPartialCheck] caveat of its gate states the reason.
+//
+// When the check before the write fails, the write path returns its error and writes nothing.
+//
 // # Writes
 //
 // A write takes the lock of [Files], which one writer of the workspace takes at a time in
-// every techne process. Right before it changes a file, the write reads the file again and
-// compares its digest with the precondition of the plan. A file that changed refuses the
-// change. A file whose projected content equals its content is not written. A write that
-// stops puts back the files that it changed, and its refusal or error states whether that
-// succeeded.
+// every techne process, and keeps it until the check on disk ends. Right before it changes a
+// file, the write reads the file again and compares its digest with the precondition of the
+// plan. A file that changed refuses the change. A file whose projected content equals its
+// content is not written. A write that stops puts back the files that it changed, and its
+// refusal or error states whether that succeeded.
 //
 // # Dependency position
 //

@@ -22,6 +22,12 @@ import (
 // diagnostics, and from the diagnostics the server publishes otherwise. All files share one
 // wait of [reporting] for published diagnostics.
 //
+// For a server that declares [Server.DiskCheck], Verify also waits up to [Server.Loading] for
+// a check on disk that began after the last save to end. The findings of the check join the
+// findings of the server. A check that does not end in that time adds a
+// [trust.CaveatPartialCheck] caveat. A server that declares [Server.Unchecked] without a check
+// on disk adds the same caveat.
+//
 // The result is partial when the server had not settled, when a file received no report, or
 // when the scope contains a file larger than [lang.Largest], and a caveat names the reason.
 // A file that received no report is a file the server did not analyse, so its absence of
@@ -67,12 +73,13 @@ func (e *Engine) verifying(
 		docs = append(docs, doc)
 	}
 	ready := e.settle(ctx, held)
+	checked := e.server.DiskCheck == "" || held.working.checked(ctx, e.loading())
 
 	by := time.Now().Add(reporting)
 	var out []edit.Finding
 	var waited bool
 	for _, doc := range docs {
-		reported, said, err := e.diagnostics(ctx, held, doc.path, by)
+		reported, said, err := e.diagnostics(ctx, held, doc.path, by, true)
 		if err != nil {
 			return engine.Result[edit.Finding]{}, err
 		}
@@ -87,11 +94,29 @@ func (e *Engine) verifying(
 		covered = trust.ScopePartial
 	}
 	caveats = append(caveats, reasons(suites, waited)...)
+	caveats = append(caveats, e.shortfall(checked)...)
 	return engine.Result[edit.Finding]{
 		Items:        out,
 		Completeness: covered,
 		Caveats:      append(caveats, unread(files.Unread)...),
 	}, nil
+}
+
+// shortfall returns the [trust.CaveatPartialCheck] caveat of a verification that checked less
+// than the compiler of the language, or nil. checked reports whether the check on disk of a
+// server that declares [Server.DiskCheck] ended after the last save.
+func (e *Engine) shortfall(checked bool) []trust.Caveat {
+	switch {
+	case e.server.DiskCheck != "" && !checked:
+		return []trust.Caveat{{
+			Code: trust.CaveatPartialCheck,
+			Note: fmt.Sprintf("the check of %s on disk did not end within %s, so the answer contains "+
+				"only the diagnostics of the server", e.server.Name, e.loading()),
+		}}
+	case e.server.DiskCheck == "" && e.server.Unchecked != "":
+		return []trust.Caveat{e.partly()}
+	}
+	return nil
 }
 
 // reasons returns the caveats of a verification beyond those of every answer: one for

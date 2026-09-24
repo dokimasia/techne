@@ -19,7 +19,8 @@
 //     move a file, and a code action to extract a function.
 //   - [Engine.Format]: textDocument/formatting.
 //   - [Engine.Check]: the diagnostics of content that the server receives as unsaved buffers.
-//   - [Engine.Verify]: textDocument/diagnostic, or the diagnostics a server publishes.
+//   - [Engine.Verify]: textDocument/diagnostic, or the diagnostics a server publishes, and the
+//     findings of the check on disk of a server that declares [Server.DiskCheck].
 //
 // A role returns [engine.ErrDecline] for a request that the server did not offer at
 // initialize, so the catalogue passes the request to the next engine. An engine claims the
@@ -64,7 +65,13 @@
 // A question waits for the server to settle: no open work-done progress job, and no activity
 // for 300 milliseconds, for at most [Server.Loading]. An answer from a server that has not
 // settled is partial. An empty answer from a server whose diagnostics do not show that it
-// analysed the file is partial.
+// analysed the file is partial. A check on disk changes the diagnostics of the files alone, so
+// only [Engine.Verify] waits for it.
+//
+// The session records the diagnostics that a server publishes and its progress jobs when it
+// reads each message, before a handler of the connection runs. A report is recorded before the
+// message after it, such as the end of the job that produced the report or the reply to a later
+// request.
 //
 // The errors that the server reports for the project of an answer lower the answer by the rule
 // of [lang.Lowered]. Only an error on a line that can hide a use of the name that the answer is
@@ -75,7 +82,8 @@
 // A server analyses its buffers, not the files on disk. Before each question the engine sends
 // every buffer whose file changed on disk since the server received it, and releases every
 // buffer whose file is gone. It compares the size and the modification time of each file, and
-// reads a file only when one of them changed.
+// reads a file only when one of them changed. A server that declares [Server.DiskCheck] also
+// receives textDocument/didSave for a file that changed on disk since its last check.
 //
 // # Writes
 //
