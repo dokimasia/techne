@@ -1,62 +1,63 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: MIT
 
-// Package treesitter answers about any language with a tree-sitter
-// grammar, at the syntactic tier.
+// Package treesitter implements the syntactic engine: one engine type that
+// serves every language with a tree-sitter grammar.
 //
-// # One engine, many grammars
+// # Grammars and queries
 //
-// A language module supplies a grammar and the queries that go with it,
-// and writes no engine code. What this package knows is the query
-// convention, not any language.
+// A language module supplies a [Grammar]: the compiled grammar and a tags
+// query in the capture convention of the grammars' own tags queries. The
+// engine contains no language-specific code. [KindOf] maps each definition
+// capture to a [go.dokimi.dev/techne/core/sema.Kind], and [New] refuses a
+// query with a definition capture without a kind.
 //
-// # The capture convention
+// A pattern cannot exclude the shapes of a more specific pattern, so two
+// patterns can match one declaration. The declaration takes the kind that
+// [MoreSpecific] ranks higher.
 //
-// [Capture] names come from the tags queries the grammars already ship,
-// so a module starts from upstream's query and extends it. [KindOf] maps
-// a definition capture to what it declares and refuses anything else,
-// and [New] refuses a query naming a definition capture no kind carries:
-// a mistyped capture that reached the query would match and be dropped,
-// producing an engine that silently finds nothing.
+// # Metadata
 //
-// Where a grammar draws a distinction the shared vocabulary does not
-// carry, two captures map onto one kind. A caller reads the same set
-// whichever language answered.
+// The engine reads the metadata of a declaration from the tree, not from
+// the query:
 //
-// A pattern cannot say what it is not, so the general pattern for a
-// shape also matches the specific ones and both reach the engine for one
-// declaration. [Outranks] decides which kind survives.
+//   - the modifier keywords, which are the only place most languages write
+//     visibility
+//   - the annotations, as [go.dokimi.dev/techne/core/sema.Annotation]
+//     values
+//   - the documentation, in the forms the language's
+//     [go.dokimi.dev/techne/lang.CommentStyle] declares
+//   - the parent, the innermost declaration whose span contains it, which
+//     [Parents] computes from spans alone
+//   - the visibility, which the declaration of the language reads from the
+//     name, except that a declaration no code outside its scope can name,
+//     such as a parameter or a local variable, is
+//     [go.dokimi.dev/techne/core/sema.Unexported]
 //
-// # What a query does not capture
+// # Identities
 //
-// Three things are read off the tree rather than out of a match, because
-// each is attached to a declaration rather than named by it and a
-// pattern per grammar per shape would be unreadable:
+// The ID of a declaration contains its qualified name, which
+// [go.dokimi.dev/techne/core/sema.Qualify] builds:
 //
-//   - the keywords qualifying it, which for most languages are the only
-//     place visibility is written
-//   - the metadata written onto it, which reaches a caller as
-//     [go.dokimi.dev/techne/core/sema.Annotation] rather than as a
-//     symbol, because applying an annotation binds no name
-//   - its documentation, in whichever of the forms its
-//     [go.dokimi.dev/techne/lang.CommentStyle] states, read from above
-//     the declaration or from inside its body as the language decides
+//   - A declaration with a [Receiver] capture is qualified by the type that
+//     the capture names, so the Go method `func (s *Store) Get()` is
+//     Store.Get.
+//   - Any other declaration is qualified by the qualified name of its
+//     parent, so the method Get of the class Store is Store.Get.
+//   - An import is not qualified, because its name is a path.
 //
-// [Parents] is the fourth, and is decided by span containment rather
-// than by a query, so it holds for every grammar and for engines at any
-// tier.
+// Members of one name and kind in different containers of one unit have
+// different IDs. Overloads in one container share one ID.
 //
-// # What this tier can and cannot say
+// # Evidence
 //
-// A parser matched text. Links that cross a file are name coincidence,
-// so answers are [go.dokimi.dev/techne/core/trust.Syntactic] and an
-// empty one never proves absence.
+// Every answer is [go.dokimi.dev/techne/core/trust.Syntactic]. A name that
+// crosses a file is matched as text, so an empty answer never proves
+// absence.
 //
 // # Dependency position
 //
-// Imports core, the tree-sitter binding and lang. It is the only package
-// in this module that needs a C toolchain, so a binary registering only
-// language-server-backed languages never reaches it. It holds no
-// grammar, so the behaviour that needs one is checked by the conformance
-// suite each language module runs.
+// Imports the standard library, core, lang and the tree-sitter binding. It
+// is the only package of the module that needs cgo. It contains no grammar,
+// so the conformance suite of each language module tests its behaviour.
 package treesitter

@@ -4,6 +4,7 @@
 package treesitter
 
 import (
+	"bytes"
 	"sort"
 	"strings"
 
@@ -13,12 +14,10 @@ import (
 	"go.dokimi.dev/techne/lang"
 )
 
-// modifiers reads the keywords qualifying a declaration.
-//
-// It looks at the declaring node's own children and, where the grammar
-// wraps the declaration in something else, at that wrapper's: Python
-// puts a decorated function inside a decorated_definition, and the
-// keywords sit on either depending on the form.
+// modifiers returns the modifier keywords of a declaration, in source order
+// and without duplicates. It reads the children of the declaring node and,
+// when the grammar wraps the declaration, the children of the wrapper, as
+// Python wraps a decorated function in a decorated_definition.
 func modifiers(node *ts.Node, content []byte) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -45,10 +44,8 @@ func modifiers(node *ts.Node, content []byte) []string {
 			}
 			switch {
 			case modifierNodes[NodeKind(child.Kind())]:
-				// Java nests annotations inside the modifiers node, and
-				// an annotation carries its arguments. Reading the node's
-				// text would take `classes = {...})` for a modifier, so
-				// the keywords are taken from the children instead.
+				// Java nests annotations with their arguments inside the
+				// modifiers node, so the keywords come from its children.
 				add(keywords(child, content)...)
 			case !child.IsNamed() && modifierWords[child.Kind()]:
 				add(child.Kind())
@@ -63,12 +60,9 @@ func modifiers(node *ts.Node, content []byte) []string {
 	return out
 }
 
-// keywords reads the modifier words out of a node grouping them,
-// passing over any annotation nested inside.
-//
-// A node with no keyword children is its own keyword: Rust writes a
-// visibility_modifier as `pub` or `pub(crate)`, which has no anonymous
-// token this would recognise.
+// keywords returns the modifier keywords under a node that groups them,
+// without the annotations nested in it. A node without keyword children is
+// one keyword, as Rust's visibility_modifier writes pub(crate).
 func keywords(node *ts.Node, content []byte) []string {
 	var out []string
 	for i := range node.ChildCount() {
@@ -94,13 +88,14 @@ func keywords(node *ts.Node, content []byte) []string {
 	return out
 }
 
-// annotations reads the metadata written onto a declaration.
+// annotations returns the annotations of a declaration, in source order.
 //
-// Three shapes reach it. A grammar may hang the annotation off the
-// declaration itself, as TypeScript does; put it in a wrapper node with
-// the declaration, as Python's decorated_definition does; or leave it as
-// a preceding sibling, as Rust's attribute_item is. Java nests them
-// inside the modifiers node.
+// A grammar attaches an annotation in one of four places: as a child of the
+// declaration, as TypeScript does; as a child of a wrapper, as Python's
+// decorated_definition does; as a preceding sibling, as Rust's
+// attribute_item is; or inside the modifiers node, as Java does. A node that
+// groups more than one annotation, such as C#'s attribute_list, yields one
+// annotation per member.
 func annotations(node *ts.Node, content []byte, p source.Path) []sema.Annotation {
 	var out []sema.Annotation
 	seen := map[uint]bool{}
@@ -119,18 +114,14 @@ func annotations(node *ts.Node, content []byte, p source.Path) []sema.Annotation
 			return
 		}
 		seen[n.StartByte()] = true
-		// A grammar may group several annotations in one node: C# writes
-		// [Serializable, Obsolete] as one attribute_list holding two
-		// attributes. Each is one annotation, or a caller asking about
-		// the second would be told the declaration does not carry it. A
-		// node wrapping a single one is kept whole, so the punctuation a
-		// tool reproducing it needs stays in the text.
 		if grouped := nested(n); len(grouped) > 1 {
 			for _, one := range grouped {
 				add(one)
 			}
 			return
 		}
+		// A group of one keeps its punctuation, which a tool that
+		// reproduces the annotation needs.
 		add(n)
 	}
 
@@ -148,7 +139,6 @@ func annotations(node *ts.Node, content []byte, p source.Path) []sema.Annotation
 				collect(child)
 				continue
 			}
-			// Java hides annotations one level down, inside modifiers.
 			if modifierNodes[NodeKind(child.Kind())] {
 				fromChildren(child, depth+1)
 			}
@@ -159,8 +149,6 @@ func annotations(node *ts.Node, content []byte, p source.Path) []sema.Annotation
 	if parent := node.Parent(); parent != nil && wrapperNodes[NodeKind(parent.Kind())] {
 		fromChildren(parent, 0)
 	}
-
-	// Rust writes an attribute as a sibling above the item.
 	for sibling := node.PrevNamedSibling(); sibling != nil; sibling = sibling.PrevNamedSibling() {
 		if !annotationNodes[NodeKind(sibling.Kind())] {
 			break
@@ -174,8 +162,8 @@ func annotations(node *ts.Node, content []byte, p source.Path) []sema.Annotation
 	return out
 }
 
-// nested returns the annotations a node groups, which is empty for a
-// node that is one annotation itself.
+// nested returns the attribute nodes a node groups. It returns nothing for
+// a node that is one annotation.
 func nested(node *ts.Node) []*ts.Node {
 	var out []*ts.Node
 	for i := range node.NamedChildCount() {
@@ -186,14 +174,14 @@ func nested(node *ts.Node) []*ts.Node {
 	return out
 }
 
-// annotationName strips the punctuation and arguments from an
-// annotation, leaving what a caller matches on.
+// annotationName returns the name of an annotation without its punctuation,
+// its arguments and its qualifier: Serializable for [System.Serializable],
+// derive for #[derive(Debug)].
 func annotationName(text string) string {
 	name := strings.TrimSpace(text)
 	name = strings.TrimPrefix(name, rustInnerAttributeOpen)
 	name = strings.TrimPrefix(name, rustAttributeOpen)
-	// C# writes [Foo] and C writes [[foo]], so the brackets are trimmed
-	// however many there are.
+	// C# writes [Foo] and C writes [[foo]].
 	name = strings.TrimLeft(name, attributeOpen)
 	name = strings.TrimRight(name, attributeClose)
 	name = strings.TrimPrefix(name, annotationPrefix)
@@ -202,47 +190,35 @@ func annotationName(text string) string {
 	if at := strings.IndexAny(name, annotationBreak); at >= 0 {
 		name = name[:at]
 	}
-	// A qualified annotation is named by its last segment, which is what
-	// it is written and matched as.
 	if at := strings.LastIndexAny(name, annotationQualifier); at >= 0 && at+1 < len(name) {
 		name = name[at+1:]
 	}
 	return name
 }
 
-// tags reads a Go struct tag, which is metadata written as a string
-// literal after the field rather than as a node of its own.
-//
-// Each key in the tag becomes one annotation, so a caller asks whether a
-// field carries a json tag the same way it asks whether a class carries
-// an Injectable decorator.
+// tags returns one annotation per key of the struct tag of a Go field,
+// named by the key, so a caller asks for a json tag as it asks for any
+// annotation.
 func tags(node *ts.Node, content []byte, p source.Path) []sema.Annotation {
 	tag := node.ChildByFieldName(string(FieldNameTag))
 	if tag == nil {
 		return nil
 	}
-
 	var out []sema.Annotation
 	for _, one := range pairs(unquote(tag.Utf8Text(content))) {
-		out = append(out, sema.Annotation{
-			Name: one.key,
-			Text: one.text,
-			Span: spanOf(p, *tag),
-		})
+		out = append(out, sema.Annotation{Name: one.key, Text: one.text, Span: spanOf(p, *tag)})
 	}
 	return out
 }
 
-// pair is one key and the whole key:"value" it was written as.
+// pair is one key of a struct tag and the key:"value" text it is written
+// as.
 type pair struct{ key, text string }
 
-// pairs splits a struct tag into its key and value pairs.
-//
-// The grammar is the one reflect.StructTag documents: optionally
-// space-separated key:"value" pairs, where a key holds no space, quote
-// or colon, and a value is a quoted Go string. Splitting on whitespace
-// would cut a value containing a space in half, and trimming quotes off
-// both ends would take the last value's closing quote with them.
+// pairs splits a struct tag into its key:"value" pairs by the syntax that
+// reflect.StructTag documents: pairs separated by spaces, a key without a
+// space, a quote or a colon, and a value that is a quoted Go string. It
+// stops at the first pair that breaks the syntax.
 func pairs(tag string) []pair {
 	var out []pair
 	for len(tag) > 0 {
@@ -251,9 +227,6 @@ func pairs(tag string) []pair {
 		if colon <= 0 || colon+1 >= len(tag) || tag[colon+1] != tagQuote {
 			return out
 		}
-
-		// The value is a Go string literal, so a quote inside it is
-		// escaped and does not end it.
 		end := colon + 2
 		for end < len(tag) && tag[end] != tagQuote {
 			if tag[end] == tagEscape {
@@ -270,61 +243,62 @@ func pairs(tag string) []pair {
 	return out
 }
 
-// Parents links each symbol to the innermost other symbol containing
-// it, in place.
+// Parents sets the Parent of each symbol to the ID of the smallest other
+// symbol in the same file whose span contains it and is wider, as
+// [sema.Containers] defines it. Parents leaves the Parent empty when there
+// is no such symbol, and when that symbol has the same ID, which a grammar
+// produces for a declaration nested in another of the same name and kind.
+// It returns the containers that sema.Containers returns.
 //
-// Containment is decided by span rather than by a query, so it holds for
-// every grammar without a pattern having to say what encloses what, and
-// an engine at any tier can use it. The smallest span that strictly
-// contains a symbol is its parent.
-//
-// A symbol whose parent shares its identity is left at the top level.
-// That happens where a grammar nests one declaration inside another of
-// the same name and kind, and a symbol that is its own parent would make
-// a caller building a tree loop.
-func Parents(symbols []sema.Symbol) {
-	order := make([]int, len(symbols))
-	for i := range order {
-		order[i] = i
-	}
-	sort.SliceStable(order, func(a, b int) bool {
-		return width(symbols[order[a]]) < width(symbols[order[b]])
-	})
+// Parents runs in O(n log n) time.
+func Parents(symbols []sema.Symbol) []int {
+	containers := sema.Containers(symbols)
+	link(symbols, containers)
+	return containers
+}
 
-	for _, i := range order {
-		for _, j := range order {
-			if i == j || width(symbols[j]) <= width(symbols[i]) {
-				continue
-			}
-			if contains(symbols[j], symbols[i]) {
-				if symbols[j].ID != symbols[i].ID {
-					symbols[i].Parent = symbols[j].ID
-				}
-				break
-			}
+// link sets the Parent of each symbol to the ID of its container, of the
+// indexes that [sema.Containers] returns. It leaves the Parent empty for a
+// symbol without a container, and for a container with the same ID.
+func link(symbols []sema.Symbol, containers []int) {
+	for i, container := range containers {
+		if container >= 0 && symbols[container].ID != symbols[i].ID {
+			symbols[i].Parent = symbols[container].ID
 		}
 	}
 }
 
-func width(s sema.Symbol) int {
-	return s.Span.End.Offset - s.Span.Start.Offset
+// visibility returns the visibility of found[i], whose containers are the
+// indexes that Parents returns. A declaration that no code outside its
+// scope can name is sema.Unexported: a kind that sema.Kind.Declares
+// excludes, and a variable or constant inside a function, a method or a
+// constructor. The declaration of the language reads the visibility of
+// every other declaration from its name.
+func (e *Engine) visibility(found []declaration, containers []int, i int) sema.Visibility {
+	kind := found[i].kind
+	if !kind.Declares() || (kind == sema.KindVariable || kind == sema.KindConstant) && local(found, containers, i) {
+		return sema.Unexported
+	}
+	return e.declared.Visibility(found[i].name)
 }
 
-func contains(outer, inner sema.Symbol) bool {
-	return outer.Span.Start.Offset <= inner.Span.Start.Offset &&
-		outer.Span.End.Offset >= inner.Span.End.Offset
+// local reports whether a function, a method or a constructor contains
+// found[i].
+func local(found []declaration, containers []int, i int) bool {
+	for at := containers[i]; at >= 0; at = containers[at] {
+		switch found[at].kind {
+		case sema.KindFunction, sema.KindMethod, sema.KindConstructor:
+			return true
+		}
+	}
+	return false
 }
 
-// documentation reads the documentation attached to a declaration.
-//
-// Which forms count and where they sit are the language's decision, so
-// both come from its [lang.CommentStyle]. A language that documents
-// inside the declaration is read from the body; every other language is
-// read from what is written above.
-//
-// A declaration with no documentation yields the empty string. So does
-// one whose only comment is an ordinary comment, because a language that
-// distinguishes the two means the distinction.
+// documentation returns the documentation of a declaration: the
+// documentation comments above it, or the docstring that opens its body in
+// a language that documents inside a declaration. It returns an empty
+// string for a kind that no language documents, and for a declaration whose
+// only comment is not in a documentation form.
 func documentation(node *ts.Node, content []byte, style lang.CommentStyle, kind sema.Kind) string {
 	if !documents(kind) {
 		return ""
@@ -335,22 +309,13 @@ func documentation(node *ts.Node, content []byte, style lang.CommentStyle, kind 
 	return above(node, content, style)
 }
 
-// signature returns a declaration without its body.
+// signature returns the text of a declaration without its body, on one line
+// and cut to [lang.LineLimit] bytes.
 //
-// The body is the part a caller reading an outline did not ask for, and
-// every grammar served here names that field body.
-//
-// Not every declaration uses that field. Go builds a struct from a
-// struct_type holding an unnamed field list, so where no body field is
-// found the first line is the signature, which is where a language that
-// opens a block puts the brace.
-//
-// The annotations written onto a declaration sit inside its own span and
-// are dropped, because they reach a caller as annotations and repeating
-// them costs a line each.
-//
-// A declaration with no body is its own signature, which is right for a
-// constant and for an alias.
+// The body is the child named body. For an aggregate without one, such as a
+// Go struct type, the signature ends at the brace that opens the body. A
+// value written over more than one line ends before its assignment. The
+// annotations inside the span are dropped, because the symbol lists them.
 func signature(node *ts.Node, content []byte, marks []sema.Annotation, kind sema.Kind, style lang.CommentStyle) string {
 	from := enclosing(node, content)
 	start, end := int(from.StartByte()), int(from.EndByte())
@@ -365,24 +330,16 @@ func signature(node *ts.Node, content []byte, marks []sema.Annotation, kind sema
 	}
 
 	if body := bodyOf(from, 0); body != nil && int(body.StartByte()) > start {
-		// A body can begin after something written above it, as Ruby's
-		// does after a comment. What sits between is documentation for
-		// what follows, not part of this declaration.
+		// A comment between the signature and the body documents what
+		// follows it, as Ruby writes one before a method body.
 		return trimmed(uncommented(string(content[start:body.StartByte()]), style))
 	}
-	// A named aggregate whose body the grammar does not name ends where
-	// it opens the brace: Go builds a struct from a struct_type holding
-	// an unnamed field list. Nothing else does, and applying the rule
-	// wider would cut a dictionary off at its own first brace.
 	text := string(content[start:end])
 	if aggregate(kind) {
 		if at := opens(text); at >= 0 {
 			text = text[:at]
 		}
 	} else if strings.ContainsRune(text, '\n') {
-		// A value spelled over several lines is a body by another name.
-		// What a caller wants is what the binding is, not every element
-		// of what it was set to.
 		if at := assigns(text); at >= 0 {
 			text = text[:at]
 		}
@@ -390,8 +347,7 @@ func signature(node *ts.Node, content []byte, marks []sema.Annotation, kind sema
 	return trimmed(text)
 }
 
-// aggregate reports whether a kind is one a language writes a body for
-// in braces.
+// aggregate reports whether kind is written with a body in braces.
 func aggregate(kind sema.Kind) bool {
 	switch kind {
 	case sema.KindStruct, sema.KindInterface, sema.KindUnion, sema.KindEnum,
@@ -402,11 +358,9 @@ func aggregate(kind sema.Kind) bool {
 	}
 }
 
-// opens finds where a declaration opens its own body, or -1.
-//
-// Only a brace the declaration itself opens counts. One inside a call or
-// a list belongs to a value being passed, and cutting there would end a
-// field halfway through its initialiser.
+// opens returns the offset of the brace that opens the body of the
+// declaration in text, or -1. A brace inside parentheses or brackets
+// belongs to a value, not to the declaration.
 func opens(text string) int {
 	depth := 0
 	for at := 0; at < len(text); at++ {
@@ -424,11 +378,9 @@ func opens(text string) int {
 	return -1
 }
 
-// assigns finds where a binding is given its value, or -1.
-//
-// Only an assignment the declaration itself makes counts, so a fat
-// arrow inside a type argument and a comparison inside a value are
-// passed over.
+// assigns returns the offset of the = that assigns the value of the
+// declaration in text, or -1. It skips an = inside brackets and the
+// operators ==, =>, !=, <=, >= and the compound assignments.
 func assigns(text string) int {
 	depth := 0
 	for at := 0; at < len(text); at++ {
@@ -454,11 +406,8 @@ func assigns(text string) int {
 	return -1
 }
 
-// uncommented drops the trailing lines of a signature that are comments.
-//
-// A grammar can put a body's start after a comment written inside it,
-// as Ruby does, and that comment documents what comes next rather than
-// what came before.
+// uncommented removes the trailing lines of text that are blank or open a
+// comment of the language.
 func uncommented(text string, style lang.CommentStyle) string {
 	lines := strings.Split(text, "\n")
 	for len(lines) > 0 {
@@ -471,7 +420,7 @@ func uncommented(text string, style lang.CommentStyle) string {
 	return strings.Join(lines, "\n")
 }
 
-// comments reports whether a line opens a comment in this language.
+// comments reports whether line opens a comment of the language.
 func comments(line string, style lang.CommentStyle) bool {
 	if open := strings.TrimSpace(style.Line); open != "" && strings.HasPrefix(line, open) {
 		return true
@@ -487,22 +436,14 @@ func comments(line string, style lang.CommentStyle) bool {
 	return false
 }
 
+// trimmed returns a signature on one line, without the punctuation that
+// removing the body leaves, cut by [lang.Clipped] to [lang.LineLimit] bytes.
 func trimmed(text string) string {
-	out := oneLine(strings.TrimRight(strings.TrimSpace(text), signatureTail))
-	if len(out) <= signatureLimit {
-		return out
-	}
-	// A signature is read on one line. Past a point it is a value
-	// written out rather than a way to call something, and the whole of
-	// it is one read away.
-	return strings.TrimSpace(out[:signatureLimit]) + "…"
+	return lang.Clipped(oneLine(strings.TrimRight(strings.TrimSpace(text), signatureTail)), lang.LineLimit)
 }
 
-// oneLine collapses a signature written across several lines.
-//
-// A reader scanning an outline reads one declaration per line, and a
-// parameter list broken over five lines breaks that. The source keeps
-// its layout; what is reported does not need it.
+// oneLine joins a signature written over more than one line into one line,
+// with single spaces and no space inside brackets.
 func oneLine(text string) string {
 	if !strings.ContainsAny(text, "\n\r\t") {
 		return text
@@ -523,28 +464,13 @@ func oneLine(text string) string {
 	return out
 }
 
-// enclosing returns the node a signature starts at.
+// enclosing returns the node the signature of a declaration starts at.
 //
-// A grammar often wraps one declaration in a statement carrying its
-// keyword: Go writes `type Store struct{}` as a type_declaration holding
-// a type_spec, and a signature without the keyword reads wrong.
-//
-// The climb stops at a parent holding anything besides this declaration,
-// which is what keeps a method inside an interface from taking the
-// interface's own text and a decorated function from taking its
-// decorator. That is a stricter rule than the one documentation uses,
-// because documentation is written above a whole declaration while a
-// signature is a part of one.
-//
-// It never reads across a brace, a paren or a bracket. A parent whose
-// text reaches the node through one has opened something the node is
-// inside, so a Go interface holding one method would otherwise give that
-// method the interface's own text.
-//
-// A wrapper holding nothing but the declaration is climbed, because
-// `export` is part of what a caller writes. One holding a decorator
-// beside it is not, because the decorator reaches a caller as an
-// annotation and is not part of the signature.
+// It climbs from the declaring node to each parent whose own text belongs
+// to the signature, as Go's type_declaration contributes the keyword type
+// to its type_spec. It stops at a parent that contains more than the
+// declaration, so a method in an interface does not take the text of the
+// interface and a decorated function does not take its decorator.
 func enclosing(node *ts.Node, content []byte) *ts.Node {
 	out := node
 	for {
@@ -556,19 +482,14 @@ func enclosing(node *ts.Node, content []byte) *ts.Node {
 	}
 }
 
-// declares reports whether a parent's own text belongs to this node's
-// signature.
-//
-// It does when the parent writes nothing but keywords before the node
-// and nothing after it but a body. C spells a function that way, as a
-// return type and a declarator side by side, so a declarator alone is
-// half a signature.
+// declares reports whether the text of parent belongs to the signature of
+// node: parent writes no bracket before node, and nothing between node and
+// the body except node itself. C writes a function as a return type and a
+// declarator side by side, so the declarator alone is half the signature.
 func declares(parent, node *ts.Node, content []byte) bool {
-	if strings.ContainsAny(string(content[parent.StartByte():node.StartByte()]), blockOpen) {
+	if bytes.ContainsAny(content[parent.StartByte():node.StartByte()], blockOpen) {
 		return false
 	}
-	// The parent's own body, not one found below it: a wrapper holding a
-	// class would otherwise be judged by the class's braces.
 	body := parent.ChildByFieldName(string(FieldNameBody))
 	if body == nil {
 		return parent.NamedChildCount() == 1
@@ -581,8 +502,6 @@ func declares(parent, node *ts.Node, content []byte) bool {
 		if child == nil || child.Equals(*node) || child.Equals(*body) {
 			continue
 		}
-		// Anything else written after the node is part of the parent
-		// rather than of this declaration.
 		if child.StartByte() > node.StartByte() && child.EndByte() <= body.StartByte() {
 			return false
 		}
@@ -590,13 +509,9 @@ func declares(parent, node *ts.Node, content []byte) bool {
 	return true
 }
 
-// bodyOf finds the field holding a declaration's body.
-//
-// It is not always a child of the declaring node: Go writes a struct's
-// fields under the type child rather than the spec, so the search
-// descends. It stops at bodyDepth, because past that it would find the
-// body of something nested inside this declaration rather than this
-// declaration's own.
+// bodyOf returns the body field of a declaration, searching at most
+// bodyDepth levels below node, as Go writes the fields of a struct under its
+// type child.
 func bodyOf(node *ts.Node, depth int) *ts.Node {
 	if depth > bodyDepth {
 		return nil
@@ -616,14 +531,9 @@ func bodyOf(node *ts.Node, depth int) *ts.Node {
 	return nil
 }
 
-// documents reports whether a kind is one a documentation tool attaches
-// a comment to.
-//
-// No language documents a parameter or a label as an entity of its own:
-// a parameter is described inside the enclosing declaration's comment,
-// which is what @param and its equivalents are for. Without this a
-// receiver written at the start of a method's line would take the
-// method's own documentation, because the comment does sit above it.
+// documents reports whether a documentation tool documents a declaration of
+// kind on its own. Parameters, type parameters and labels are documented
+// inside the comment of the declaration that contains them.
 func documents(kind sema.Kind) bool {
 	switch kind {
 	case sema.KindParameter, sema.KindTypeParameter, sema.KindLabel:
@@ -633,14 +543,11 @@ func documents(kind sema.Kind) bool {
 	}
 }
 
-// above reads the documentation written before a declaration.
-//
-// It walks back over the preceding siblings, passing over the
-// annotations written between the documentation and the declaration, and
-// stops at the first sibling that is neither. A blank line ends the
-// comment too: a comment separated from a declaration documents
-// something else, which is the rule every one of these languages' own
-// documentation tools applies.
+// above returns the documentation comments before a declaration, joined by
+// newlines and unwrapped by [lang.CommentStyle.Unwrapped]. It passes over the
+// annotations between the comments and the declaration, and stops at a
+// blank line and at any sibling that is not a documentation comment of the
+// language.
 func above(node *ts.Node, content []byte, style lang.CommentStyle) string {
 	from := outermost(node)
 
@@ -654,12 +561,6 @@ func above(node *ts.Node, content []byte, style lang.CommentStyle) string {
 		if detached(sibling, next) {
 			break
 		}
-		// Which node kind holds a comment is the grammar's business and
-		// they disagree: comment, line_comment, block_comment,
-		// doc_comment, html_comment. What counts as documentation is the
-		// language's own decision, so the sibling's text is put to it
-		// and a sibling that is not documentation ends the walk, whether
-		// it is an ordinary comment or the declaration above.
 		text, isDoc := style.Documentation(sibling.Utf8Text(content))
 		if !isDoc {
 			break
@@ -667,31 +568,20 @@ func above(node *ts.Node, content []byte, style lang.CommentStyle) string {
 		lines = append(lines, text)
 		next = sibling
 	}
-
-	// The walk ran upwards, so the comment reads bottom to top.
 	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
 		lines[i], lines[j] = lines[j], lines[i]
 	}
-	return strings.Join(lines, "\n")
+	return style.Unwrapped(strings.Join(lines, "\n"))
 }
 
-// outermost returns the node a comment documenting this declaration
-// would be written above.
+// outermost returns the node that the documentation of a declaration is
+// written above.
 //
-// A grammar usually wraps a declaration in a statement and a query
-// captures the inner node: Go writes `type Store struct{}` as a
-// type_declaration holding a type_spec, and the comment is a sibling of
-// the declaration rather than of the spec. Climbing to the outermost
-// node that starts on the same line and starts with this one lands on
-// what the comment is written above, which is the same rule the
-// languages' own documentation tools apply: a comment above `const (`
-// documents the group, and one above a line inside it documents that
-// line.
-//
-// A wrapper node is climbed whichever line it starts on, because it
-// exists to hold the declaration together with what is written before
-// it, as Python's decorated_definition does.
-
+// It climbs to each parent that starts on the line of the node and whose
+// first named child is the node, as Go's type_declaration contains a
+// type_spec. It always climbs into a wrapper node, such as Python's
+// decorated_definition. A comment above `const (` therefore documents the
+// group, and a comment above a line inside the group documents that line.
 func outermost(node *ts.Node) *ts.Node {
 	out := node
 	for {
@@ -713,36 +603,32 @@ func outermost(node *ts.Node) *ts.Node {
 	}
 }
 
-// bodied returns the body documentation would be written inside.
-//
-// A grammar wraps a decorated definition in a node of its own, and the
-// body belongs to the definition inside that. Descending only through a
-// wrapper is what keeps this from finding the body of something that
-// merely has one: a Python comprehension names its element expression
-// body, and a variable bound to one is not a declaration with a body.
+// bodied returns the body of a declaration, passing through wrapper nodes
+// only. A Python comprehension names its element expression body, and a
+// variable bound to one has no body.
 func bodied(node *ts.Node) *ts.Node {
-	held := node
-	for wrapperNodes[NodeKind(held.Kind())] {
-		count := held.NamedChildCount()
+	inner := node
+	for wrapperNodes[NodeKind(inner.Kind())] {
+		count := inner.NamedChildCount()
 		if count == 0 {
 			break
 		}
-		inner := held.NamedChild(count - 1)
-		if inner == nil {
+		last := inner.NamedChild(count - 1)
+		if last == nil {
 			break
 		}
-		held = inner
+		inner = last
 	}
-	return held.ChildByFieldName(string(FieldNameBody))
+	return inner.ChildByFieldName(string(FieldNameBody))
 }
 
-// detached reports whether a blank line separates two nodes.
+// detached reports whether a blank line separates above from below.
 func detached(above, below *ts.Node) bool {
 	return below.StartPosition().Row > above.EndPosition().Row+1
 }
 
-// inside reads the documentation written as the first statement of a
-// declaration's body, which is how Python documents.
+// inside returns the docstring that opens the body of a declaration, or an
+// empty string.
 func inside(node *ts.Node, content []byte, style lang.CommentStyle) string {
 	body := bodied(node)
 	if body == nil {

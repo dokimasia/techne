@@ -6,7 +6,6 @@ package treesitter
 import (
 	"context"
 	"fmt"
-	"path"
 	"slices"
 	"strings"
 
@@ -16,53 +15,38 @@ import (
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/lang"
 )
 
-// Check reports where content stopped parsing.
+// Check returns a finding for each place where content stops parsing as the
+// language. A passing check means the files parse, not that they compile: a
+// grammar accepts code that a compiler rejects, such as a Python file with
+// an indentation error that CPython refuses.
 //
-// It is the weakest gate that is worth running and the only one a
-// grammar can serve: it says the file is still the language it was, and
-// nothing about whether it means what it did. That is enough for a
-// change that writes a comment, which fails by ending the comment early
-// and turning prose into code, and it is not enough for a change that
-// moves a name.
-//
-// What it does not catch is worth stating, because a gate is only worth
-// what it refuses. A grammar is more forgiving than a compiler:
-// tree-sitter-python accepts a file CPython rejects with an
-// IndentationError, which was measured rather than assumed. A change
-// that passes here is the language it claims to be and may still not
-// compile.
-//
-// Files this language does not claim are left alone rather than refused.
-// One change can touch several languages, and each engine judges its
-// own.
+// Check judges the files of its own language and ignores the others. It
+// returns [engine.ErrDecline] when no file is of its language. A file with
+// nil content is a deletion and has nothing to parse.
 func (e *Engine) Check(
 	ctx context.Context,
 	files map[source.Path][]byte,
 ) (engine.Result[edit.Finding], error) {
 	mine := make([]source.Path, 0, len(files))
 	for p := range files {
-		if slices.Contains(e.declared.Extensions, path.Ext(string(p))) {
+		if lang.Claims(string(p), e.declared.Extensions) {
 			mine = append(mine, p)
 		}
 	}
 	if len(mine) == 0 {
 		return engine.Result[edit.Finding]{}, fmt.Errorf(
-			"%w: nothing here is %s", engine.ErrDecline, e.declared.Language)
+			"%w: no file is %s", engine.ErrDecline, e.declared.Language)
 	}
 	slices.Sort(mine)
 
-	// A parser per file rather than one for the run: which grammar
-	// parses a file is the file's own, and a language with a dialect
-	// needs both within one check.
 	var out []edit.Finding
 	for _, p := range mine {
 		if err := ctx.Err(); err != nil {
 			return engine.Result[edit.Finding]{}, err
 		}
-		// A path with no content is one the change takes away. There is
-		// nothing to parse and nothing to object to.
 		if files[p] == nil {
 			continue
 		}
@@ -72,25 +56,16 @@ func (e *Engine) Check(
 		}
 		out = append(out, found...)
 	}
-
-	return engine.Result[edit.Finding]{
-		Items:        out,
-		Completeness: trust.ScopeTotal,
-	}, nil
+	return engine.Result[edit.Finding]{Items: out, Completeness: trust.ScopeTotal}, nil
 }
 
-// broken parses one file and reports where it stopped being the language
-// it claims to be.
+// broken parses one file with the grammar of its extension and returns a
+// finding for each fault, at most faultLimit. A finding has no fix, because
+// a file that stops parsing has no single change that repairs it.
 func (e *Engine) broken(p source.Path, content []byte) ([]edit.Finding, error) {
-	parser := ts.NewParser()
-	defer parser.Close()
-	if err := parser.SetLanguage(e.grammar.For(string(p))); err != nil {
-		return nil, fmt.Errorf("treesitter: %s: %w", p, err)
-	}
-
-	tree := parser.Parse(content, nil)
-	if tree == nil {
-		return nil, fmt.Errorf("treesitter: %s: parser returned no tree", p)
+	tree, _, err := e.parsed(p, content)
+	if err != nil {
+		return nil, err
 	}
 	defer tree.Close()
 
@@ -98,22 +73,18 @@ func (e *Engine) broken(p source.Path, content []byte) ([]edit.Finding, error) {
 	if !root.HasError() {
 		return nil, nil
 	}
-
 	walk := root.Walk()
 	defer walk.Close()
 
 	var out []edit.Finding
 	for _, node := range faults(walk, root) {
-		// No fix: a file that stopped parsing has no one obvious change
-		// that resumes it, and guessing at one would write over what the
-		// author meant.
 		out = append(out, edit.Finding{Diagnostic: diag.Diagnostic{
 			Severity: diag.SeverityError,
 			Code:     "parse",
 			Message:  fault(node, content),
 			Span:     spanOf(p, *node),
 			Source:   e.Name(),
-			Snippet:  line(content, *node),
+			Snippet:  strings.TrimRight(lang.LineAt(content, int(node.StartByte())), " \t"),
 		}})
 		if len(out) == faultLimit {
 			break
@@ -122,12 +93,9 @@ func (e *Engine) broken(p source.Path, content []byte) ([]edit.Finding, error) {
 	return out, nil
 }
 
-// faults collects the nodes a parse failed at.
-//
-// A node carrying an error is not descended into: what a grammar makes
-// of the text after it has stopped matching is not a second fault, and
-// reporting the tree beneath one broken line as twenty problems buries
-// the one.
+// faults returns the error and missing nodes under from. It does not descend
+// into an error node, because the nodes after the first fault are the
+// grammar's recovery from it, not further faults.
 func faults(walk *ts.TreeCursor, from *ts.Node) []*ts.Node {
 	if from.IsError() || from.IsMissing() {
 		return []*ts.Node{from}
@@ -144,12 +112,9 @@ func faults(walk *ts.TreeCursor, from *ts.Node) []*ts.Node {
 	return out
 }
 
-// fault says what is wrong in the words a reader can act on.
-//
-// A missing node names the token the grammar wanted and the text does
-// not have. An error node has text, so the text is what is quoted: a
-// caller reading "unexpected \"*/\"" knows where to look, and one
-// reading "ERROR" does not.
+// fault returns the message of one fault: for a missing node, the token the
+// grammar expected, and for an error node, the first line of its text, cut
+// by [lang.Clipped] to faultWidth bytes.
 func fault(node *ts.Node, content []byte) string {
 	if node.IsMissing() {
 		return fmt.Sprintf("expected %s", node.Kind())
@@ -161,38 +126,15 @@ func fault(node *ts.Node, content []byte) string {
 	if i := strings.IndexAny(text, "\n\r"); i >= 0 {
 		text = text[:i]
 	}
-	if len(text) > faultWidth {
-		text = text[:faultWidth] + "…"
-	}
-	return fmt.Sprintf("unexpected %q", text)
-}
-
-// line returns the source line a node starts on, so a caller reading a
-// fault reads the code as well as the complaint.
-func line(content []byte, node ts.Node) string {
-	start := int(node.StartByte())
-	if start < 0 || start > len(content) {
-		return ""
-	}
-	from := start
-	for from > 0 && content[from-1] != '\n' {
-		from--
-	}
-	to := start
-	for to < len(content) && content[to] != '\n' {
-		to++
-	}
-	return strings.TrimRight(string(content[from:to]), " \t\r")
+	return fmt.Sprintf("unexpected %q", lang.Clipped(text, faultWidth))
 }
 
 const (
-	// faultLimit caps how many parse faults one check reports. A gate
-	// needs one to refuse, and a file that stopped parsing on line 3
-	// produces a fault for most of what follows.
+	// faultLimit is the number of faults one file reports at most. One fault
+	// refuses a change.
 	faultLimit = 8
-	// faultWidth is how much of the offending text is quoted.
+	// faultWidth is the number of bytes of the faulty text a message quotes.
 	faultWidth = 60
 )
 
-// assert the engine serves the role it claims.
 var _ engine.Checker = (*Engine)(nil)

@@ -5,12 +5,12 @@ package treesitter
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io/fs"
 	"runtime"
 	"slices"
 	"sync"
+	"time"
 
 	ts "github.com/tree-sitter/go-tree-sitter"
 	"go.dokimi.dev/techne/core/engine"
@@ -20,263 +20,387 @@ import (
 	"go.dokimi.dev/techne/lang"
 )
 
-// Outline reports what the files in a scope declare.
+// matchedText is the note of the caveat of every outline and search.
+const matchedText = "a parser matched text, so a name that crosses a file is matched by spelling"
+
+// Outline returns the declarations in the files of a scope.
 //
-// The scope is one file or one directory. A directory is walked and
-// every file this language claims is outlined; a file the language does
-// not claim is skipped rather than refused, because a directory holding
-// several languages is the normal case.
-//
-// Coverage is total: the walk reaches every file in scope. What the
-// answer is worth is still limited by the tier, and a caveat says so. A
-// file past [lang.Largest] is named in a caveat rather than read, so one
-// bundle in a directory does not cost the rest of it an answer.
+// A directory scope includes every file of the language under it, and a
+// file scope of another language returns a result with Skipped set. The
+// coverage is total, except that a file larger than [lang.Largest] is not
+// parsed: a caveat names it and the coverage is partial.
 func (e *Engine) Outline(ctx context.Context, req engine.Request) (engine.Result[sema.Symbol], error) {
-	out, err := e.symbols(ctx, req)
+	files, err := e.walk(req)
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, err
 	}
-	return found(out.items, out.read, out.unread), nil
+	found, err := parse(ctx, e, files.Read, nil, declaredIn)
+	if err != nil {
+		return engine.Result[sema.Symbol]{}, err
+	}
+	return result(slices.Concat(found...), files, matchedText), nil
 }
 
-// symbols reads every declaration in a scope. Outline returns them as
-// they are; Search filters them.
-//
-// It reports how many files it read as well as what it found, because a
-// scope holding none of this language is a different answer from a scope
-// holding files that declare nothing.
-//
-// # Files are parsed at once
-//
-// One file's parse needs nothing from another's, and a parser is taken
-// per file rather than shared, so there is nothing to serialise. What
-// there is to bound is memory: a workspace of ten thousand files read
-// all at once is ten thousand files in memory, so as many run as the
-// machine has cores and no more.
-//
-// The order is the walk's, not the order they finished, because two
-// identical requests must answer identically.
-//
-// # A file too big to read is left out rather than refused
-//
-// One bundle in a directory would otherwise cost the whole scope its
-// answer, which is the wrong trade: the other files parsed. It is named
-// in a caveat instead, so the coverage the answer claims is the coverage
-// it has.
-func (e *Engine) symbols(ctx context.Context, req engine.Request) (symbols, error) {
-	paths, err := lang.FilesIn(e.fsys, req.Scope, e.declared.Extensions)
-	if err != nil {
-		return symbols{}, err
+// walk returns the files of the scope of req, without the files the
+// language treats as tests unless req includes them.
+func (e *Engine) walk(req engine.Request) (lang.Files, error) {
+	files, err := lang.Walk(e.fsys, req.Scope, e.declared.Extensions)
+	if err != nil || req.Tests {
+		return files, err
 	}
-	if !req.Tests {
-		paths = slices.DeleteFunc(paths, func(p source.Path) bool {
-			return e.declared.IsTest(string(p))
-		})
-	}
+	test := func(p source.Path) bool { return e.declared.IsTest(string(p)) }
+	files.Read = slices.DeleteFunc(files.Read, test)
+	files.Unread = slices.DeleteFunc(files.Unread, test)
+	return files, nil
+}
 
-	var (
-		wait   sync.WaitGroup
-		room   = make(chan struct{}, max(runtime.NumCPU(), 1))
-		held   = make([][]sema.Symbol, len(paths))
-		failed = make([]error, len(paths))
-	)
-	for at, p := range paths {
+// keep selects the declarations whose metadata a caller reads. A nil keep
+// selects every declaration.
+type keep func(d named) bool
+
+// named is what a keep reads of one declaration: its name, its qualified
+// name, its kind and its visibility.
+type named struct {
+	name, qualified string
+	kind            sema.Kind
+	visibility      sema.Visibility
+}
+
+// scan is the record of one parse of a file: the size and the modification
+// time of the file, and each distinct declaration the parse matched.
+type scan struct {
+	size     int64
+	modified time.Time
+	declared []named
+}
+
+// selects reports whether selected keeps a declaration of s.
+func (s scan) selects(selected keep) bool {
+	return slices.ContainsFunc(s.declared, selected)
+}
+
+// scans keeps the latest scan of each file that the engine parsed, until the
+// engine closes. It is safe for concurrent use.
+type scans struct {
+	mu    sync.Mutex
+	files map[source.Path]scan
+}
+
+// fresh returns the scan of the file at p, and reports whether the engine
+// scanned the file at the size and the modification time of info.
+func (s *scans) fresh(p source.Path, info fs.FileInfo) (scan, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept, known := s.files[p]
+	return kept, known && kept.size == info.Size() && kept.modified.Equal(info.ModTime())
+}
+
+// record keeps the declarations of the file at p, parsed at the size and the
+// modification time of info.
+func (s *scans) record(p source.Path, info fs.FileInfo, declared []named) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.files[p] = scan{size: info.Size(), modified: info.ModTime(), declared: declared}
+}
+
+// parse reads and parses files in parallel, at most one file per CPU, and
+// returns what visit returns for each file, in the order of files. visit
+// runs on a worker goroutine. parse returns the first error in the order of
+// files, and ctx.Err() when ctx is done before every file started.
+//
+// For a selected keep, parse does not read a file that the engine scanned at
+// its current size and modification time when selected keeps none of its
+// declarations. visit then receives nil content and no declarations.
+func parse[T any](
+	ctx context.Context,
+	e *Engine,
+	files []source.Path,
+	selected keep,
+	visit func(p source.Path, content []byte, declared []sema.Symbol) T,
+) ([]T, error) {
+	out := make([]T, len(files))
+	failed := make([]error, len(files))
+	room := make(chan struct{}, max(runtime.NumCPU(), 1))
+	var wait sync.WaitGroup
+	for at, p := range files {
 		if err := ctx.Err(); err != nil {
 			wait.Wait()
-			return symbols{}, err
+			return nil, err
 		}
-		wait.Add(1)
 		room <- struct{}{}
-		go func() {
-			defer func() { <-room; wait.Done() }()
-
-			if unreadable := lang.Readable(e.fsys, p); unreadable != nil {
-				failed[at] = unreadable
+		wait.Go(func() {
+			defer func() { <-room }()
+			info, unstated := fs.Stat(e.fsys, string(p))
+			if unstated == nil && selected != nil {
+				if kept, fresh := e.scans.fresh(p, info); fresh && !kept.selects(selected) {
+					out[at] = visit(p, nil, nil)
+					return
+				}
+			}
+			content, err := fs.ReadFile(e.fsys, string(p))
+			if err != nil {
+				failed[at] = fmt.Errorf("treesitter: read %s: %w", p, err)
 				return
 			}
-			content, readErr := fs.ReadFile(e.fsys, string(p))
-			if readErr != nil {
-				failed[at] = fmt.Errorf("treesitter: read %s: %w", p, readErr)
+			declared, all, err := e.declarations(p, content, selected)
+			if err != nil {
+				failed[at] = err
 				return
 			}
-			held[at], failed[at] = e.declarations(p, content)
-		}()
+			if unstated == nil {
+				e.scans.record(p, info, all)
+			}
+			out[at] = visit(p, content, declared)
+		})
 	}
 	wait.Wait()
-
-	out := symbols{}
-	for at, p := range paths {
-		_, large := errors.AsType[lang.LargeError](failed[at])
-		switch {
-		case large:
-			out.unread = append(out.unread, p)
-			continue
-		case failed[at] != nil:
-			return symbols{}, failed[at]
+	for _, err := range failed {
+		if err != nil {
+			return nil, err
 		}
-		out.read++
-		out.items = append(out.items, held[at]...)
 	}
 	return out, nil
 }
 
-// symbols is what a scope declared, and what reading it did not cover.
-type symbols struct {
-	items []sema.Symbol
-	// read is how many files were read, which a scope holding none of
-	// this language distinguishes from one holding files that declare
-	// nothing.
-	read int
-	// unread is the files left out because they are past [lang.Largest].
-	unread []source.Path
-}
+// declaredIn returns the declarations of one file. It is the visit function
+// of a caller that wants the declarations themselves.
+func declaredIn(_ source.Path, _ []byte, declared []sema.Symbol) []sema.Symbol { return declared }
 
-// found wraps symbols in the result every role at this tier returns.
-//
-// Coverage is total where the walk read every file in scope. What the
-// answer is worth is limited by the tier, and the caveat says so. A file
-// the walk reached and did not read makes it partial and is named,
-// because total coverage of a scope one of whose files was never opened
-// is a claim about a directory rather than about its declarations.
-//
-// A walk that read nothing says so. A scope holding no file of this
-// language is not an answer about the language, and a service merging
-// several must not let it lower what the others are worth.
-func found(items []sema.Symbol, read int, unread []source.Path) engine.Result[sema.Symbol] {
-	caveats := []trust.Caveat{{
-		Code: trust.CaveatDynamic,
-		Note: "a parser matched text: a name resolved across files is coincidence",
-	}}
-	if len(unread) > 0 {
+// result returns items with the evidence of a walk: Skipped when the scope
+// contains no file of the language, a CaveatDynamic caveat with note, and a
+// CaveatUnread caveat with partial coverage when the walk found files larger
+// than [lang.Largest].
+func result[T any](items []T, files lang.Files, note string) engine.Result[T] {
+	caveats := []trust.Caveat{{Code: trust.CaveatDynamic, Note: note}}
+	covered := trust.ScopeTotal
+	if len(files.Unread) > 0 {
+		covered = trust.ScopePartial
 		caveats = append(caveats, trust.Caveat{
 			Code:  trust.CaveatUnread,
-			Note:  "past the size an engine parses, so these declare nothing here",
-			Paths: unread,
+			Note:  fmt.Sprintf("larger than %d bytes, so not parsed", lang.Largest),
+			Paths: files.Unread,
 		})
 	}
-	covered := trust.ScopeTotal
-	if len(unread) > 0 {
-		covered = trust.ScopePartial
-	}
-	return engine.Result[sema.Symbol]{
+	return engine.Result[T]{
 		Items:        items,
-		Skipped:      read == 0,
+		Skipped:      len(files.Read) == 0 && len(files.Unread) == 0,
 		Completeness: covered,
 		Caveats:      caveats,
 	}
 }
 
-// declarations runs the tags query over one file.
-//
-// A match carries a definition capture and the name belonging to it. A
-// match missing either is skipped: a query pattern that captures a name
-// without saying what it declares describes no symbol.
-func (e *Engine) declarations(p source.Path, content []byte) ([]sema.Symbol, error) {
-	// The grammar that parses this file, which is not always the one
-	// the language leads with: a .tsx file is TypeScript and the plain
-	// TypeScript grammar does not parse it.
-	held := e.grammar.For(string(p))
-	parser := ts.NewParser()
-	defer parser.Close()
-	if err := parser.SetLanguage(held); err != nil {
-		return nil, fmt.Errorf("treesitter: %s: %w", p, err)
-	}
+// declaration is one declaration the tags query matched, before its
+// metadata is read.
+type declaration struct {
+	kind sema.Kind
+	// node is the declaring node. It is valid while the tree is open.
+	node ts.Node
+	name string
+	// receiver is the name that a [Receiver] capture gives the type of the
+	// declaration, or empty.
+	receiver string
+	// start is the first byte of the declaring node. Declarations with one
+	// start come from one statement that binds more than one name.
+	start uint
+	span  source.Span
+}
 
-	tree := parser.Parse(content, nil)
-	if tree == nil {
-		return nil, fmt.Errorf("treesitter: %s: parser returned no tree", p)
+// qualify returns the qualified name of each declaration of found, whose
+// containers are the indexes that [sema.Containers] returns. A declaration
+// is qualified by its receiver when it has one, and by the qualified name of
+// its container otherwise. An import is not qualified, because its name is a
+// path.
+func qualify(found []declaration, containers []int) []string {
+	out := make([]string, len(found))
+	done := make([]bool, len(found))
+	var of func(i int) string
+	of = func(i int) string {
+		if done[i] {
+			return out[i]
+		}
+		d, container := found[i], ""
+		switch {
+		case d.kind == sema.KindImport:
+		case d.receiver != "":
+			container = d.receiver
+		case containers[i] >= 0:
+			container = of(containers[i])
+		}
+		out[i], done[i] = sema.Qualify(container, d.name), true
+		return out[i]
+	}
+	for i := range found {
+		of(i)
+	}
+	return out
+}
+
+// declarations parses one file and returns its declarations, in the order
+// the query matched them, and each distinct declaration of the file as a keep
+// reads it.
+//
+// It matches every declaration, links each to its container, qualifies its
+// name and computes its visibility first. It then reads the metadata of the
+// declarations that selected keeps, so a caller that returns few
+// declarations reads the metadata of few.
+func (e *Engine) declarations(p source.Path, content []byte, selected keep) ([]sema.Symbol, []named, error) {
+	tree, grammar, err := e.parsed(p, content)
+	if err != nil {
+		return nil, nil, err
 	}
 	defer tree.Close()
 
-	cursor := ts.NewQueryCursor()
-	defer cursor.Close()
-
 	unit := source.Path(e.declared.Namespace(string(p)))
-	query := e.tags[held]
-	names := query.CaptureNames()
+	found := e.matched(tree, content, grammar, p)
+
+	linked := make([]sema.Symbol, len(found))
+	for i, d := range found {
+		linked[i] = sema.Symbol{Span: d.span}
+	}
+	containers := sema.Containers(linked)
+	qualified := qualify(found, containers)
+	statements := map[uint]int{}
+	for i, d := range found {
+		linked[i].ID = sema.NewID(e.declared.Language, unit, qualified[i], d.kind)
+		statements[d.start]++
+	}
+	link(linked, containers)
 
 	var out []sema.Symbol
-	// Where each symbol's declaration began, so a statement binding
-	// several names can be told from one binding a single name.
-	var from []uint
-	at := map[int]int{}
+	var all []named
+	distinct := map[named]bool{}
+	for i, d := range found {
+		one := named{
+			name:       d.name,
+			qualified:  qualified[i],
+			kind:       d.kind,
+			visibility: e.visibility(found, containers, i),
+		}
+		if !distinct[one] {
+			distinct[one] = true
+			all = append(all, one)
+		}
+		if selected != nil && !selected(one) {
+			continue
+		}
+		visibility := one.visibility
+		symbol := e.symbol(d, content, p, linked[i].ID)
+		symbol.Parent = linked[i].Parent
+		symbol.Visibility = visibility
+		if statements[d.start] > 1 {
+			// A statement that binds more than one name, such as
+			// `const a, b = 1, 2`, is the signature of none of them.
+			symbol.Signature = symbol.Name
+		}
+		out = append(out, symbol)
+	}
+	return out, all, nil
+}
+
+// parsed returns the tree of content, parsed with the grammar of the file
+// at p, and that grammar. The caller closes the tree.
+func (e *Engine) parsed(p source.Path, content []byte) (*ts.Tree, *ts.Language, error) {
+	grammar := e.grammar.For(string(p))
+	parser := ts.NewParser()
+	defer parser.Close()
+	if err := parser.SetLanguage(grammar); err != nil {
+		return nil, nil, fmt.Errorf("treesitter: %s: %w", p, err)
+	}
+	tree := parser.Parse(content, nil)
+	if tree == nil {
+		return nil, nil, fmt.Errorf("treesitter: %s: parser returned no tree", p)
+	}
+	return tree, grammar, nil
+}
+
+// contents returns the content of the file at p, and the error of
+// [lang.Readable] for a file that the workspace excludes or that is larger
+// than [lang.Largest].
+func (e *Engine) contents(p source.Path) ([]byte, error) {
+	if err := lang.Readable(e.fsys, p); err != nil {
+		return nil, err
+	}
+	content, err := fs.ReadFile(e.fsys, string(p))
+	if err != nil {
+		return nil, fmt.Errorf("treesitter: read %s: %w", p, err)
+	}
+	return content, nil
+}
+
+// matched runs the tags query over tree and returns one declaration per
+// declared name, with the kind of the highest-ranked pattern that matched
+// it, and the receiver of any pattern that captured one.
+func (e *Engine) matched(tree *ts.Tree, content []byte, grammar *ts.Language, p source.Path) []declaration {
+	query := e.tags[grammar]
+	names := query.CaptureNames()
+	cursor := ts.NewQueryCursor()
+	defer cursor.Close()
 	walk := tree.RootNode().Walk()
 	defer walk.Close()
 
+	var out []declaration
+	// index maps the offset of a declared name to its entry in out. Two
+	// patterns that match one declaration name the same identifier.
+	index := map[int]int{}
 	matches := cursor.Matches(query, tree.RootNode(), content)
 	for match := matches.Next(); match != nil; match = matches.Next() {
-		kind, node, named, span, ok := read(match, names, p)
+		got, ok := read(match, names, p)
 		if !ok {
 			continue
 		}
-
-		for _, one := range declared(node, named, walk, content) {
-			one.text = unquote(one.text)
-			if e.declared.Blank[one.text] {
+		receiver := ""
+		if got.receiver != nil {
+			receiver = got.receiver.Utf8Text(content)
+		}
+		for _, one := range bound(got.node, got.named, walk, content) {
+			name := unquote(one.text)
+			if e.declared.Blank[name] {
 				continue
 			}
-			// One declaration can match a general pattern and a specific
-			// one. Both name the same identifier, so where the name sits
-			// is what tells them apart from two declarations that happen
-			// to share a name.
-			if seen, already := at[one.at]; already {
-				if Outranks(kind, out[seen].Kind) {
-					out[seen].Kind = kind
-					out[seen].ID = sema.NewID(e.declared.Language, unit, one.text, kind)
+			if i, seen := index[one.at]; seen {
+				if MoreSpecific(got.kind, out[i].kind) {
+					out[i].kind = got.kind
+				}
+				if out[i].receiver == "" {
+					out[i].receiver = receiver
 				}
 				continue
 			}
-
-			marks := annotations(node, content, p)
-			signed := signature(node, content, marks, kind, e.declared.Comment)
-			if kind == sema.KindField {
-				marks = append(marks, tags(node, content, p)...)
-			}
-
-			at[one.at] = len(out)
-			from = append(from, node.StartByte())
-			out = append(out, sema.Symbol{
-				ID:          sema.NewID(e.declared.Language, unit, one.text, kind),
-				Name:        one.text,
-				Kind:        kind,
-				Language:    e.declared.Language,
-				Span:        span,
-				Visibility:  e.declared.Visibility(one.text),
-				Modifiers:   modifiers(node, content),
-				Annotations: marks,
-				Signature:   signed,
-				Doc:         documentation(node, content, e.declared.Comment, kind),
-				Snippet:     snippetOf(content, span),
+			index[one.at] = len(out)
+			out = append(out, declaration{
+				kind: got.kind, node: *got.node, name: name, receiver: receiver,
+				start: got.node.StartByte(), span: got.span,
 			})
 		}
 	}
-	named(out, from)
-	Parents(out)
-	return out, nil
+	return out
 }
 
-// named replaces the signature of every symbol that shares its
-// declaration with another.
-//
-// One statement can bind many names: Python writes
-// `(A, B, C) = range(3)` and Go writes `const a, b = 1, 2`. The
-// statement is the signature of none of them on its own, and reporting
-// it once per name says the whole of it three times.
-func named(symbols []sema.Symbol, from []uint) {
-	shared := map[uint]int{}
-	for _, at := range from {
-		shared[at]++
+// symbol reads the metadata of one declaration from the tree. The caller
+// sets the parent and the visibility, which depend on the other
+// declarations of the file.
+func (e *Engine) symbol(d declaration, content []byte, p source.Path, id sema.ID) sema.Symbol {
+	marks := annotations(&d.node, content, p)
+	signed := signature(&d.node, content, marks, d.kind, e.declared.Comment)
+	if d.kind == sema.KindField {
+		marks = append(marks, tags(&d.node, content, p)...)
 	}
-	for i := range symbols {
-		if i < len(from) && shared[from[i]] > 1 {
-			symbols[i].Signature = symbols[i].Name
-		}
+	return sema.Symbol{
+		ID:          id,
+		Name:        d.name,
+		Kind:        d.kind,
+		Language:    e.declared.Language,
+		Span:        d.span,
+		Modifiers:   modifiers(&d.node, content),
+		Annotations: marks,
+		Signature:   signed,
+		Doc:         documentation(&d.node, content, e.declared.Comment, d.kind),
+		Snippet:     snippetOf(content, d.span),
 	}
 }
 
-// unquote strips the quotes from a name a grammar gives as a string
-// literal. An import names its target that way in most languages, and
-// the quotes are punctuation rather than part of the name.
+// unquote removes the quotes around a name that a grammar gives as a string
+// literal, as most languages write the target of an import.
 func unquote(name string) string {
 	if len(name) >= 2 {
 		if first, last := name[0], name[len(name)-1]; first == last {
@@ -289,98 +413,78 @@ func unquote(name string) string {
 	return name
 }
 
-// identifier is one name a declaration binds, and where it sits.
+// identifier is one name a declaration binds, and the offset of the name.
 type identifier struct {
 	text string
 	at   int
 }
 
-// declared returns every name one declaration binds.
+// bound returns every name one declaration binds.
 //
-// A declaring node that names itself is believed over the capture, for
-// two reasons. Go writes `const a, b = 1, 2` as one spec carrying two
-// name fields, and a pattern binds a capture once, so the second name is
-// unreachable from the query. And an embedded field has no name field at
-// all: `struct { FileHeader }` declares FileHeader by its type, so the
-// query captures the type and this leaves it alone.
-//
-// The capture is the fallback for the many patterns whose name is not a
-// name field of the declaring node, as Python's assignment writes it
-// under left and Java's field declaration under declarator.
-func declared(node, named *ts.Node, walk *ts.TreeCursor, content []byte) []identifier {
+// A declaring node with more than one name field binds each of them, as in
+// Go's `const a, b = 1, 2`. A capture matches one node, so bound reads those
+// names from the fields. Otherwise the name capture is the name, as for
+// Python's assignment, which writes the name under left, and for Go's
+// embedded field, which has no name field.
+func bound(node, named *ts.Node, walk *ts.TreeCursor, content []byte) []identifier {
 	if fields := node.ChildrenByFieldName(string(FieldNameName), walk); len(fields) > 1 {
 		out := make([]identifier, 0, len(fields))
 		for _, field := range fields {
-			// ChildrenByFieldName hands back the separators between the
-			// fields as well as the fields, so `a, b` arrives as three
-			// nodes. Only the named ones declare anything.
+			// ChildrenByFieldName also returns the separators between the
+			// fields, which are not named nodes.
 			if !field.IsNamed() {
 				continue
 			}
-			out = append(out, identifier{
-				text: field.Utf8Text(content),
-				at:   int(field.StartByte()),
-			})
+			out = append(out, identifier{text: field.Utf8Text(content), at: int(field.StartByte())})
 		}
 		return out
 	}
 	return []identifier{{text: named.Utf8Text(content), at: int(named.StartByte())}}
 }
 
-// read pulls one match apart into the kind it declares, the node
-// declaring it, the node naming it, and the span it covers.
-//
-// It returns the two nodes rather than the name alone because a
-// declaration can bind more names than one pattern can capture.
-func read(
-	match *ts.QueryMatch,
-	names []string,
-	p source.Path,
-) (sema.Kind, *ts.Node, *ts.Node, source.Span, bool) {
-	var (
-		kind    sema.Kind
-		node    *ts.Node
-		named   *ts.Node
-		span    source.Span
-		declare bool
-	)
+// captured is what one match of the tags query captures of a declaration.
+type captured struct {
+	kind sema.Kind
+	// node is the declaring node, and named the node of its name.
+	node, named *ts.Node
+	// receiver is the node of the [Receiver] capture, or nil.
+	receiver *ts.Node
+	span     source.Span
+}
+
+// read returns what one match captures of a declaration, and reports false
+// for a match without a definition capture or without a name capture. The
+// first name capture belongs to the declaration. A later one belongs to a
+// declaration nested in it, as a field in the body of a union.
+func read(match *ts.QueryMatch, names []string, p source.Path) (captured, bool) {
+	var out captured
+	defines := false
 	for _, capture := range match.Captures {
 		index := int(capture.Index)
 		if index < 0 || index >= len(names) {
 			continue
 		}
-		name := Capture(names[index])
-		if name == Name {
-			// The first name is the one belonging to this declaration. A
-			// later one comes from a nested declaration the same match
-			// reached, as a union's body reaches its fields.
-			if named == nil {
-				named = &capture.Node
+		switch name := Capture(names[index]); name {
+		case Name:
+			if out.named == nil {
+				out.named = &capture.Node
 			}
-			continue
-		}
-		if k, ok := KindOf(name); ok && !declare {
-			kind, node, declare = k, &capture.Node, true
-			span = spanOf(p, capture.Node)
+		case Receiver:
+			if out.receiver == nil {
+				out.receiver = &capture.Node
+			}
+		default:
+			if k, ok := KindOf(name); ok && !defines {
+				out.kind, out.node, defines = k, &capture.Node, true
+				out.span = spanOf(p, capture.Node)
+			}
 		}
 	}
-	if !declare || named == nil {
-		return 0, nil, nil, source.Span{}, false
-	}
-	return kind, node, named, span, true
+	return out, defines && out.named != nil
 }
 
-// snippetOf returns the source text a span covers.
-//
-// Every symbol carries one and the output budget drops it for any detail
-// level below full, which costs a copy per declaration on a scope that
-// will not send it. The alternative is telling the engine what the
-// caller intends to print, and how an answer is rendered is not
-// something a parser should have to know.
-//
-// Offsets outside the content describe no text and yield none. They
-// should not occur: the span came from a node in the tree this content
-// was parsed into.
+// snippetOf returns the text of content that s covers, or an empty string
+// for a span outside content.
 func snippetOf(content []byte, s source.Span) string {
 	start, end := s.Start.Offset, s.End.Offset
 	if start < 0 || end > len(content) || start >= end {
@@ -389,8 +493,8 @@ func snippetOf(content []byte, s source.Span) string {
 	return string(content[start:end])
 }
 
-// spanOf converts a node's range into a span. tree-sitter counts a row
-// and a byte column, which is what source.Position holds.
+// spanOf returns the span of n in the file at p. tree-sitter counts rows and
+// byte columns, as source.Position does.
 func spanOf(p source.Path, n ts.Node) source.Span {
 	start, end := n.StartPosition(), n.EndPosition()
 	return source.Span{
@@ -408,7 +512,6 @@ func spanOf(p source.Path, n ts.Node) source.Span {
 	}
 }
 
-// assert the engine serves the role it claims.
 var _ interface {
 	engine.Engine
 	engine.Outliner

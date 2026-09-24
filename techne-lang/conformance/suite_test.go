@@ -14,30 +14,24 @@ import (
 func TestSuite(t *testing.T) {
 	t.Parallel()
 
-	t.Run("zero value", func(t *testing.T) {
+	t.Run("Suite", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("declares nothing, so a module cannot pass by supplying nothing", func(t *testing.T) {
+		t.Run("has no files and no declarations when zero", func(t *testing.T) {
 			t.Parallel()
-			var unset conformance.Suite
-			assert.Empty(t, unset.Files, "a suite with no source outlines nothing")
-			assert.Empty(t, unset.Declares, "a suite expecting nothing asserts nothing")
-			assert.Empty(t, string(unset.Declaration.Language),
-				"a suite carrying no declaration cannot register")
+			var zero conformance.Suite
+			assert.Empty(t, zero.Files, "Files")
+			assert.Empty(t, zero.Declares, "Declares")
 		})
 	})
 
 	t.Run("Declared", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("expects unknown visibility by default", func(t *testing.T) {
+		t.Run("expects VisibilityUnknown when zero", func(t *testing.T) {
 			t.Parallel()
-			// Three of the five languages spell visibility as a modifier
-			// a tags query does not capture, so unknown is the common
-			// case and the zero value matches it.
-			var unset conformance.Declared
-			assert.Equal(t, unset.Visibility, sema.VisibilityUnknown,
-				"a module that says nothing about visibility expects the answer a parser can give")
+			var zero conformance.Declared
+			assert.Equal(t, zero.Visibility, sema.VisibilityUnknown, "Visibility")
 		})
 	})
 }

@@ -3,38 +3,32 @@
 
 package treesitter
 
-// NodeKind is a node kind as a grammar names it.
-//
-// The values here are the ones this package reads directly off the tree
-// rather than through a query. A query names its own nodes and needs
-// none of them; documentation and metadata do, because both are
-// attached to a declaration rather than captured by it, and a pattern
-// per grammar per shape would be unreadable.
+// NodeKind is the kind of a node, as a grammar spells it. The engine reads
+// the nodes of these kinds from the tree to find the metadata of a
+// declaration, which a tags query does not capture.
 type NodeKind string
 
-// Node kinds that group the keywords qualifying a declaration.
-//
-// The set is taken from the grammars themselves rather than from the
-// naming convention they mostly follow. Ruby breaks that convention:
-// rescue_modifier, if_modifier and the rest are statement modifiers,
-// which qualify an expression rather than a declaration, and reading
-// their text would report `value if ready` as a keyword.
+// The kinds of the nodes that group the modifier keywords of a
+// declaration. The set lists grammar node kinds, not every kind named
+// modifier: Ruby's if_modifier and rescue_modifier qualify statements, not
+// declarations.
 const (
-	NodeModifiers             NodeKind = "modifiers"               // java, scala
-	NodeModifier              NodeKind = "modifier"                // c#
-	NodeAccessModifier        NodeKind = "access_modifier"         // scala
-	NodeVisibilityModifier    NodeKind = "visibility_modifier"     // rust
-	NodeFunctionModifiers     NodeKind = "function_modifiers"      // rust
-	NodeExternModifier        NodeKind = "extern_modifier"         // rust
-	NodeAccessibilityModifier NodeKind = "accessibility_modifier"  // typescript
-	NodeOverrideModifier      NodeKind = "override_modifier"       // typescript
-	NodeStorageClass          NodeKind = "storage_class_specifier" // c
-	NodeTypeQualifier         NodeKind = "type_qualifier"          // c
-	NodeFunctionSpecifier     NodeKind = "function_specifier"      // c
+	NodeModifiers             NodeKind = "modifiers"               // Java, Scala
+	NodeModifier              NodeKind = "modifier"                // C#
+	NodeAccessModifier        NodeKind = "access_modifier"         // Scala
+	NodeVisibilityModifier    NodeKind = "visibility_modifier"     // Rust
+	NodeFunctionModifiers     NodeKind = "function_modifiers"      // Rust
+	NodeExternModifier        NodeKind = "extern_modifier"         // Rust
+	NodeAccessibilityModifier NodeKind = "accessibility_modifier"  // TypeScript
+	NodeOverrideModifier      NodeKind = "override_modifier"       // TypeScript
+	NodeStorageClass          NodeKind = "storage_class_specifier" // C
+	NodeTypeQualifier         NodeKind = "type_qualifier"          // C
+	NodeFunctionSpecifier     NodeKind = "function_specifier"      // C
 )
 
-// Node kinds Scala gives each of its own keywords, beside the modifiers
-// node that groups the ones it shares with the other languages.
+// The kinds of the nodes that Scala gives each of its own keywords, in
+// addition to the modifiers node that groups the keywords it shares with
+// other languages.
 const (
 	NodeErasedModifier      NodeKind = "erased_modifier"
 	NodeInfixModifier       NodeKind = "infix_modifier"
@@ -45,60 +39,55 @@ const (
 	NodeTransparentModifier NodeKind = "transparent_modifier"
 )
 
-// Node kinds that carry metadata written onto a declaration.
+// The kinds of the nodes that contain an annotation of a declaration.
 const (
-	NodeAnnotation         NodeKind = "annotation"           // java, @Foo(...)
-	NodeMarkerAnnotation   NodeKind = "marker_annotation"    // java, @Foo
-	NodeDecorator          NodeKind = "decorator"            // python, typescript
-	NodeAttributeItem      NodeKind = "attribute_item"       // rust, #[...]
-	NodeInnerAttributeItem NodeKind = "inner_attribute_item" // rust, #![...]
-	NodeAttributeList      NodeKind = "attribute_list"       // c#, [Foo]
+	NodeAnnotation         NodeKind = "annotation"           // Java @Foo(x)
+	NodeMarkerAnnotation   NodeKind = "marker_annotation"    // Java @Foo
+	NodeDecorator          NodeKind = "decorator"            // Python, TypeScript
+	NodeAttributeItem      NodeKind = "attribute_item"       // Rust #[attr]
+	NodeInnerAttributeItem NodeKind = "inner_attribute_item" // Rust #![attr]
+	NodeAttributeList      NodeKind = "attribute_list"       // C# [Foo]
 )
 
-// NodeAttribute is the one annotation inside a node that groups them.
-// C# writes [Serializable, Obsolete] as one attribute_list holding two
-// of these.
+// NodeAttribute is the kind of one annotation in a group, as C# writes
+// [Serializable, Obsolete] as an attribute_list with two attribute nodes.
 const NodeAttribute NodeKind = "attribute"
 
-// Node kinds that exist only to hold a declaration together with what is
-// written above or before it. Documentation and metadata sit on the
-// wrapper rather than on the declaration inside it.
+// The kinds of the nodes that wrap a declaration together with what is
+// written before it. The documentation and the annotations of the
+// declaration belong to the wrapper.
 const (
-	NodeDecoratedDefinition NodeKind = "decorated_definition" // python
-	NodeExportStatement     NodeKind = "export_statement"     // javascript, typescript
-	NodeAmbientDeclaration  NodeKind = "ambient_declaration"  // typescript
+	NodeDecoratedDefinition NodeKind = "decorated_definition" // Python
+	NodeExportStatement     NodeKind = "export_statement"     // JavaScript, TypeScript
+	NodeAmbientDeclaration  NodeKind = "ambient_declaration"  // TypeScript
 )
 
-// Node kinds that make up a Python docstring: the first statement in a
-// body, which is a bare string expression.
+// The kinds of the nodes of a Python docstring: an expression statement,
+// first in a body, that contains a string.
 const (
-	NodeExpressionStatement NodeKind = "expression_statement" // python
-	NodeString              NodeKind = "string"               // python
+	NodeExpressionStatement NodeKind = "expression_statement"
+	NodeString              NodeKind = "string"
 )
 
-// FieldName is a field a grammar names on one of its nodes.
+// FieldName is the name of a field of a node, as a grammar spells it.
 type FieldName string
 
 const (
-	// FieldNameName is the field naming what a node declares. A node
-	// carrying several is how Go writes `const a, b = 1, 2`.
+	// FieldNameName is the field of a declared name. A node with more than
+	// one declares each of them, as Go writes `const a, b = 1, 2`.
 	FieldNameName FieldName = "name"
-	// FieldNameTag is Go's struct tag, written after the field.
+	// FieldNameTag is the field of the struct tag of a Go field.
 	FieldNameTag FieldName = "tag"
-	// FieldNameBody is the block a declaration's documentation sits in
-	// where the language writes it inside rather than above.
+	// FieldNameBody is the field of the body of a declaration.
 	FieldNameBody FieldName = "body"
 )
 
-// Modifier is a keyword qualifying a declaration.
-//
-// A grammar spells most of these as anonymous tokens, which carry no
-// field and no useful kind, so they are matched by the text they are
-// written as. The set is shared across languages because the words do
-// not collide: a grammar that has no such keyword produces no anonymous
-// token for it, so the word simply never matches there.
+// Modifier is a modifier keyword, as a language writes it. Grammars write
+// most modifiers as anonymous tokens, which the engine matches by text. The
+// words of the languages do not collide, so one set serves every language.
 type Modifier string
 
+// The modifier keywords the engine reads.
 const (
 	ModifierAbstract     Modifier = "abstract"
 	ModifierAsync        Modifier = "async"
@@ -138,7 +127,8 @@ const (
 	ModifierVolatile     Modifier = "volatile"
 )
 
-// modifierNodes group keywords into a node of their own.
+// modifierNodes contains the kinds of the nodes that group modifier
+// keywords.
 var modifierNodes = map[NodeKind]bool{
 	NodeModifiers:             true,
 	NodeModifier:              true,
@@ -160,7 +150,8 @@ var modifierNodes = map[NodeKind]bool{
 	NodeTransparentModifier:   true,
 }
 
-// annotationNodes carry metadata written onto a declaration.
+// annotationNodes contains the kinds of the nodes that contain an
+// annotation.
 var annotationNodes = map[NodeKind]bool{
 	NodeAnnotation:         true,
 	NodeMarkerAnnotation:   true,
@@ -170,14 +161,15 @@ var annotationNodes = map[NodeKind]bool{
 	NodeAttributeList:      true,
 }
 
-// wrapperNodes hold a declaration together with what precedes it.
+// wrapperNodes contains the kinds of the nodes that wrap a declaration.
 var wrapperNodes = map[NodeKind]bool{
 	NodeDecoratedDefinition: true,
 	NodeExportStatement:     true,
 	NodeAmbientDeclaration:  true,
 }
 
-// modifierWords is the set matched against anonymous tokens.
+// modifierWords contains the text of every Modifier, matched against
+// anonymous tokens.
 var modifierWords = map[string]bool{
 	string(ModifierAbstract): true, string(ModifierAsync): true,
 	string(ModifierAuto): true, string(ModifierCase): true,
@@ -199,42 +191,37 @@ var modifierWords = map[string]bool{
 	string(ModifierVirtual): true, string(ModifierVolatile): true,
 }
 
-// Punctuation each language wraps its metadata in, and what a Go struct
-// tag is written with.
+// The punctuation of annotations, struct tags and signatures, and the depth
+// at which a signature finds its body.
 const (
 	rustAttributeOpen      = "#["
 	rustInnerAttributeOpen = "#!["
 	attributeOpen          = "["
 	attributeClose         = "]"
 	annotationPrefix       = "@"
-	// annotationBreak ends the name and begins the arguments.
+	// annotationBreak ends the name of an annotation and starts its
+	// arguments.
 	annotationBreak = "( \t\n{"
-	// annotationQualifier separates the segments of a qualified name.
+	// annotationQualifier separates the segments of a qualified annotation
+	// name.
 	annotationQualifier = ".:"
-	// blockOpen is the punctuation a language groups with. A signature
-	// never climbs across one, because a parent reaching this node
-	// through one has opened something this node is inside.
+	// blockOpen are the brackets that open a group. A signature does not
+	// climb to a parent that writes one before the declaration.
 	blockOpen = "{(["
-	// bodyOpen is the brace a language opens a body with, and is where
-	// a declaration whose body the grammar does not name ends.
+	// bodyOpen opens the body of an aggregate whose grammar names no body
+	// field.
 	bodyOpen = '{'
-	// signatureLimit is how long a signature may run before it stops
-	// being one. A declaration written past it is a value spelled out,
-	// and the whole of it is one read away.
-	signatureLimit = 240
-	// bodyDepth bounds how far below a declaring node its body may sit.
-	// Go puts a struct's fields two levels down; past that the search
-	// would find the body of something nested inside the declaration.
+	// bodyDepth is the number of levels below a declaring node at which
+	// bodyOf looks for the body.
 	bodyDepth = 2
-	// signatureTail is the punctuation left dangling when a body is
-	// removed. It holds no > and no -, because those close a generic
-	// and Box<dyn Error>, Promise<any> and Map<String, Object> all end
-	// in one.
+	// signatureTail is the punctuation that trimmed removes from the end of
+	// a signature. It excludes > and -, which end a generic such as
+	// Box<dyn Error>.
 	signatureTail = " \t\n\r{(=:"
-	// tagSeparator ends a Go struct tag's key.
+	// tagSeparator ends the key of a struct tag pair.
 	tagSeparator = ":"
-	// tagQuote opens and closes a struct tag value, and tagEscape is
-	// what stops one inside a value from closing it.
+	// tagQuote opens and closes the value of a struct tag pair, and
+	// tagEscape escapes a quote inside it.
 	tagQuote  = '"'
 	tagEscape = '\\'
 )

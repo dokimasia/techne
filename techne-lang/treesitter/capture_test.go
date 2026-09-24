@@ -17,11 +17,8 @@ func TestCapture(t *testing.T) {
 	t.Run("KindOf", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("maps a definition capture to the kind it declares", func(t *testing.T) {
+		t.Run("returns the kind of each definition capture", func(t *testing.T) {
 			t.Parallel()
-			// These names come from the tags queries the grammars ship.
-			// The engine follows their convention rather than asking a
-			// language module to rewrite its query.
 			for capture, want := range map[treesitter.Capture]sema.Kind{
 				treesitter.DefinitionFunction:      sema.KindFunction,
 				treesitter.DefinitionMethod:        sema.KindMethod,
@@ -29,6 +26,8 @@ func TestCapture(t *testing.T) {
 				treesitter.DefinitionType:          sema.KindType,
 				treesitter.DefinitionStruct:        sema.KindStruct,
 				treesitter.DefinitionUnion:         sema.KindUnion,
+				treesitter.DefinitionClass:         sema.KindStruct,
+				treesitter.DefinitionObject:        sema.KindModule,
 				treesitter.DefinitionEnum:          sema.KindEnum,
 				treesitter.DefinitionEnumMember:    sema.KindEnumMember,
 				treesitter.DefinitionInterface:     sema.KindInterface,
@@ -46,62 +45,18 @@ func TestCapture(t *testing.T) {
 				treesitter.DefinitionMacro:         sema.KindMacro,
 				treesitter.DefinitionImplement:     sema.KindImplementation,
 			} {
-				got, declares := treesitter.KindOf(capture)
-				assert.True(t, declares, "a capture the grammars' own tags queries use declares a symbol")
-				assert.Equal(t, got, want, "a capture maps to the kind the shared vocabulary carries for it")
+				got, ok := treesitter.KindOf(capture)
+				assert.True(t, ok, string(capture))
+				assert.Equal(t, got, want, string(capture))
 			}
 		})
 
-		t.Run("maps the shapes one kind carries onto that kind", func(t *testing.T) {
+		t.Run("returns false for a capture without a kind", func(t *testing.T) {
 			t.Parallel()
-			// A class, a Scala object and a Go struct are one shape here:
-			// a named aggregate of fields and methods. Telling them apart
-			// would mean a caller searching for that shape had to know
-			// which language answered.
-			for _, capture := range []treesitter.Capture{
-				treesitter.DefinitionClass,
-				treesitter.DefinitionObject,
-				treesitter.DefinitionStruct,
-			} {
-				got, declares := treesitter.KindOf(capture)
-				assert.True(t, declares, "each of these names an aggregate some grammar declares")
-				assert.Equal(t, got, sema.KindStruct,
-					"a caller searching for a shape must not have to know which language answered")
-			}
-		})
-
-		t.Run("rejects the name capture, which declares nothing", func(t *testing.T) {
-			t.Parallel()
-			// @name is the identifier belonging to a definition, not a
-			// definition itself. Treating it as one would emit a symbol
-			// per name.
-			_, declares := treesitter.KindOf(treesitter.Name)
-			assert.False(t, declares, "the identifier belongs to a definition rather than being one")
-		})
-
-		t.Run("rejects a capture no grammar declares", func(t *testing.T) {
-			t.Parallel()
-			// A mistyped capture must not silently map to a kind. An
-			// engine that found nothing is the hardest failure to
-			// notice in a system whose job includes reporting that it
-			// found nothing.
-			for _, unknown := range []treesitter.Capture{
-				"definition.widget", "reference.call", "", "definition",
-			} {
-				_, declares := treesitter.KindOf(unknown)
-				assert.False(t, declares,
-					"a mistyped capture mapping to a kind would produce an engine that silently finds nothing")
-			}
-		})
-
-		t.Run("maps every declared definition capture", func(t *testing.T) {
-			t.Parallel()
-			// The list and the table are two places one convention is
-			// written. A capture in one and not the other is a silent
-			// gap.
-			for _, c := range treesitter.Definitions() {
-				_, declares := treesitter.KindOf(c)
-				assert.True(t, declares, "the list and the table are one convention written twice")
+			captures := []treesitter.Capture{treesitter.Name, "definition.widget", "reference.call", "", "definition"}
+			for _, c := range captures {
+				_, ok := treesitter.KindOf(c)
+				assert.False(t, ok, string(c))
 			}
 		})
 	})
@@ -109,11 +64,64 @@ func TestCapture(t *testing.T) {
 	t.Run("Definitions", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("excludes the name capture", func(t *testing.T) {
+		t.Run("lists only captures with a kind", func(t *testing.T) {
 			t.Parallel()
 			for _, c := range treesitter.Definitions() {
-				assert.NotEqual(t, c, treesitter.Name, "the identifier capture declares no symbol")
+				_, ok := treesitter.KindOf(c)
+				assert.True(t, ok, string(c))
 			}
 		})
+
+		t.Run("lists every capture with the definition prefix once", func(t *testing.T) {
+			t.Parallel()
+			seen := map[treesitter.Capture]bool{}
+			for _, c := range treesitter.Definitions() {
+				assert.HasPrefix(t, string(c), treesitter.DefinitionPrefix, string(c))
+				assert.False(t, seen[c], string(c))
+				seen[c] = true
+			}
+		})
+	})
+
+	t.Run("MoreSpecific", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name      string
+			candidate sema.Kind
+			current   sema.Kind
+			want      bool
+		}{
+			{
+				name:      "returns true for a constant over a field",
+				candidate: sema.KindConstant,
+				current:   sema.KindField,
+				want:      true,
+			},
+			{
+				name:      "returns true for a parameter over a variable",
+				candidate: sema.KindParameter,
+				current:   sema.KindVariable,
+				want:      true,
+			},
+			{
+				name:      "returns true for any kind over KindUnknown",
+				candidate: sema.KindImport,
+				current:   sema.KindUnknown,
+				want:      true,
+			},
+			{
+				name:      "returns false for an import over a function",
+				candidate: sema.KindImport,
+				current:   sema.KindFunction,
+			},
+			{name: "returns false for a kind over itself", candidate: sema.KindMethod, current: sema.KindMethod},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, treesitter.MoreSpecific(tt.candidate, tt.current), tt.want, "MoreSpecific")
+			})
+		}
 	})
 }

@@ -6,65 +6,77 @@ package treesitter
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
+	"go.dokimi.dev/techne/core/trust"
 )
 
-// Search reports the declarations in a scope matching a query, best
-// match first.
+// Search returns the declarations in a scope that match a query, best match
+// first.
 //
-// An engine returns its own best order and nothing re-ranks it. A
-// language server ranks with more to go on than a parser has; overriding
-// that would throw away what it knows.
+// A name matches in rank order: the exact text, the text with case folded,
+// a prefix, then a substring. Within one rank a shorter name comes first,
+// and the ID breaks the remaining ties, so identical requests return
+// identical answers. An empty text matches every name. Without q.Private,
+// Search leaves out the declarations that Outline reports as
+// sema.Unexported. Search reads the metadata of matching declarations only.
 //
-// Ranking here is by how the name matched. A literal match beats one
-// that needed folding, because a language where store and Store are two
-// declarations means the caller who typed one wanted that one. Below
-// those come prefix and substring, and a shorter name sorts before a
-// longer one at the same rank so Get comes above GetOrCreate. Identity
-// breaks any remaining tie, so two identical requests answer
-// identically.
+// When q.Limit cuts the list, a caveat states how many of the matches the
+// result contains.
 func (e *Engine) Search(ctx context.Context, req engine.Request, q engine.Query) (engine.Result[sema.Symbol], error) {
-	all, err := e.symbols(ctx, req)
+	files, err := e.walk(req)
+	if err != nil {
+		return engine.Result[sema.Symbol]{}, err
+	}
+	wanted := func(d named) bool {
+		return (q.Kind == sema.KindUnknown || d.kind == q.Kind) &&
+			(q.Private || d.visibility != sema.Unexported) &&
+			rank(d.name, q.Text) != noMatch
+	}
+	found, err := parse(ctx, e, files.Read, wanted, declaredIn)
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, err
 	}
 
-	matched := make([]sema.Symbol, 0, len(all.items))
-	for _, s := range all.items {
-		if q.Kind != sema.KindUnknown && s.Kind != q.Kind {
-			continue
-		}
-		if !q.Private && s.Visibility == sema.Unexported {
-			continue
-		}
-		if q.Text != "" && rank(s.Name, q.Text) == noMatch {
-			continue
-		}
-		matched = append(matched, s)
+	type ranked struct {
+		symbol sema.Symbol
+		rank   int
 	}
-
-	slices.SortStableFunc(matched, func(a, b sema.Symbol) int {
-		if byRank := cmp.Compare(rank(a.Name, q.Text), rank(b.Name, q.Text)); byRank != 0 {
-			return byRank
-		}
-		if byLength := cmp.Compare(len(a.Name), len(b.Name)); byLength != 0 {
-			return byLength
-		}
-		return cmp.Compare(a.ID, b.ID)
+	var matches []ranked
+	for _, symbol := range slices.Concat(found...) {
+		matches = append(matches, ranked{symbol: symbol, rank: rank(symbol.Name, q.Text)})
+	}
+	slices.SortStableFunc(matches, func(a, b ranked) int {
+		return cmp.Or(
+			cmp.Compare(a.rank, b.rank),
+			cmp.Compare(len(a.symbol.Name), len(b.symbol.Name)),
+			cmp.Compare(a.symbol.ID, b.symbol.ID),
+		)
 	})
 
-	if q.Limit > 0 && len(matched) > q.Limit {
-		matched = matched[:q.Limit]
+	total := len(matches)
+	if q.Limit > 0 && total > q.Limit {
+		matches = matches[:q.Limit]
 	}
-	return found(matched, all.read, all.unread), nil
+	items := make([]sema.Symbol, len(matches))
+	for i, m := range matches {
+		items[i] = m.symbol
+	}
+	out := result(items, files, matchedText)
+	if len(items) < total {
+		out.Caveats = append(out.Caveats, trust.Caveat{
+			Code: trust.CaveatTruncated,
+			Note: fmt.Sprintf("%d of %d matches returned", len(items), total),
+		})
+	}
+	return out, nil
 }
 
-// How a name matched, lowest first. noMatch sorts last and is filtered
-// out before ranking ever sees it.
+// The ranks of a name match, best first.
 const (
 	literal = iota
 	folded
@@ -73,8 +85,8 @@ const (
 	noMatch
 )
 
-// rank reports how a name matched the wanted text. An empty query
-// matches everything equally.
+// rank returns how name matches wanted, and literal for every name when
+// wanted is empty.
 func rank(name, wanted string) int {
 	if wanted == "" {
 		return literal

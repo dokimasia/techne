@@ -16,108 +16,103 @@ import (
 	"go.dokimi.dev/techne/lang"
 )
 
-// Engine answers about one language by parsing it.
+// Engine is the syntactic engine of one language. It reads files through an
+// io/fs.FS rooted at the workspace. It is safe for concurrent use: every
+// call takes its own parser, because a tree-sitter parser contains the
+// state of one parse.
 //
-// It holds a compiled query and is safe for concurrent use. A parser is
-// taken per call rather than shared, because a tree-sitter parser holds
-// the state of one parse.
-//
-// Files are read through an [io/fs.FS] rooted at the workspace, so paths
-// crossing a port stay relative and a caller can serve a tree that is
-// not on disk.
+// The engine keeps the names, kinds and visibilities of the declarations of
+// each file it parses. A search, a relation of imports and the lookup of a
+// plan target read a file again only when its size or its modification time
+// changed, or when it declares a name that the call selects.
 type Engine struct {
 	fsys     fs.FS
 	declared lang.Declaration
 	grammar  Grammar
-	// tags is the compiled query per grammar. A query is compiled
-	// against one grammar and cannot be used with another, so a language
-	// that declares a dialect has one for each.
-	tags map[*ts.Language]*ts.Query
+	// tags is the compiled query of each grammar. A query compiles against
+	// one grammar, so a language with a dialect has one query per grammar.
+	tags  map[*ts.Language]*ts.Query
+	scans scans
 }
 
-// ErrUnknownCapture reports a query naming a definition capture the
-// vocabulary does not carry.
+// ErrUnknownCapture reports a query with a definition capture that no kind
+// covers.
 var ErrUnknownCapture = errors.New("treesitter: unknown definition capture")
 
-// New compiles a grammar's queries and returns the engine serving them.
+// New compiles the tags query of g for each of its grammars and returns the
+// engine. It returns an error for a nil fsys, an incomplete declaration, a
+// grammar that lacks a language or a query, and a query that does not
+// compile. It returns [ErrUnknownCapture] for a definition capture that no
+// kind covers, because such a capture matches and is dropped.
 //
-// A query that does not compile is a mistake in a language module.
-// Failing here rather than returning no results at run time is the
-// difference between a caught bug and a language that silently answers
-// nothing.
-//
-// The caller closes the engine when it is finished with it.
+// The caller calls Close when it no longer needs the engine.
 func New(fsys fs.FS, d lang.Declaration, g Grammar) (*Engine, error) {
 	switch {
 	case fsys == nil:
 		return nil, fmt.Errorf("treesitter: no filesystem to read from")
 	case d.Language == "":
-		return nil, fmt.Errorf("treesitter: declaration names no language")
+		return nil, fmt.Errorf("treesitter: declaration has no language")
 	case len(d.Extensions) == 0:
 		return nil, fmt.Errorf("treesitter: %q declares no extension", d.Language)
 	case d.Namespace == nil || d.Visibility == nil:
-		return nil, fmt.Errorf("treesitter: %q declares no conventions", d.Language)
+		return nil, fmt.Errorf("treesitter: %q declares no Namespace or no Visibility", d.Language)
 	case g.Language == nil:
 		return nil, fmt.Errorf("treesitter: %q supplies no grammar", d.Language)
 	case g.Tags == "":
 		return nil, fmt.Errorf("treesitter: %q supplies no tags query", d.Language)
 	}
 
-	held := &Engine{fsys: fsys, declared: d, grammar: g, tags: map[*ts.Language]*ts.Query{}}
-	for _, one := range g.each() {
-		if one == nil {
-			held.Close()
-			return nil, fmt.Errorf("treesitter: %q declares a dialect with no grammar", d.Language)
+	e := &Engine{
+		fsys: fsys, declared: d, grammar: g, tags: map[*ts.Language]*ts.Query{},
+		scans: scans{files: map[source.Path]scan{}},
+	}
+	for _, grammar := range g.each() {
+		if grammar == nil {
+			e.Close()
+			return nil, fmt.Errorf("treesitter: %q declares a dialect without a grammar", d.Language)
 		}
-		q, qerr := ts.NewQuery(one, g.Tags)
+		q, qerr := ts.NewQuery(grammar, g.Tags)
 		if qerr != nil {
-			held.Close()
+			e.Close()
 			return nil, fmt.Errorf("treesitter: %q tags query: %w", d.Language, *qerr)
 		}
-		// A query naming a definition capture the vocabulary does not
-		// carry would match and then be dropped, so the pattern would
-		// find nothing and say nothing. That is the hardest failure to
-		// notice in a system whose job includes reporting that it found
-		// nothing, so it is refused here instead.
 		for _, name := range q.CaptureNames() {
 			if !strings.HasPrefix(name, DefinitionPrefix) {
 				continue
 			}
 			if _, known := KindOf(Capture(name)); !known {
 				q.Close()
-				held.Close()
-				return nil, fmt.Errorf("%w: %q captures @%s, which no kind carries",
-					ErrUnknownCapture, d.Language, name)
+				e.Close()
+				return nil, fmt.Errorf("%w: %q captures @%s", ErrUnknownCapture, d.Language, name)
 			}
 		}
-		held.tags[one] = q
+		e.tags[grammar] = q
 	}
-	return held, nil
+	return e, nil
 }
 
-// Close releases the compiled queries. Calling it twice is safe.
+// Close releases the compiled queries and the kept declarations. It is safe
+// to call more than once.
 func (e *Engine) Close() {
 	for _, q := range e.tags {
 		q.Close()
 	}
 	clear(e.tags)
+	e.scans.mu.Lock()
+	clear(e.scans.files)
+	e.scans.mu.Unlock()
 }
 
-// Name identifies this engine in a provenance and a capability report.
-//
-// One adapter serves every grammar, so the name carries the language it
-// was built for. Without it five instances would share one name, the
-// catalogue would refuse all but the first, and a provenance would not
-// say which answered.
+// Name returns "treesitter/" followed by the language, so the engines of
+// two languages have distinct names in one catalogue.
 func (e *Engine) Name() string { return "treesitter/" + string(e.declared.Language) }
 
-// Language is the one language this engine answers about.
+// Language returns the language of the engine.
 func (e *Engine) Language() source.Language { return e.declared.Language }
 
-// Fidelity is [trust.Syntactic] for every role. A parser matched text,
-// so a name resolved across files is coincidence and an empty answer
-// never proves absence.
+// Fidelity returns [trust.Syntactic] for every role.
 func (*Engine) Fidelity(engine.Role) trust.Fidelity { return trust.Syntactic }
 
-// Cost is [engine.CostParse]: one parse per file in scope.
+// Cost returns [engine.CostParse] for every role: one parse per file in
+// scope.
 func (*Engine) Cost(engine.Role) engine.Cost { return engine.CostParse }

@@ -5,20 +5,21 @@ package treesitter
 
 import "go.dokimi.dev/techne/core/sema"
 
-// Capture is a capture name in a tags query.
-//
-// The names follow the convention the grammars' own tags queries use. A
-// module starts from upstream's query and extends it, because upstream
-// aims at code navigation and stops well short of the vocabulary: the
-// Go query tags a constant's name without saying it declares one, and
-// the Rust query calls a struct, an enum, a union and a type alias all
-// the same thing.
+// Capture is a capture name of a tags query. The names follow the
+// convention of the tags queries in the grammar repositories, extended with
+// the kinds those queries do not distinguish, such as constants and unions.
 type Capture string
 
 const (
-	// Name is the identifier belonging to a definition. It declares
-	// nothing on its own.
+	// Name captures the identifier of a definition. It defines nothing on
+	// its own.
 	Name Capture = "name"
+
+	// Receiver captures the name of the type that a definition belongs to
+	// when the syntax writes the definition outside the type, as Go writes a
+	// method. The type is the container in the qualified name of the
+	// definition. It defines nothing on its own.
+	Receiver Capture = "receiver"
 
 	DefinitionFunction      Capture = "definition.function"
 	DefinitionMethod        Capture = "definition.method"
@@ -46,23 +47,16 @@ const (
 	DefinitionImplement     Capture = "definition.implementation"
 )
 
-// DefinitionPrefix marks a capture as one that declares something. A
-// capture carrying it that the vocabulary does not know is a mistake in
-// a query rather than a capture to pass over, and [New] refuses it.
+// DefinitionPrefix starts every definition capture. [New] refuses a query
+// with a capture that starts with it and has no kind.
 const DefinitionPrefix = "definition."
 
-// kinds is the single definition point mapping a capture to what it
-// declares.
-//
-// Two captures map onto one kind where a grammar draws a distinction the
-// shared vocabulary does not carry. A class is a [sema.KindStruct]: a
-// Java class and a Go struct are one shape here, a named aggregate of
-// fields and methods, and mapping them apart would mean a caller
-// searching for that shape had to know which language answered. A Scala
-// object is a singleton, which is that same shape.
-//
-// [sema.KindType] is what is left over: an alias, a bound, a type-level
-// expression.
+// kinds maps each definition capture to the kind it defines, with
+// [sema.KindStruct] for classes as well as structs. A caller finds the named
+// aggregate of fields and methods by one kind in every language. A Scala
+// object is [sema.KindModule], as metals reports it, so a class and its
+// companion object differ by kind. [sema.KindType] covers aliases, bounds
+// and type expressions.
 var kinds = map[Capture]sema.Kind{
 	DefinitionFunction:      sema.KindFunction,
 	DefinitionMethod:        sema.KindMethod,
@@ -71,7 +65,7 @@ var kinds = map[Capture]sema.Kind{
 	DefinitionStruct:        sema.KindStruct,
 	DefinitionUnion:         sema.KindUnion,
 	DefinitionClass:         sema.KindStruct,
-	DefinitionObject:        sema.KindStruct,
+	DefinitionObject:        sema.KindModule,
 	DefinitionEnum:          sema.KindEnum,
 	DefinitionEnumMember:    sema.KindEnumMember,
 	DefinitionInterface:     sema.KindInterface,
@@ -90,22 +84,15 @@ var kinds = map[Capture]sema.Kind{
 	DefinitionImplement:     sema.KindImplementation,
 }
 
-// precedence ranks how much a kind says about a declaration.
-//
-// A query needs one pattern per shape, and a pattern cannot say what it
-// is not: tree-sitter matches node types, and there is no way to write
-// "a type_spec that is not a struct" or "a function not inside a class".
-// The general pattern therefore also matches what the specific one
-// matches, and both reach the engine for one declaration. The higher
-// rank is the one kept.
-//
-// Kinds absent here rank zero, which is right for [sema.KindUnknown]: it
-// never displaces anything, and anything displaces it.
+// precedence contains the rank of each kind for [MoreSpecific]. A pattern
+// cannot exclude the shapes of a more specific pattern, so two patterns can
+// match one declaration, and the declaration takes the kind with the higher
+// rank. A kind absent from the map ranks zero, which puts KindUnknown below
+// every kind.
 var precedence = map[sema.Kind]int{
 	sema.KindType: 1,
 
-	// A binding that does not leave its scope never displaces a
-	// declaration that does, so these sit below everything else.
+	// Bindings local to a scope rank below every declaration.
 	sema.KindTypeParameter: 1,
 	sema.KindImport:        1,
 	sema.KindLabel:         1,
@@ -113,10 +100,8 @@ var precedence = map[sema.Kind]int{
 	sema.KindFunction: 2,
 	sema.KindVariable: 2,
 
-	// A destructured parameter matches the general pattern for a
-	// destructured binding as well as the one for a parameter. Inside a
-	// signature, parameter is the more specific answer; nowhere else do
-	// the two compete.
+	// A destructured parameter also matches the pattern of a destructured
+	// binding.
 	sema.KindParameter: 3,
 
 	sema.KindStruct:         4,
@@ -134,32 +119,26 @@ var precedence = map[sema.Kind]int{
 	sema.KindMacro:          4,
 	sema.KindImplementation: 4,
 
-	// A constant outranks the field or variable it is also spelled as.
-	// Java writes one as `static final`, so both patterns match, and a
-	// tie would leave the kind to whichever match arrived first.
+	// A Java constant, written as a static final field, also matches the
+	// field pattern.
 	sema.KindConstant: 5,
 }
 
-// Outranks reports whether one kind says more about a declaration than
-// another, and so should replace it.
-func Outranks(candidate, held sema.Kind) bool {
-	return precedence[candidate] > precedence[held]
+// MoreSpecific reports whether candidate is more specific than current, so
+// that candidate replaces current as the kind of one declaration.
+func MoreSpecific(candidate, current sema.Kind) bool {
+	return precedence[candidate] > precedence[current]
 }
 
-// KindOf reports what a definition capture declares.
-//
-// It reports false for [Name], which belongs to a definition rather than
-// being one, and for any capture no grammar declares. A mistyped capture
-// must not map to a kind: an engine that silently finds nothing is the
-// hardest failure to notice in a system whose job includes reporting
-// that it found nothing.
+// KindOf returns the kind that a definition capture defines. It reports
+// false for [Name] and for any capture without a kind.
 func KindOf(c Capture) (sema.Kind, bool) {
-	kind, declared := kinds[c]
-	return kind, declared
+	kind, ok := kinds[c]
+	return kind, ok
 }
 
-// Definitions returns every capture that declares a symbol, so a caller
-// can check a query against the set the engine understands.
+// Definitions returns every definition capture, so a caller can check a
+// query against the captures the engine reads.
 func Definitions() []Capture {
 	return []Capture{
 		DefinitionFunction, DefinitionMethod, DefinitionConstructor,

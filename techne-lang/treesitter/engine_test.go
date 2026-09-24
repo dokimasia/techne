@@ -4,31 +4,26 @@
 package treesitter_test
 
 import (
-	"strings"
 	"testing"
 	"testing/fstest"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/techne/core/sema"
-	"go.dokimi.dev/techne/core/source"
+	"go.dokimi.dev/techne/core/engine"
+	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/lang"
 	"go.dokimi.dev/techne/lang/treesitter"
 )
 
-// complete returns a declaration a case can spoil one field of. It
-// carries no grammar: a grammar belongs to a language module, and this
-// module must not depend on one.
+// complete returns a declaration without a grammar. The package tests use
+// no grammar, because the grammars are in the language modules.
 func complete() lang.Declaration {
 	return lang.Declaration{
-		Language:   source.Language("fixture"),
+		Language:   "fixture",
 		Extensions: []string{".fx"},
-		Comment: lang.CommentStyle{
-			Line: "// ", BlockOpen: "/*", BlockClose: "*/",
-			Doc: []lang.DocStyle{{Open: "//"}},
-		},
-		IsTest:     func(string) bool { return false },
-		Namespace:  func(p string) string { return strings.TrimSuffix(p, ".fx") },
-		Visibility: visibility,
+		Comment:    lang.CommentStyle{Line: "// ", Doc: []lang.DocStyle{{Open: "//"}}},
+		IsTest:     lang.JavaScriptTest,
+		Namespace:  lang.Stem,
+		Visibility: lang.VisibilityByModifier,
 	}
 }
 
@@ -38,58 +33,78 @@ func TestEngine(t *testing.T) {
 	t.Run("New", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("refuses a language module that supplies no grammar", func(t *testing.T) {
+		t.Run("returns an error for a grammar without a language", func(t *testing.T) {
 			t.Parallel()
-			// Every mistake in a language module should surface at
-			// startup. A nil grammar would surface as a crash on the
-			// first parse instead.
-			for _, g := range []treesitter.Grammar{
-				{},
-				{Tags: "(identifier) @name"},
-			} {
-				_, err := treesitter.New(fstest.MapFS{}, complete(), g)
-				assert.HasError(t, err,
-					"a nil grammar would surface as a crash on the first parse rather than at startup")
-			}
+			_, err := treesitter.New(fstest.MapFS{}, complete(), treesitter.Grammar{Tags: "(identifier) @name"})
+			assert.HasError(t, err, "New")
 		})
 
-		t.Run("refuses an incomplete declaration", func(t *testing.T) {
-			t.Parallel()
-			for name, spoil := range map[string]func(*lang.Declaration){
-				"language":   func(d *lang.Declaration) { d.Language = "" },
-				"extensions": func(d *lang.Declaration) { d.Extensions = nil },
-				"Namespace":  func(d *lang.Declaration) { d.Namespace = nil },
-				"Visibility": func(d *lang.Declaration) { d.Visibility = nil },
-			} {
+		incomplete := []struct {
+			name  string
+			spoil func(*lang.Declaration)
+		}{
+			{
+				name:  "returns an error for a declaration without a language",
+				spoil: func(d *lang.Declaration) { d.Language = "" },
+			},
+			{
+				name:  "returns an error for a declaration without an extension",
+				spoil: func(d *lang.Declaration) { d.Extensions = nil },
+			},
+			{
+				name:  "returns an error for a declaration without Namespace",
+				spoil: func(d *lang.Declaration) { d.Namespace = nil },
+			},
+			{
+				name:  "returns an error for a declaration without Visibility",
+				spoil: func(d *lang.Declaration) { d.Visibility = nil },
+			},
+		}
+		for _, tt := range incomplete {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
 				d := complete()
-				spoil(&d)
-				_ = name
+				tt.spoil(&d)
 				_, err := treesitter.New(fstest.MapFS{}, d, treesitter.Grammar{})
-				assert.HasError(t, err, "every mistake in a language module surfaces at startup")
-			}
-		})
+				assert.HasError(t, err, "New")
+			})
+		}
 
-		t.Run("refuses no filesystem to read from", func(t *testing.T) {
+		t.Run("returns an error for a nil filesystem", func(t *testing.T) {
 			t.Parallel()
 			_, err := treesitter.New(nil, complete(), treesitter.Grammar{})
-			assert.HasError(t, err, "an engine with nothing to read from can answer nothing")
+			assert.HasError(t, err, "New")
 		})
 
-		t.Run("reports errors prefixed with the package name", func(t *testing.T) {
+		t.Run("prefixes its errors with the package name", func(t *testing.T) {
 			t.Parallel()
 			_, err := treesitter.New(fstest.MapFS{}, complete(), treesitter.Grammar{})
-			assert.HasError(t, err, "a zero grammar is refused")
-			assert.HasPrefix(t, err.Error(), "treesitter: ",
-				"an error names the package it came from, so a caller can tell which layer refused")
+			assert.HasError(t, err, "New")
+			assert.HasPrefix(t, err.Error(), "treesitter: ", "error")
 		})
 	})
-}
 
-// visibility is the fixture language's rule: a capitalised name is
-// visible outside its unit.
-func visibility(n string) sema.Visibility {
-	if n != "" && n[0] >= 'A' && n[0] <= 'Z' {
-		return sema.Exported
-	}
-	return sema.Unexported
+	t.Run("Fidelity", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns Syntactic for every role", func(t *testing.T) {
+			t.Parallel()
+			var e *treesitter.Engine
+			for _, role := range engine.Roles() {
+				assert.Equal(t, e.Fidelity(role), trust.Syntactic, role.String())
+			}
+		})
+	})
+
+	t.Run("Cost", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns CostParse for every role", func(t *testing.T) {
+			t.Parallel()
+			var e *treesitter.Engine
+			for _, role := range engine.Roles() {
+				assert.Equal(t, e.Cost(role), engine.CostParse, role.String())
+			}
+		})
+	})
 }

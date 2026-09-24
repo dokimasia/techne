@@ -7,12 +7,16 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
+	"os"
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/diag"
@@ -22,78 +26,71 @@ import (
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/lang"
+	"go.dokimi.dev/techne/lang/lsp"
 	"go.dokimi.dev/techne/lang/treesitter"
 )
 
-// Suite is what a language module hands to [Run].
+// Suite is the input of [Run]: the declaration, the grammar, the server, the
+// registration and the fixture of one language module.
 type Suite struct {
-	// Declaration is the module's own, exactly as it registers it.
+	// Declaration is the declaration the module registers.
 	Declaration lang.Declaration
 
-	// Grammar is the compiled grammar and the tags query that goes with
-	// it.
+	// Grammar is the grammar the module supplies.
 	Grammar treesitter.Grammar
 
-	// Files is the source the checks outline, keyed by path relative to
-	// the workspace root. Every path must carry an extension the
-	// declaration claims.
+	// Server is the language server the module declares.
+	Server lsp.Server
+
+	// Register is the Register function of the module.
+	Register func(lang.Workspace, *lang.Registry, *engine.Catalog) error
+
+	// Files is the fixture source, keyed by path relative to the workspace
+	// root. Every path has an extension of Declaration.
 	Files map[string]string
 
-	// Declares is the whole outline of Files, and is compared as a set.
-	// A symbol found and not listed fails the suite exactly as one
-	// listed and not found does.
-	//
-	// It is exact because the alternative proved nothing. Checking only
-	// that listed symbols appear passes a query that finds a quarter of
-	// the language, which is what every query here did: Go reported no
-	// constant and no interface, Python no method, and eight of the
-	// fourteen kinds were produced by nothing at all. A fixture must
-	// therefore name every declaration form its language has.
+	// Declares lists every declaration of Files. Run compares it with the
+	// outline as a set, so a missing and an extra declaration both fail, and
+	// the fixture contains every declaration form of the language.
 	Declares []Declared
 
-	// Unclaimed is a path whose extension the language does not claim.
-	// Outlining it must find nothing rather than refuse, because a
-	// directory holding several languages is the normal case.
+	// Unclaimed is a path with an extension that the language does not
+	// claim, or empty.
 	Unclaimed string
 }
 
-// Declared is one symbol a module says its source declares.
-//
-// Name, Kind and Visibility are compared as a whole set. The rest are
-// checked only where the module states them, because a fixture cannot
-// exercise every declaration's metadata without becoming unreadable.
+// Declared is one declaration of a fixture. Run compares Name, Kind and
+// Visibility for every declaration, and each other field when it is set.
 type Declared struct {
 	Name string
 	Kind sema.Kind
-	// Visibility is what the module expects the parser to report. A
-	// language spelling visibility as a modifier expects
-	// [sema.VisibilityUnknown], because a name carries nothing of it.
+	// Visibility is the visibility the engine reports. A language that
+	// declares visibility with a modifier reports sema.VisibilityUnknown.
 	Visibility sema.Visibility
-	// Signature is the declaration without its body, checked where a
-	// module states one. Stating it pins the shapes that are hard: a
-	// declaration whose grammar names no body field, a member that must
-	// not take its container's text, and one written under an
-	// annotation that must not take it.
+	// Signature is the declaration without its body.
 	Signature string
-	// Doc is the documentation the fixture writes on this declaration,
-	// in whichever form the language's own documentation tool reads.
+	// Doc is the documentation the fixture writes on the declaration. When
+	// any Doc is set, Run compares the documented declarations as a set.
 	Doc string
-	// Annotations are the annotations the declaration carries.
+	// Annotations are annotations of the declaration.
 	Annotations []Annotated
-	// Modifiers are the keywords the declaration carries.
+	// Modifiers are modifier keywords of the declaration.
 	Modifiers []string
+	// Simple is the name of an import without its qualifier and extension,
+	// such as json for encoding/json and stdio for <stdio.h>. Run requires
+	// it for every import, and checks that Relate finds the import by it.
+	Simple string
 }
 
-// Annotated is one annotation a module says a declaration carries.
+// Annotated is one annotation of a fixture declaration. Run compares Text
+// when it is set.
 type Annotated struct {
 	Name string
-	// Text is the whole annotation as written, punctuation and arguments
-	// included. It is checked only where a module states it, and stating
-	// it is what pins the bytes a tool reproducing the annotation needs.
 	Text string
 }
 
-// Run applies every check to one language module.
+// Run runs every check against the module that s describes. Each group of
+// checks runs as a parallel subtest named after the method it tests.
 func Run(t *testing.T, s Suite) {
 	t.Helper()
 
@@ -105,217 +102,494 @@ func Run(t *testing.T, s Suite) {
 		fsys[s.Unclaimed] = &fstest.MapFile{Data: []byte("not this language\n")}
 	}
 
-	t.Run("registration", func(t *testing.T) {
+	t.Run("Register", func(t *testing.T) {
 		t.Parallel()
 		registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
 		e := build(t, fsys, s)
-		assert.NoError(t, registry.Register(catalogue, s.Declaration, e),
-			"a module's own declaration must satisfy the rules it will be registered under")
+		assert.NoError(t, registry.Register(catalogue, s.Declaration, e), "Register")
 
-		for _, suffix := range s.Declaration.Extensions {
-			got, routed := registry.LanguageOf(source.Path("a/b" + suffix))
-			assert.True(t, routed, "every extension a module claims must route back to it")
-			assert.Equal(t, got, s.Declaration.Language,
-				"every extension a module claims must route back to it")
-		}
+		t.Run("routes every extension to the language", func(t *testing.T) {
+			t.Parallel()
+			for _, suffix := range s.Declaration.Extensions {
+				got, ok := registry.LanguageOf(source.Path("a/b" + suffix))
+				assert.True(t, ok, suffix)
+				assert.Equal(t, got, s.Declaration.Language, suffix)
+			}
+		})
 
-		assert.Length(t, catalogue.For(t.Context(), s.Declaration.Language, engine.RoleOutline), 1,
-			"a registered module's engine is selectable for the role it serves")
+		t.Run("adds an engine the catalogue selects for RoleOutline", func(t *testing.T) {
+			t.Parallel()
+			assert.Length(t, catalogue.For(t.Context(), s.Declaration.Language, engine.RoleOutline), 1, "engines")
+		})
 
-		// One adapter serves every grammar, so an engine's name carries
-		// the language it was built for. Were it constant, a catalogue
-		// holding two languages would refuse the second and a provenance
-		// would not say which answered.
-		assert.Contains(t, e.Name(), string(s.Declaration.Language),
-			"an engine names the language it serves, so instances of one adapter do not collide")
+		t.Run("names the engine after the language", func(t *testing.T) {
+			t.Parallel()
+			assert.Contains(t, e.Name(), string(s.Declaration.Language), "Name")
+		})
+
+		t.Run("registers the language without its server over a tree in memory", func(t *testing.T) {
+			t.Parallel()
+			r, c := lang.NewRegistry(), engine.NewCatalog()
+			assert.NoError(t, s.Register(lang.Workspace{FS: fsys}, r, c), "the Register of the module")
+			assert.Equal(t, r.Languages(), []source.Language{s.Declaration.Language}, "the registered languages")
+			assert.False(t, catalogued(t, c, s.Server.Name), "the catalogue contains "+s.Server.Name)
+		})
+
+		t.Run("registers the server for a workspace on disk", func(t *testing.T) {
+			t.Parallel()
+			r, c := lang.NewRegistry(), engine.NewCatalog()
+			root := t.TempDir()
+			assert.NoError(t, s.Register(lang.Workspace{FS: os.DirFS(root), Root: root}, r, c),
+				"the Register of the module")
+			assert.True(t, catalogued(t, c, s.Server.Name), "the catalogue contains "+s.Server.Name)
+		})
+
+		t.Run("refuses a second registration of the language", func(t *testing.T) {
+			t.Parallel()
+			r, c := lang.NewRegistry(), engine.NewCatalog()
+			assert.NoError(t, s.Register(lang.Workspace{FS: fsys}, r, c), "the first Register")
+			assert.HasError(t, s.Register(lang.Workspace{FS: fsys}, r, c), "the second Register")
+		})
 	})
 
-	t.Run("outline", func(t *testing.T) {
+	t.Run("Server", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("passes Server.Valid", func(t *testing.T) {
+			t.Parallel()
+			assert.NoError(t, s.Server.Valid(), "Valid of "+s.Server.Name)
+		})
+
+		t.Run("names the program it runs", func(t *testing.T) {
+			t.Parallel()
+			assert.NotEmpty(t, s.Server.Command, "the command of "+s.Server.Name)
+			assert.Equal(t, s.Server.Command[0], s.Server.Name, "the program of "+s.Server.Name)
+		})
+
+		t.Run("claims Resolved for resolve", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, s.Server.Fidelity(engine.RoleResolve), trust.Resolved, "the tier of RoleResolve")
+		})
+
+		t.Run("claims no tier for outline or search", func(t *testing.T) {
+			t.Parallel()
+			for _, role := range []engine.Role{engine.RoleOutline, engine.RoleSearch} {
+				assert.Equal(t, s.Server.Fidelity(role), trust.None, "the tier of "+role.String())
+			}
+		})
+	})
+
+	t.Run("ProjectOf", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the directory of each manifest the language declares", func(t *testing.T) {
+			t.Parallel()
+			assert.NotEmpty(t, s.Declaration.Manifests, "the manifests of the declaration")
+			file := source.Path("project/src/a" + s.Declaration.Extensions[0])
+			for _, manifest := range s.Declaration.Manifests {
+				marker := strings.ReplaceAll(manifest, "*", "App")
+				tree := fstest.MapFS{
+					"project/" + marker: &fstest.MapFile{},
+					string(file):        &fstest.MapFile{},
+				}
+				assert.Equal(t, lang.ProjectOf(tree, file, s.Declaration.Manifests), source.Path("project"),
+					"the project of "+string(file)+" beside "+marker)
+			}
+		})
+	})
+
+	t.Run("New", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns ErrUnknownCapture for a capture without a kind", func(t *testing.T) {
+			t.Parallel()
+			spoiled := s.Grammar
+			spoiled.Tags = s.Grammar.Tags + "\n((_) @definition.no_such_shape)"
+			_, err := treesitter.New(fsys, s.Declaration, spoiled)
+			assert.ErrorIs(t, err, treesitter.ErrUnknownCapture, "New")
+		})
+	})
+
+	t.Run("Outline", func(t *testing.T) {
 		t.Parallel()
 		e := build(t, fsys, s)
 		got := outline(t, e, ".")
 
-		t.Run("finds exactly what the module declares", func(t *testing.T) {
+		t.Run("returns every declaration of the fixture", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, summarise(got.Items), expected(s.Declares),
-				"the fixture is the whole outline: a declaration the query "+
-					"misses and a symbol it invents are the same failure")
+			assert.Equal(t, summarise(got.Items), expected(s.Declares), "declarations")
 		})
 
-		t.Run("returns only well-formed symbols", func(t *testing.T) {
+		t.Run("returns only complete symbols", func(t *testing.T) {
 			t.Parallel()
 			for _, sym := range got.Items {
-				assert.NotEmpty(t, string(sym.ID), "a symbol an index may store carries an identity")
-				assert.NotEmpty(t, sym.Name, "a symbol a caller may act on carries a name")
-				assert.NotEqual(t, sym.Kind, sema.KindUnknown,
-					"a capture that declares nothing is skipped rather than emitted as unknown")
-				assert.Equal(t, sym.Language, s.Declaration.Language,
-					"an engine answers about the one language it was built for")
-				assert.NotEmpty(t, string(sym.Span.Path), "a symbol says which file declares it")
+				assert.NotEmpty(t, string(sym.ID), "ID of "+sym.Name)
+				assert.NotEmpty(t, sym.Name, "Name of "+string(sym.ID))
+				assert.NotEqual(t, sym.Kind, sema.KindUnknown, "Kind of "+sym.Name)
+				assert.Equal(t, sym.Language, s.Declaration.Language, "Language of "+sym.Name)
+				assert.NotEmpty(t, string(sym.Span.Path), "Path of "+sym.Name)
 			}
 		})
 
-		t.Run("carries the source text its span names", func(t *testing.T) {
+		t.Run("returns the text of each span as its snippet", func(t *testing.T) {
 			t.Parallel()
 			for _, sym := range got.Items {
-				content, known := s.Files[string(sym.Span.Path)]
-				if !known {
+				content, ok := s.Files[string(sym.Span.Path)]
+				if !ok {
 					continue
 				}
-				assert.True(t, sym.Span.End.Offset <= len(content),
-					"a span names bytes inside the file it points at")
-				assert.Equal(t, sym.Snippet, content[sym.Span.Start.Offset:sym.Span.End.Offset],
-					"the snippet is the span's own bytes, so the two cannot describe different code")
-				assert.Contains(t, sym.Snippet, sym.Name,
-					"a declaration's own text contains the name it declares")
+				assert.True(t, sym.Span.End.Offset <= len(content), "span of "+sym.Name)
+				assert.Equal(t, sym.Snippet, content[sym.Span.Start.Offset:sym.Span.End.Offset], "snippet of "+sym.Name)
+				assert.Contains(t, sym.Snippet, sym.Name, "snippet of "+sym.Name)
 			}
 		})
 
-		t.Run("reports it covered the whole scope", func(t *testing.T) {
+		t.Run("links each declaration to its innermost container", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, got.Completeness, trust.ScopeTotal,
-				"the walk read every file in scope, which only the engine can say")
-		})
-
-		t.Run("carries the caveat that a cross-file name is coincidence", func(t *testing.T) {
-			t.Parallel()
-			var carried bool
-			for _, c := range got.Caveats {
-				carried = carried || c.Code == trust.CaveatDynamic
+			for i, sym := range got.Items {
+				assert.Equal(t, sym.Parent, innermost(got.Items, i), "Parent of "+sym.Name)
 			}
-			assert.True(t, carried,
-				"a caller must be told what this tier cannot see before trusting a name it matched")
 		})
 
-		t.Run("publishes as syntactic evidence that proves no absence", func(t *testing.T) {
+		t.Run("qualifies each member by the qualified name of its container", func(t *testing.T) {
 			t.Parallel()
-			// What a caller sees is the published answer. The engine
-			// supplies coverage and caveats; Publish supplies the tier.
+			for _, sym := range got.Items {
+				want := sym.Name
+				switch {
+				case sym.Kind == sema.KindImport:
+				case sym.Parent != "":
+					want = sema.Qualify(sym.Parent.Name(), sym.Name)
+				case sym.Kind == sema.KindMethod && strings.HasSuffix(sym.ID.Name(), "."+sym.Name):
+					// A receiver qualifies a method at the top level of a file.
+					continue
+				}
+				assert.Equal(t, sym.ID.Name(), want, "the qualified name of the "+sym.Kind.String()+" "+sym.Name)
+			}
+		})
+
+		t.Run("gives two members of one name two identities", func(t *testing.T) {
+			t.Parallel()
+			pairs := 0
+			for i, one := range got.Items {
+				for _, other := range got.Items[i+1:] {
+					if one.Name == other.Name && one.Kind == other.Kind && one.Span.Path == other.Span.Path &&
+						apart(one, other) {
+						pairs++
+						assert.NotEqual(t, one.ID, other.ID, "the IDs of the two "+one.Kind.String()+"s "+one.Name)
+					}
+				}
+			}
+			assert.True(t, pairs > 0, "the fixture declares two members of one name and kind in one file")
+		})
+
+		t.Run("reports total coverage", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, got.Completeness, trust.ScopeTotal, "completeness")
+		})
+
+		t.Run("adds the caveat for matched text", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, slices.ContainsFunc(got.Caveats, func(c trust.Caveat) bool {
+				return c.Code == trust.CaveatDynamic
+			}), "caveats")
+		})
+
+		t.Run("publishes syntactic evidence without a negative claim", func(t *testing.T) {
+			t.Parallel()
 			published := engine.Publish(got, e, engine.RoleOutline, trust.None)
-			assert.Equal(t, published.Provenance.Fidelity, trust.Syntactic,
-				"a parser matched text, and the published answer says so")
-			assert.False(t, published.Provenance.SupportsNegativeClaim(),
-				"a parser's empty answer means none were found, never that there are none")
-			assert.True(t, published.Status.Answered(), "an engine ran and returned what it found")
+			assert.Equal(t, published.Provenance.Fidelity, trust.Syntactic, "fidelity")
+			assert.False(t, published.Provenance.SupportsNegativeClaim(), "negative claim")
+			assert.True(t, published.Status.Answered(), "answered")
 		})
 
-		t.Run("carries the metadata the module names", func(t *testing.T) {
+		t.Run("returns the metadata the fixture states", func(t *testing.T) {
 			t.Parallel()
 			for _, want := range s.Declares {
-				if len(want.Annotations) == 0 && len(want.Modifiers) == 0 && want.Signature == "" {
-					continue
-				}
-				// A name and kind can repeat: an interface and the class
-				// implementing it both declare get, and only one carries
-				// the annotation. The check is that some declaration of
-				// that name and kind carries it.
+				// A name and kind can repeat, as an interface and the class
+				// that implements it both declare a method, so the check
+				// passes when one declaration of the name and kind has the
+				// metadata.
 				matching := every(got.Items, want)
 				if len(matching) == 0 {
-					continue // the exact-set check already reports this
+					continue
 				}
 				for _, annotation := range want.Annotations {
-					assert.True(t, anyAnnotated(matching, annotation),
-						"metadata decides what a tool rewriting the declaration must reproduce, "+
-							"so it is read whole rather than dropped or trimmed")
+					assert.True(t, anyAnnotated(matching, annotation), want.Name+" @"+annotation.Name)
 				}
 				if want.Signature != "" {
-					assert.True(t, anySigned(matching, want.Signature),
-						"a signature is what a caller needs to call a declaration or "+
-							"implement it, and holds nothing of how it works")
+					assert.True(t, anySigned(matching, want.Signature), "signature of "+want.Name)
 				}
 				for _, keyword := range want.Modifiers {
-					assert.True(t, anyModified(matching, keyword),
-						"for most of these languages the keywords are the only place "+
-							"visibility is written")
+					assert.True(t, anyModified(matching, keyword), want.Name+" "+keyword)
 				}
 			}
 		})
 
-		t.Run("reads the documentation the language writes", func(t *testing.T) {
+		t.Run("returns the documentation the fixture writes", func(t *testing.T) {
 			t.Parallel()
 			if !documents(s.Declares) {
-				t.Skip("this module's fixture writes no documentation")
+				t.Skip("the fixture writes no documentation")
 			}
-			// Exact, like the outline. A comment read as documentation
-			// that the module did not name fails as surely as one it
-			// named and the parser did not find, which is the whole
-			// reason a language states which of its comment forms
-			// document and which do not.
-			assert.Equal(t, documented(got.Items), expectedDocs(s.Declares),
-				"a language states the forms its own documentation tool reads, "+
-					"and a comment written in any other form is not documentation")
+			assert.Equal(t, documented(got.Items), expectedDocs(s.Declares), "documentation")
 		})
 
-		t.Run("answers two identical requests identically", func(t *testing.T) {
+		t.Run("returns identical items for identical requests", func(t *testing.T) {
 			t.Parallel()
-			again := outline(t, e, ".")
-			assert.Equal(t, again.Items, got.Items,
-				"a caller diffing two runs sees only changes somebody made")
+			assert.Equal(t, outline(t, e, ".").Items, got.Items, "items")
+		})
+
+		t.Run("opens the root .gitignore once", func(t *testing.T) {
+			t.Parallel()
+			ignoring := maps.Clone(fsys)
+			ignoring[".gitignore"] = &fstest.MapFile{Data: []byte("generated/\n")}
+			counted := &counting{FS: ignoring, opens: map[string]int{}}
+			outline(t, build(t, counted, s), ".")
+			assert.Equal(t, counted.opened(".gitignore"), 1, ".gitignore opens")
+		})
+
+		t.Run("returns no items for a file of another language", func(t *testing.T) {
+			t.Parallel()
+			if s.Unclaimed == "" {
+				t.Skip("the module supplies no unclaimed path")
+			}
+			assert.Empty(t, outline(t, e, source.Path(s.Unclaimed)).Items, "items")
+		})
+
+		grown := enlarged(fsys, s)
+		large := outline(t, build(t, grown, s), ".")
+
+		t.Run("returns every declaration beside a file larger than Largest", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, summarise(large.Items), expected(s.Declares), "declarations")
+		})
+
+		t.Run("reports a file larger than Largest as unread", func(t *testing.T) {
+			t.Parallel()
+			var unread []source.Path
+			for _, c := range large.Caveats {
+				if c.Code == trust.CaveatUnread {
+					unread = append(unread, c.Paths...)
+				}
+			}
+			assert.Equal(t, unread, []source.Path{source.Path(oversized(s))}, "unread")
+			assert.Equal(t, large.Completeness, trust.ScopePartial, "completeness")
+		})
+
+		t.Run("does not skip a scope with only a file larger than Largest", func(t *testing.T) {
+			t.Parallel()
+			alone := outline(t, build(t, grown, s), source.Path(oversized(s)))
+			assert.False(t, alone.Skipped, "Skipped")
 		})
 	})
 
-	t.Run("search", func(t *testing.T) {
+	t.Run("Search", func(t *testing.T) {
 		t.Parallel()
 		e := build(t, fsys, s)
+		everything := outline(t, e, ".")
 
-		t.Run("finds a declaration by its exact name", func(t *testing.T) {
+		t.Run("returns a declaration by its exact name", func(t *testing.T) {
 			t.Parallel()
 			if len(s.Declares) == 0 {
-				t.Skip("the module names no declaration to search for")
+				t.Skip("the fixture declares nothing")
 			}
 			wanted := s.Declares[0]
-			got, err := e.Search(t.Context(), engine.Request{Scope: "."}, engine.Query{
-				Text: wanted.Name, Private: true,
-			})
-			assert.NoError(t, err, "searching a scope that exists succeeds")
-			assert.True(t, held(got.Items, wanted),
-				"a name the module says it declares is findable by that name")
+			got := search(t, e, engine.Query{Text: wanted.Name, Private: true})
+			assert.True(t, found(got.Items, wanted), wanted.Name)
 		})
 
-		t.Run("puts an exact match before a longer one containing it", func(t *testing.T) {
+		t.Run("returns an exact match first", func(t *testing.T) {
 			t.Parallel()
 			if len(s.Declares) == 0 {
-				t.Skip("the module names no declaration to search for")
+				t.Skip("the fixture declares nothing")
 			}
 			wanted := s.Declares[0]
-			got, err := e.Search(t.Context(), engine.Request{Scope: "."}, engine.Query{
-				Text: wanted.Name, Private: true,
-			})
-			assert.NoError(t, err, "searching a scope that exists succeeds")
-			assert.NotEmpty(t, got.Items, "the declaration the module named is found")
-			assert.Equal(t, got.Items[0].Name, wanted.Name,
-				"an engine returns its own best order, and an exact match is the best")
+			got := search(t, e, engine.Query{Text: wanted.Name, Private: true})
+			assert.NotEmpty(t, got.Items, "items")
+			assert.Equal(t, got.Items[0].Name, wanted.Name, "first item")
 		})
 
-		t.Run("finds nothing for a name nothing declares", func(t *testing.T) {
+		t.Run("leaves out an unexported declaration without Private", func(t *testing.T) {
 			t.Parallel()
-			got, err := e.Search(t.Context(), engine.Request{Scope: "."}, engine.Query{
-				Text: "aNameNoModuleWouldDeclare", Private: true,
-			})
-			assert.NoError(t, err, "finding nothing is an answer, not a fault")
-			assert.Empty(t, got.Items, "a parser reports what it matched and invents nothing")
-			assert.False(t, engine.Publish(got, e, engine.RoleSearch, trust.None).
-				Provenance.SupportsNegativeClaim(),
-				"an empty search at this tier means none were found, never that there are none")
+			hidden := slices.IndexFunc(s.Declares, func(d Declared) bool { return d.Visibility == sema.Unexported })
+			if hidden < 0 {
+				t.Skip("the fixture declares nothing unexported")
+			}
+			wanted := s.Declares[hidden]
+			got := search(t, e, engine.Query{Text: wanted.Name})
+			assert.Empty(t, every(got.Items, wanted), "the unexported "+wanted.Kind.String()+" "+wanted.Name)
 		})
 
-		t.Run("answers two identical searches identically", func(t *testing.T) {
+		t.Run("returns no items for a name no declaration has", func(t *testing.T) {
+			t.Parallel()
+			got := search(t, e, engine.Query{Text: "aNameNoModuleWouldDeclare", Private: true})
+			assert.Empty(t, got.Items, "items")
+			assert.False(t, engine.Publish(got, e, engine.RoleSearch, trust.None).Provenance.SupportsNegativeClaim(),
+				"negative claim")
+		})
+
+		t.Run("returns identical items for identical requests", func(t *testing.T) {
 			t.Parallel()
 			q := engine.Query{Text: "e", Private: true}
-			first, err := e.Search(t.Context(), engine.Request{Scope: "."}, q)
-			assert.NoError(t, err, "searching a scope that exists succeeds")
-			second, err := e.Search(t.Context(), engine.Request{Scope: "."}, q)
-			assert.NoError(t, err, "searching a scope that exists succeeds")
-			assert.Equal(t, second.Items, first.Items,
-				"identity breaks any remaining tie, so the order does not wander")
+			assert.Equal(t, search(t, e, q).Items, search(t, e, q).Items, "items")
+		})
+
+		t.Run("returns a truncation caveat at the limit", func(t *testing.T) {
+			t.Parallel()
+			if len(everything.Items) < 2 {
+				t.Skip("the fixture declares fewer than two declarations")
+			}
+			got := search(t, e, engine.Query{Private: true, Limit: 1})
+			assert.Length(t, got.Items, 1, "items")
+			assert.Contains(t, got.Caveats, trust.Caveat{
+				Code: trust.CaveatTruncated,
+				Note: fmt.Sprintf("1 of %d matches returned", len(everything.Items)),
+			}, "caveats")
+		})
+
+		missing := engine.Query{Text: "aNameNoModuleWouldDeclare", Private: true}
+		first := slices.Sorted(maps.Keys(s.Files))[0]
+
+		t.Run("skips an unchanged file without a match in a second search", func(t *testing.T) {
+			t.Parallel()
+			counted := &counting{FS: maps.Clone(fsys), opens: map[string]int{}}
+			searched := build(t, counted, s)
+			search(t, searched, missing)
+			before := sources(counted, s)
+			search(t, searched, missing)
+			assert.Equal(t, sources(counted, s), before, "the reads of the fixture files")
+		})
+
+		t.Run("reads a file again after its size changes", func(t *testing.T) {
+			t.Parallel()
+			files := maps.Clone(fsys)
+			counted := &counting{FS: files, opens: map[string]int{}}
+			searched := build(t, counted, s)
+			search(t, searched, missing)
+			before := counted.opened(first)
+			files[first] = &fstest.MapFile{Data: []byte(s.Files[first] + "\n")}
+			search(t, searched, missing)
+			assert.Equal(t, counted.opened(first), before+1, "the reads of "+first)
+		})
+
+		t.Run("reads a file again after its modification time changes", func(t *testing.T) {
+			t.Parallel()
+			files := maps.Clone(fsys)
+			counted := &counting{FS: files, opens: map[string]int{}}
+			searched := build(t, counted, s)
+			search(t, searched, missing)
+			before := counted.opened(first)
+			files[first] = &fstest.MapFile{Data: []byte(s.Files[first]), ModTime: time.Unix(1, 0)}
+			search(t, searched, missing)
+			assert.Equal(t, counted.opened(first), before+1, "the reads of "+first)
 		})
 	})
 
-	t.Run("document", func(t *testing.T) {
+	t.Run("Relate", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns Skipped for a scope without a file of the language", func(t *testing.T) {
+			t.Parallel()
+			elsewhere := fstest.MapFS{"docs/notes.none": {Data: []byte("text\n")}}
+			got, err := build(t, elsewhere, s).Relate(t.Context(), engine.Request{Scope: "docs"}, "", sema.Calls)
+			assert.NoError(t, err, "Relate")
+			assert.True(t, got.Skipped, "Skipped")
+		})
+
+		t.Run("returns ErrDecline for a relation that needs name binding", func(t *testing.T) {
+			t.Parallel()
+			_, err := build(t, fsys, s).Relate(t.Context(), engine.Request{Scope: "."}, "", sema.Calls)
+			assert.ErrorIs(t, err, engine.ErrDecline, "Relate")
+		})
+
+		e := build(t, fsys, s)
+		declared := outline(t, e, engine.Root).Items
+		imported := importsOf(s.Declares)
+
+		t.Run("requires a simple name for every import", func(t *testing.T) {
+			t.Parallel()
+			assert.NotEmpty(t, imported, "the imports of the fixture")
+			for _, d := range imported {
+				assert.NotEmpty(t, d.Simple, "the simple name of "+d.Name)
+				assert.Contains(t, d.Name, d.Simple, "the name of the import "+d.Simple)
+			}
+		})
+
+		t.Run("returns the files of an import by its name", func(t *testing.T) {
+			t.Parallel()
+			for _, d := range imported {
+				finds(t, e, declared, d.Name, d)
+			}
+		})
+
+		t.Run("returns the files of an import by its simple name", func(t *testing.T) {
+			t.Parallel()
+			for _, d := range imported {
+				finds(t, e, declared, d.Simple, d)
+			}
+		})
+
+		t.Run("returns no file for an import with another simple name", func(t *testing.T) {
+			t.Parallel()
+			for _, d := range imported {
+				at := strings.LastIndex(d.Name, d.Simple)
+				if at < 0 {
+					continue
+				}
+				other := d.Name[:at] + unrelated + d.Name[at+len(d.Simple):]
+				assert.Empty(t, importedBy(t, e, other), "the files that import "+other)
+			}
+		})
+
+		t.Run("returns no file for an import with another qualifier", func(t *testing.T) {
+			t.Parallel()
+			for _, d := range imported {
+				other := unrelated + "/" + d.Simple
+				assert.Empty(t, importedBy(t, e, other), "the files that import "+other)
+			}
+		})
+
+		t.Run("returns one relation for each line that imports a name", func(t *testing.T) {
+			t.Parallel()
+			for _, d := range imported {
+				lines := map[string]int{}
+				for _, edge := range importedBy(t, e, d.Simple) {
+					lines[fmt.Sprintf("%s:%d", edge.At.Path, edge.At.Start.Line+1)]++
+				}
+				for line, count := range lines {
+					assert.Equal(t, count, 1, "the relations of "+d.Simple+" at "+line)
+				}
+			}
+		})
+
+		t.Run("returns each importing file with the line of its import", func(t *testing.T) {
+			t.Parallel()
+			for _, d := range imported {
+				for _, edge := range importedBy(t, e, d.Name) {
+					assert.Equal(t, edge.To.Kind, sema.KindFile, "the kind of "+edge.To.Name)
+					assert.Equal(t, edge.To.Name, string(edge.At.Path), "the file of the import at "+edge.Via)
+					written := lineOf(s.Files[string(edge.At.Path)], edge.At.Start.Line)
+					assert.Equal(t, edge.Via, strings.TrimSpace(written),
+						"the line of the import of "+d.Name+" in "+edge.To.Name)
+				}
+			}
+		})
+
+		t.Run("returns the imports of the file that declares a name", func(t *testing.T) {
+			t.Parallel()
+			subject, ok := unique(declared)
+			assert.True(t, ok, "a name the fixture declares once in a file with an import")
+			got, err := e.Relate(t.Context(), engine.Request{Scope: engine.Root}, subject.ID, sema.Imports)
+			assert.NoError(t, err, "Relate of the imports of "+subject.Name)
+			assert.Equal(t, sortedList(farNames(got.Items)), sortedList(importsIn(declared, subject.Span.Path)),
+				"the imports of "+string(subject.Span.Path))
+		})
+	})
+
+	t.Run("Plan", func(t *testing.T) {
 		t.Parallel()
 		// One engine over one mutable workspace, restored after each
-		// declaration. Compiling a query per declaration would cost more
-		// than every other check in this suite put together.
+		// declaration, because compiling a query per declaration costs more
+		// than the rest of the suite.
 		files := fstest.MapFS{}
 		for path, content := range s.Files {
 			files[path] = &fstest.MapFile{Data: []byte(content)}
@@ -323,187 +597,120 @@ func Run(t *testing.T, s Suite) {
 		e := build(t, files, s)
 		before := outline(t, e, ".")
 
-		t.Run("writes documentation this parser reads back", func(t *testing.T) {
+		t.Run("writes documentation that Outline reads back", func(t *testing.T) {
 			for _, sym := range before.Items {
 				documenting(t, e, files, s, before, sym)
 			}
 		})
 	})
 
-	t.Run("check", func(t *testing.T) {
+	t.Run("Check", func(t *testing.T) {
 		t.Parallel()
 		e := build(t, fsys, s)
 
-		t.Run("finds nothing wrong with the source the module supplied", func(t *testing.T) {
+		t.Run("returns no findings for the fixture", func(t *testing.T) {
 			t.Parallel()
 			got, err := e.Check(t.Context(), content(s))
-			assert.NoError(t, err, "checking content this engine claims succeeds")
-			assert.Empty(t, got.Items,
-				"a fixture that does not parse would make every other check here meaningless")
+			assert.NoError(t, err, "Check")
+			assert.Empty(t, got.Items, "findings")
 		})
 
-		t.Run("reports content that stopped being this language", func(t *testing.T) {
+		t.Run("returns an error finding for content that stops parsing", func(t *testing.T) {
 			t.Parallel()
 			spoiled := content(s)
 			for path := range spoiled {
 				spoiled[path] = append(spoiled[path], []byte(garbage)...)
 			}
 			got, err := e.Check(t.Context(), spoiled)
-			assert.NoError(t, err, "content that does not parse is an answer, not a fault")
-			assert.NotEmpty(t, got.Items,
-				"the gate exists to stop a change being written, so it has to notice one that broke a file")
+			assert.NoError(t, err, "Check")
+			assert.NotEmpty(t, got.Items, "findings")
 			for _, one := range got.Items {
-				assert.Equal(t, one.Diagnostic.Severity, diag.SeverityError,
-					"a file that stopped parsing is an error rather than something to note")
-				assert.NotEmpty(t, one.Diagnostic.Message,
-					"a caller acts on what is wrong, not on that something is")
-				assert.NotEmpty(t, string(one.Diagnostic.Span.Path), "a fault says which file it is in")
-				assert.NotEmpty(t, one.Diagnostic.Snippet,
-					"whoever reads a fault has no filesystem, so the line comes with it")
-				assert.Empty(t, one.Fix,
-					"a file that stopped parsing has no one obvious change that resumes it")
+				assert.Equal(t, one.Diagnostic.Severity, diag.SeverityError, "severity")
+				assert.NotEmpty(t, one.Diagnostic.Message, "message")
+				assert.NotEmpty(t, string(one.Diagnostic.Span.Path), "path")
+				assert.NotEmpty(t, one.Diagnostic.Snippet, "snippet")
+				assert.Empty(t, one.Fix, "fix")
 			}
 		})
 
-		t.Run("declines content it claims none of", func(t *testing.T) {
+		t.Run("returns ErrDecline for content of another language", func(t *testing.T) {
 			t.Parallel()
-			_, err := e.Check(t.Context(),
-				map[source.Path][]byte{"a.no-language-claims-this": []byte("x")})
-			assert.ErrorIs(t, err, engine.ErrDecline,
-				"one change can touch several languages, and each engine judges its own")
+			_, err := e.Check(t.Context(), map[source.Path][]byte{"a.no-language-claims-this": []byte("x")})
+			assert.ErrorIs(t, err, engine.ErrDecline, "Check")
 		})
 	})
 
-	t.Run("refuses a query naming a capture no kind carries", func(t *testing.T) {
+	t.Run("Index", func(t *testing.T) {
 		t.Parallel()
-		// A capture the vocabulary does not know would match and then be
-		// dropped, so the pattern would find nothing and say nothing.
-		// That has to fail at startup, because an engine that silently
-		// finds nothing is the hardest failure to notice in a system
-		// whose job includes reporting that it found nothing.
-		spoiled := s.Grammar
-		spoiled.Tags = s.Grammar.Tags + "\n((_) @definition.no_such_shape)"
-		_, err := treesitter.New(fsys, s.Declaration, spoiled)
-		assert.ErrorIs(t, err, treesitter.ErrUnknownCapture,
-			"a mistyped capture must stop startup rather than produce an engine that finds nothing")
-	})
 
-	t.Run("a file the language does not claim", func(t *testing.T) {
-		t.Parallel()
-		if s.Unclaimed == "" {
-			t.Skip("the module supplied no unclaimed path")
-		}
-		e := build(t, fsys, s)
-		assert.Empty(t, outline(t, e, source.Path(s.Unclaimed)).Items,
-			"a directory holding several languages is normal, so another language's file yields nothing")
-	})
-
-	t.Run("a file past the size an engine reads", func(t *testing.T) {
-		t.Parallel()
-		// Every language has bundles, amalgamations and generated
-		// tables, and the cost of parsing one is superlinear: 1.3s at a
-		// megabyte and 11.8s at three, against a call with two seconds
-		// to spend. What holds it is a bound on the file rather than a
-		// list of directory names, so it is checked in every module.
-		held := grown(fsys, s)
-		e := build(t, held, s)
-		got := outline(t, e, ".")
-
-		t.Run("declares nothing, and the rest of the scope still answers", func(t *testing.T) {
+		t.Run("returns the declarations of one file", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, summarise(got.Items), expected(s.Declares),
-				"one file too big to read costs itself and not the directory holding it")
+			first := source.Path(slices.Sorted(maps.Keys(s.Files))[0])
+			e := build(t, fsys, s)
+			got, err := e.Index(t.Context(), first)
+			assert.NoError(t, err, "Index of "+string(first))
+			assert.False(t, got.Skipped, "Skipped of the index of "+string(first))
+			assert.Equal(t, summarise(got.Items), summarise(outline(t, e, first).Items),
+				"the declarations of "+string(first))
 		})
 
-		t.Run("is named in a caveat rather than passed over in silence", func(t *testing.T) {
+		t.Run("skips a file of another language", func(t *testing.T) {
 			t.Parallel()
-			// Coverage over a scope one of whose files was never opened
-			// is a claim about a directory rather than about its
-			// declarations, and a caller that wanted that file can only
-			// go and read it if it is told which one.
-			var named []source.Path
-			for _, one := range got.Caveats {
-				if one.Code == trust.CaveatUnread {
-					named = append(named, one.Paths...)
-				}
+			if s.Unclaimed == "" {
+				t.Skip("the module supplies no unclaimed path")
 			}
-			assert.Equal(t, named, []source.Path{source.Path(oversized(s))},
-				"the answer says which file it did not read")
-			assert.Equal(t, got.Completeness, trust.ScopePartial,
-				"and does not claim total coverage of a scope holding a file it never opened")
+			got, err := build(t, fsys, s).Index(t.Context(), source.Path(s.Unclaimed))
+			assert.NoError(t, err, "Index of "+s.Unclaimed)
+			assert.True(t, got.Skipped, "Skipped of the index of "+s.Unclaimed)
+			assert.Empty(t, got.Items, "the declarations of "+s.Unclaimed)
 		})
 
-		t.Run("is refused rather than indexed when a caller names it", func(t *testing.T) {
+		t.Run("returns LargeError for a file larger than Largest", func(t *testing.T) {
 			t.Parallel()
-			// An index asks per file and reaches the engine without
-			// passing a walk, so the walk's bound has to hold here too.
-			_, err := e.Index(t.Context(), source.Path(oversized(s)))
-			var large lang.LargeError
-			assert.True(t, errors.As(err, &large),
-				"a path named directly is held to the same bound a walk applies")
+			_, err := build(t, enlarged(fsys, s), s).Index(t.Context(), source.Path(oversized(s)))
+			_, ok := errors.AsType[lang.LargeError](err)
+			assert.True(t, ok, "LargeError")
+		})
+
+		t.Run("returns GeneratedError for a file the .gitignore excludes", func(t *testing.T) {
+			t.Parallel()
+			excluded := maps.Clone(fsys)
+			excluded[".gitignore"] = &fstest.MapFile{Data: []byte("generated\n")}
+			buried := "generated/" + oversized(s)
+			excluded[buried] = &fstest.MapFile{Data: []byte(anyFile(s))}
+			_, err := build(t, excluded, s).Index(t.Context(), source.Path(buried))
+			_, ok := errors.AsType[lang.GeneratedError](err)
+			assert.True(t, ok, "GeneratedError")
 		})
 	})
-
-	t.Run("a file the workspace calls generated", func(t *testing.T) {
-		t.Parallel()
-		// The write path takes a caller's path straight to whatever
-		// reads it. Planning a change over a bundle under dist cost
-		// three seconds before the rule was asked for here as well.
-		held := grown(fsys, s)
-		held[".gitignore"] = &fstest.MapFile{Data: []byte("generated\n")}
-		buried := "generated/" + oversized(s)
-		held[buried] = &fstest.MapFile{Data: []byte(anyFile(s))}
-
-		e := build(t, held, s)
-		_, err := e.Index(t.Context(), source.Path(buried))
-		var generated lang.GeneratedError
-		assert.True(t, errors.As(err, &generated),
-			"a path a caller names is judged by the workspace's own rule, not only by a walk")
-	})
 }
 
-// grown is the module's fixture with one file past [lang.Largest] added.
-//
-// Whitespace, because the file is never read: what decides it is the
-// size on disk, and a megabyte of real source would slow every module's
-// suite to prove nothing more.
-func grown(fsys fstest.MapFS, s Suite) fstest.MapFS {
-	held := fstest.MapFS{}
-	maps.Copy(held, fsys)
-	held[oversized(s)] = &fstest.MapFile{
-		Data: bytes.Repeat([]byte("\n"), lang.Largest+1),
-	}
-	return held
+// enlarged returns fsys with a file larger than [lang.Largest] added under
+// an extension of the language. The file contains newlines only, because no
+// engine reads it.
+func enlarged(fsys fstest.MapFS, s Suite) fstest.MapFS {
+	out := maps.Clone(fsys)
+	out[oversized(s)] = &fstest.MapFile{Data: bytes.Repeat([]byte("\n"), lang.Largest+1)}
+	return out
 }
 
-// oversized is the path the size check is exercised at, under an
-// extension this language claims so the walk reaches it.
+// oversized returns the path of the file that enlarged adds.
 func oversized(s Suite) string {
 	return "toobig" + s.Declaration.Extensions[0]
 }
 
-// anyFile is one of the module's own fixture files, for a check that
-// needs content this language parses and does not care which.
+// anyFile returns the content of the first fixture file in path order.
 func anyFile(s Suite) string {
-	for _, held := range slices.Sorted(maps.Keys(s.Files)) {
-		return s.Files[held]
+	for _, path := range slices.Sorted(maps.Keys(s.Files)) {
+		return s.Files[path]
 	}
 	return ""
 }
 
-// documenting writes documentation onto one declaration and reads it
-// back through the same parser.
-//
-// It is the check that a language module's comment forms are usable
-// rather than merely stated. Writing a comment the language's own
-// documentation tool would not read, at the wrong indentation, or in a
-// place that turns the declaration below it into part of the comment,
-// all fail here: the text does not come back, or the declaration set
-// does.
-//
-// A refusal is not a failure. No language documents a parameter as a
-// declaration of its own, and one that writes documentation inside a
-// body has nothing to write it in for a declaration with no body.
+// documenting writes documentation onto one declaration through Plan,
+// checks the result, and reads the documentation back through Outline. It
+// skips a declaration that Plan refuses, such as a parameter, which no
+// language documents on its own.
 func documenting(
 	t *testing.T,
 	e *treesitter.Engine,
@@ -523,65 +730,48 @@ func documenting(
 			edit.Target{Kind: edit.TargetSpan, Span: sym.Span},
 			edit.Args{edit.ArgDoc: written})
 		if errors.Is(err, engine.ErrRefuse) {
-			t.Skipf("this language will not document a %s here: %v", sym.Kind, err)
+			t.Skipf("the language does not document a %s here: %v", sym.Kind, err)
 		}
-		assert.NoError(t, err, "a declaration this parser found is one it can be pointed at")
-		assert.Length(t, planned.Items, 1, "documenting one declaration changes one file")
+		assert.NoError(t, err, "Plan")
+		assert.Length(t, planned.Items, 1, "changes")
 
 		changed := applied(t, original, planned.Items[0])
 		files[string(sym.Span.Path)] = &fstest.MapFile{Data: []byte(changed)}
 
-		faults, err := e.Check(t.Context(),
-			map[source.Path][]byte{sym.Span.Path: []byte(changed)})
-		assert.NoError(t, err, "checking content this engine claims succeeds")
-		assert.Empty(t, faults.Items, "documentation is a comment, and a comment parses")
+		faults, err := e.Check(t.Context(), map[source.Path][]byte{sym.Span.Path: []byte(changed)})
+		assert.NoError(t, err, "Check")
+		assert.Empty(t, faults.Items, "findings")
 
 		after := outline(t, e, ".")
-		assert.Equal(t, summarise(after.Items), summarise(before.Items),
-			"writing a comment declares nothing and takes nothing away")
-		assert.True(t, reads(after.Items, sym, written),
-			"a language states the forms its own documentation tool reads, so what "+
-				"this wrote in one of them is what it reads back")
+		assert.Equal(t, summarise(after.Items), summarise(before.Items), "declarations")
+		assert.True(t, reads(after.Items, sym, written), "documentation of "+sym.Name)
 	})
 }
 
-// written is the documentation the round trip writes. Two paragraphs,
-// because a form that carries the first line and drops the rest is a
-// form that passes a one-line check.
-const written = "Documented by the suite.\n\nA second paragraph, to carry the form past its first line."
+// written is the documentation the round trip writes. It has two
+// paragraphs, so a form that keeps only the first line fails.
+const written = "Documented by the suite.\n\nA second paragraph, so the form spans more than one line."
 
-// applied rewrites content the way the write path would.
+// applied returns content with the edits of c applied by [edit.Apply], as
+// the write path applies them.
 func applied(t *testing.T, content string, c edit.Change) string {
 	t.Helper()
-	assert.Equal(t, c.Kind, edit.ChangeEdit, "documenting rewrites a file that exists")
-
-	out, at := "", 0
-	for _, one := range c.Edits {
-		start, end := one.Span.Start.Offset, one.Span.End.Offset
-		assert.True(t, start >= at && end <= len(content) && start <= end,
-			"an edit names a range inside the file it was computed against")
-		out += content[at:start] + one.New
-		at = end
-	}
-	return out + content[at:]
+	assert.Equal(t, c.Kind, edit.ChangeEdit, "change kind")
+	out, err := edit.Apply([]byte(content), c.Edits)
+	assert.NoError(t, err, "Apply")
+	return string(out)
 }
 
-// reads reports whether some declaration of this name and kind now
-// carries the documentation that was written.
-//
-// By name and kind rather than by span, because writing above a
-// declaration moves it, and by "some" because a fixture may declare one
-// name twice.
+// reads reports whether some declaration with the name and kind of sym has
+// doc as its documentation. Writing documentation moves a declaration, so
+// reads matches by name and kind, not by span.
 func reads(found []sema.Symbol, sym sema.Symbol, doc string) bool {
-	for _, one := range found {
-		if one.Name == sym.Name && one.Kind == sym.Kind && one.Doc == doc {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(found, func(one sema.Symbol) bool {
+		return one.Name == sym.Name && one.Kind == sym.Kind && one.Doc == doc
+	})
 }
 
-// content is the fixture as the gate is handed it.
+// content returns the fixture as the files a gate receives.
 func content(s Suite) map[source.Path][]byte {
 	out := map[source.Path][]byte{}
 	for path, text := range s.Files {
@@ -590,55 +780,134 @@ func content(s Suite) map[source.Path][]byte {
 	return out
 }
 
-// garbage is punctuation no grammar here can make a declaration of. It
-// was checked against all ten rather than assumed: a breaker one
-// language shrugs off would leave that language's gate untested.
+// garbage is punctuation from which none of the ten grammars parses a
+// declaration.
 const garbage = "\n)]}%\n"
 
-// build returns the engine under test, failing the suite when a module's
-// grammar or declaration is incomplete.
-func build(t *testing.T, fsys fstest.MapFS, s Suite) *treesitter.Engine {
+// build returns the engine of s over fsys and closes it when the test ends.
+func build(t *testing.T, fsys fs.FS, s Suite) *treesitter.Engine {
 	t.Helper()
 	e, err := treesitter.New(fsys, s.Declaration, s.Grammar)
-	assert.NoError(t, err, "a module's grammar and declaration must produce a working engine")
+	assert.NoError(t, err, "New")
 	t.Cleanup(e.Close)
 	return e
 }
 
-// outline runs the engine over a scope.
+// outline returns the outline of a scope.
 func outline(t *testing.T, e *treesitter.Engine, scope source.Path) engine.Result[sema.Symbol] {
 	t.Helper()
 	got, err := e.Outline(t.Context(), engine.Request{Scope: scope})
-	assert.NoError(t, err, "outlining a scope that exists succeeds")
+	assert.NoError(t, err, "Outline")
 	return got
 }
 
-// summarise renders what the outline found, sorted, so a mismatch fails
-// with both whole sets beside each other.
+// search returns the result of a query over the workspace root.
+func search(t *testing.T, e *treesitter.Engine, q engine.Query) engine.Result[sema.Symbol] {
+	t.Helper()
+	got, err := e.Search(t.Context(), engine.Request{Scope: "."}, q)
+	assert.NoError(t, err, "Search")
+	return got
+}
+
+// counting is a filesystem that counts the opens of each path. A stat opens
+// nothing, so the opens of a file count its reads.
+type counting struct {
+	fs.FS
+	mu    sync.Mutex
+	opens map[string]int
+}
+
+func (c *counting) Open(name string) (fs.File, error) {
+	c.mu.Lock()
+	c.opens[name]++
+	c.mu.Unlock()
+	return c.FS.Open(name)
+}
+
+// Stat returns the file information of name without an open.
+func (c *counting) Stat(name string) (fs.FileInfo, error) { return fs.Stat(c.FS, name) }
+
+// opened returns the number of opens of name.
+func (c *counting) opened(name string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.opens[name]
+}
+
+// sources returns the number of opens of the fixture files of s.
+func sources(c *counting, s Suite) int {
+	total := 0
+	for path := range s.Files {
+		total += c.opened(path)
+	}
+	return total
+}
+
+// innermost returns the ID of the smallest other symbol in the file of
+// symbols[i] whose span contains it and is wider, the first of equal width.
+// It returns an empty ID when there is none, and when that symbol has the
+// ID of symbols[i]. It compares every pair.
+func innermost(symbols []sema.Symbol, i int) sema.ID {
+	best := -1
+	for j, outer := range symbols {
+		if j == i || !encloses(outer.Span, symbols[i].Span) {
+			continue
+		}
+		if best < 0 || width(outer.Span) < width(symbols[best].Span) {
+			best = j
+		}
+	}
+	if best < 0 || symbols[best].ID == symbols[i].ID {
+		return ""
+	}
+	return symbols[best].ID
+}
+
+// apart reports whether two declarations of one name and kind are members of
+// different containers: their parents differ, or both are methods at the top
+// level of a file. A method at the top level is a method of its receiver, and
+// Go allows one method of a name for each receiver type.
+func apart(one, other sema.Symbol) bool {
+	return one.Parent != other.Parent || one.Parent == "" && one.Kind == sema.KindMethod
+}
+
+// encloses reports whether outer contains inner and is wider.
+func encloses(outer, inner source.Span) bool {
+	return outer.Path == inner.Path &&
+		outer.Start.Offset <= inner.Start.Offset &&
+		inner.End.Offset <= outer.End.Offset &&
+		width(outer) > width(inner)
+}
+
+// width returns the number of bytes a span covers.
+func width(s source.Span) int { return s.End.Offset - s.Start.Offset }
+
+// summarise returns the kind, name and visibility of each symbol, sorted,
+// so a failure shows both sets side by side.
 func summarise(found []sema.Symbol) string {
-	seen := make([]string, 0, len(found))
+	out := make([]string, 0, len(found))
 	for _, sym := range found {
-		seen = append(seen, fmt.Sprintf("%s %s/%s", sym.Kind, sym.Name, sym.Visibility))
+		out = append(out, fmt.Sprintf("%s %s/%s", sym.Kind, sym.Name, sym.Visibility))
 	}
-	return list(seen)
+	return sortedList(out)
 }
 
-// expected renders what the module says its fixture declares, in the
-// form summarise produces.
+// expected returns the declarations of a fixture in the form of summarise.
 func expected(want []Declared) string {
-	named := make([]string, 0, len(want))
+	out := make([]string, 0, len(want))
 	for _, d := range want {
-		named = append(named, fmt.Sprintf("%s %s/%s", d.Kind, d.Name, d.Visibility))
+		out = append(out, fmt.Sprintf("%s %s/%s", d.Kind, d.Name, d.Visibility))
 	}
-	return list(named)
+	return sortedList(out)
 }
 
-func list(of []string) string {
-	sort.Strings(of)
-	return "[" + strings.Join(of, ", ") + "]"
+// sortedList returns items sorted and joined in brackets.
+func sortedList(items []string) string {
+	sort.Strings(items)
+	return "[" + strings.Join(items, ", ") + "]"
 }
 
-// every returns each symbol matching a declared name and kind.
+// every returns each symbol with the name and kind of want.
 func every(in []sema.Symbol, want Declared) []sema.Symbol {
 	var out []sema.Symbol
 	for _, sym := range in {
@@ -649,13 +918,12 @@ func every(in []sema.Symbol, want Declared) []sema.Symbol {
 	return out
 }
 
+// anyAnnotated reports whether a symbol of in has an annotation that
+// matches want.
 func anyAnnotated(in []sema.Symbol, want Annotated) bool {
 	for _, sym := range in {
 		for _, a := range sym.Annotations {
-			if a.Name != want.Name {
-				continue
-			}
-			if want.Text == "" || a.Text == want.Text {
+			if a.Name == want.Name && (want.Text == "" || a.Text == want.Text) {
 				return true
 			}
 		}
@@ -663,70 +931,139 @@ func anyAnnotated(in []sema.Symbol, want Annotated) bool {
 	return false
 }
 
+// anySigned reports whether a symbol of in has the signature.
 func anySigned(in []sema.Symbol, signature string) bool {
-	for _, sym := range in {
-		if sym.Signature == signature {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(in, func(sym sema.Symbol) bool { return sym.Signature == signature })
 }
 
+// anyModified reports whether a symbol of in has the modifier keyword.
 func anyModified(in []sema.Symbol, keyword string) bool {
-	for _, sym := range in {
-		if sym.Modified(keyword) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(in, func(sym sema.Symbol) bool { return sym.Modified(keyword) })
 }
 
-// documents reports whether a fixture writes any documentation, so a
-// module that exercises none is skipped rather than held to an empty
-// expectation it never stated.
+// documents reports whether a fixture writes any documentation.
 func documents(want []Declared) bool {
+	return slices.ContainsFunc(want, func(d Declared) bool { return d.Doc != "" })
+}
+
+// documented returns each documented symbol with its documentation, sorted.
+func documented(found []sema.Symbol) string {
+	out := make([]string, 0, len(found))
+	for _, sym := range found {
+		if sym.Doc != "" {
+			out = append(out, fmt.Sprintf("%s %s: %q", sym.Kind, sym.Name, sym.Doc))
+		}
+	}
+	return sortedList(out)
+}
+
+// expectedDocs returns the documented declarations of a fixture in the form
+// of documented.
+func expectedDocs(want []Declared) string {
+	out := make([]string, 0, len(want))
 	for _, d := range want {
 		if d.Doc != "" {
-			return true
+			out = append(out, fmt.Sprintf("%s %s: %q", d.Kind, d.Name, d.Doc))
 		}
 	}
-	return false
+	return sortedList(out)
 }
 
-// documented renders every declaration the parser attached
-// documentation to, sorted, so a mismatch shows both whole sets beside
-// each other.
-func documented(found []sema.Symbol) string {
-	seen := make([]string, 0, len(found))
-	for _, sym := range found {
-		if sym.Doc == "" {
-			continue
-		}
-		seen = append(seen, fmt.Sprintf("%s %s: %q", sym.Kind, sym.Name, sym.Doc))
-	}
-	return list(seen)
+// found reports whether a symbol with the name, kind and visibility of want
+// is among the symbols.
+func found(symbols []sema.Symbol, want Declared) bool {
+	return slices.ContainsFunc(symbols, func(sym sema.Symbol) bool {
+		return sym.Name == want.Name && sym.Kind == want.Kind && sym.Visibility == want.Visibility
+	})
 }
 
-// expectedDocs renders what the module says its fixture documents, in
-// the form documented produces.
-func expectedDocs(want []Declared) string {
-	named := make([]string, 0, len(want))
+// catalogued reports whether an engine named name serves a role in c. It
+// counts an engine that cannot run.
+func catalogued(t *testing.T, c *engine.Catalog, name string) bool {
+	t.Helper()
+	return slices.ContainsFunc(c.Capabilities(t.Context()), func(one engine.Capability) bool {
+		return one.Engine == name
+	})
+}
+
+// unrelated is a segment that the fixtures do not write in an import.
+const unrelated = "Unrelated"
+
+// importsOf returns the imports of a fixture.
+func importsOf(want []Declared) []Declared {
+	var out []Declared
 	for _, d := range want {
-		if d.Doc == "" {
-			continue
+		if d.Kind == sema.KindImport {
+			out = append(out, d)
 		}
-		named = append(named, fmt.Sprintf("%s %s: %q", d.Kind, d.Name, d.Doc))
 	}
-	return list(named)
+	return out
 }
 
-// held reports whether a search found one expected declaration. A search
-// is asked for one name, so unlike an outline it is a subset check.
-func held(found []sema.Symbol, want Declared) bool {
-	for _, sym := range found {
-		if sym.Name == want.Name && sym.Kind == want.Kind && sym.Visibility == want.Visibility {
-			return true
+// importedBy returns the relations of the files that import name, over the
+// workspace root.
+func importedBy(t *testing.T, e *treesitter.Engine, name string) []sema.Relation {
+	t.Helper()
+	of := sema.NewID(e.Language(), engine.Root, name, sema.KindImport)
+	got, err := e.Relate(t.Context(), engine.Request{Scope: engine.Root}, of, sema.ImportedBy)
+	assert.NoError(t, err, "Relate of the files that import "+name)
+	return got.Items
+}
+
+// finds checks that the files that import asked include every file that
+// declares the import d.
+func finds(t *testing.T, e *treesitter.Engine, declared []sema.Symbol, asked string, d Declared) {
+	t.Helper()
+	got := farNames(importedBy(t, e, asked))
+	for _, sym := range declared {
+		if sym.Kind == sema.KindImport && sym.Name == d.Name {
+			assert.Contains(t, got, string(sym.Span.Path), "the files that import "+asked)
 		}
 	}
-	return false
+}
+
+// farNames returns the distinct names of the far ends of relations.
+func farNames(relations []sema.Relation) []string {
+	var out []string
+	for _, edge := range relations {
+		if !slices.Contains(out, edge.To.Name) {
+			out = append(out, edge.To.Name)
+		}
+	}
+	return out
+}
+
+// importsIn returns the distinct names of the imports of the file at p.
+func importsIn(declared []sema.Symbol, p source.Path) []string {
+	var out []string
+	for _, sym := range declared {
+		if sym.Kind == sema.KindImport && sym.Span.Path == p && !slices.Contains(out, sym.Name) {
+			out = append(out, sym.Name)
+		}
+	}
+	return out
+}
+
+// unique returns a declaration that is not an import, in a file with an
+// import, whose name occurs once in declared.
+func unique(declared []sema.Symbol) (sema.Symbol, bool) {
+	count := map[string]int{}
+	for _, sym := range declared {
+		count[sym.Name]++
+	}
+	for _, sym := range declared {
+		if sym.Kind != sema.KindImport && count[sym.Name] == 1 && len(importsIn(declared, sym.Span.Path)) > 0 {
+			return sym, true
+		}
+	}
+	return sema.Symbol{}, false
+}
+
+// lineOf returns the zero-based line n of content.
+func lineOf(content string, n int) string {
+	lines := strings.Split(content, "\n")
+	if n < 0 || n >= len(lines) {
+		return ""
+	}
+	return lines[n]
 }

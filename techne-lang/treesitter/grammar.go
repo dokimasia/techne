@@ -9,48 +9,36 @@ import (
 	ts "github.com/tree-sitter/go-tree-sitter"
 )
 
-// Grammar is what a language module supplies so this engine can answer
-// about its language.
-//
-// The zero Grammar declares nothing and [New] refuses it.
+// Grammar is what a language module supplies to the engine. [New] refuses
+// the zero value.
 type Grammar struct {
-	// Language is the compiled grammar, from the language's own
-	// tree-sitter binding.
+	// Language is the compiled grammar from the tree-sitter binding of the
+	// language.
 	Language *ts.Language
 
-	// Tags is the query source, written in the convention the grammars'
-	// own tags queries use, so a module vendors its query unchanged.
-	// See [Capture].
+	// Tags is the source of the tags query, in the capture convention that
+	// [Capture] documents.
 	Tags string
 
-	// Dialects are the grammars for extensions the main one cannot
-	// parse, by extension.
-	//
-	// One language is sometimes two grammars. TypeScript is: .tsx is
-	// TypeScript with JSX in it, and the plain grammar does not parse
-	// it — measured, a component file comes back as a tree with an
-	// error in it, so every declaration under the error is lost. The
-	// same tags query compiles against both, which is what makes this a
-	// second grammar rather than a second language: a declaration in a
-	// .tsx file is TypeScript, and a rename that crossed the two would
-	// otherwise be two languages and refuse itself.
+	// Dialects maps each extension that Language cannot parse to the grammar
+	// that parses it, such as ".tsx" to the TSX grammar in TypeScript. Tags
+	// compiles against every dialect.
 	Dialects map[string]*ts.Language
 }
 
-// For returns the grammar that parses one file.
+// For returns the grammar that parses the file at p.
 func (g Grammar) For(p string) *ts.Language {
-	if held, dialect := g.Dialects[path.Ext(p)]; dialect {
-		return held
+	if dialect, ok := g.Dialects[path.Ext(p)]; ok {
+		return dialect
 	}
 	return g.Language
 }
 
-// each yields every grammar this declares, the main one first, so a
-// caller that must do something per grammar cannot miss a dialect.
+// each returns every grammar of g, Language first.
 func (g Grammar) each() []*ts.Language {
 	out := []*ts.Language{g.Language}
-	for _, held := range g.Dialects {
-		out = append(out, held)
+	for _, dialect := range g.Dialects {
+		out = append(out, dialect)
 	}
 	return out
 }

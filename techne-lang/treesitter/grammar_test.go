@@ -6,6 +6,7 @@ package treesitter_test
 import (
 	"testing"
 
+	ts "github.com/tree-sitter/go-tree-sitter"
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/lang/treesitter"
 )
@@ -13,16 +14,20 @@ import (
 func TestGrammar(t *testing.T) {
 	t.Parallel()
 
-	t.Run("zero value", func(t *testing.T) {
+	main, dialect := &ts.Language{}, &ts.Language{}
+	g := treesitter.Grammar{Language: main, Dialects: map[string]*ts.Language{".tsx": dialect}}
+
+	t.Run("For", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("declares neither a language nor a query", func(t *testing.T) {
+		t.Run("returns the dialect of the extension", func(t *testing.T) {
 			t.Parallel()
-			// Both are required. A zero Grammar reaching New must fail
-			// there rather than crashing on the first parse.
-			var unset treesitter.Grammar
-			assert.Nil(t, unset.Language, "an unset grammar carries no compiled language")
-			assert.Empty(t, unset.Tags, "an unset grammar carries no query")
+			assert.True(t, g.For("src/app.tsx") == dialect, "grammar")
+		})
+
+		t.Run("returns Language for an extension without a dialect", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, g.For("src/app.ts") == main, "grammar")
 		})
 	})
 }
