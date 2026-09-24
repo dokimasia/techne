@@ -149,7 +149,17 @@ func TestTechne(t *testing.T) {
 			assert.Empty(t, stderr, "the standard error")
 		})
 
-		t.Run("exits 2 for a flag other than --version", func(t *testing.T) {
+		t.Run("writes the usage to standard output for each help flag", func(t *testing.T) {
+			t.Parallel()
+			for _, flag := range []string{"-h", "--help"} {
+				stdout, stderr, code := ran(t, environment(t), flag)
+				assert.Equal(t, code, 0, "the exit status for "+flag)
+				assert.Equal(t, stdout, app.Usage, "the standard output for "+flag)
+				assert.Empty(t, stderr, "the standard error for "+flag)
+			}
+		})
+
+		t.Run("exits 2 for an undeclared flag", func(t *testing.T) {
 			t.Parallel()
 			stdout, stderr, code := ran(t, environment(t), "--verbose")
 			assert.Equal(t, code, 2, "the exit status")

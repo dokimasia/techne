@@ -4,21 +4,23 @@
 // Command techne serves the tools of a workspace to a client of the Model Context Protocol over
 // standard input and output.
 //
-//	techne [--version] [workspace]
+//	techne [-h | --help] [--version] [workspace]
 //
-// workspace is the root of the workspace, and the working directory when it is omitted.
-// --version writes the version to standard output and exits.
+// workspace is the root of the workspace, and the working directory when it is omitted. -h and
+// --help write the usage to standard output and exit. --version writes the version to standard
+// output and exits.
 //
 // # Streams
 //
-// Standard output carries the messages of the protocol alone. Every diagnostic, such as the
-// stack of a panic in a tool, goes to standard error.
+// While techne serves a workspace, standard output contains the messages of the protocol
+// alone. Every diagnostic, such as the stack of a panic in a tool, goes to standard error.
 //
 // # Exit status
 //
-//   - 0 after --version, after the client closes standard input, and after SIGINT or SIGTERM
+//   - 0 after a help flag or --version, after the client closes standard input, and after
+//     SIGINT or SIGTERM
 //   - 1 for a workspace that techne cannot serve, such as a root that does not exist
-//   - 2 for a flag other than --version, and for a second workspace
+//   - 2 for a flag other than -h, --help and --version, and for a second workspace
 //
 // # Environment
 //

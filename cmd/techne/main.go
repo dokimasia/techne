@@ -26,6 +26,10 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "techne: %v\n%s", err, app.Usage)
 		return 2
 	}
+	if command.Help {
+		fmt.Print(app.Usage)
+		return 0
+	}
 	if command.Version {
 		fmt.Println(version.Full())
 		return 0

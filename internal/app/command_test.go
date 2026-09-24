@@ -37,7 +37,28 @@ func TestCommand(t *testing.T) {
 			assert.Equal(t, got, app.Command{Version: true}, "the command of --version")
 		})
 
-		t.Run("returns an error for a flag other than --version", func(t *testing.T) {
+		t.Run("asks for the usage for --help", func(t *testing.T) {
+			t.Parallel()
+			got, err := app.Parse([]string{"--help"})
+			assert.NoError(t, err, "the error of Parse")
+			assert.Equal(t, got, app.Command{Help: true}, "the command of --help")
+		})
+
+		t.Run("asks for the usage for -h", func(t *testing.T) {
+			t.Parallel()
+			got, err := app.Parse([]string{"-h"})
+			assert.NoError(t, err, "the error of Parse")
+			assert.Equal(t, got, app.Command{Help: true}, "the command of -h")
+		})
+
+		t.Run("reads no argument after a help flag", func(t *testing.T) {
+			t.Parallel()
+			got, err := app.Parse([]string{"--version", "--help", "--verbose", "a", "b"})
+			assert.NoError(t, err, "the error of Parse")
+			assert.Equal(t, got, app.Command{Help: true}, "the command of --help before other arguments")
+		})
+
+		t.Run("returns an error for an undeclared flag", func(t *testing.T) {
 			t.Parallel()
 			_, err := app.Parse([]string{"--verbose"})
 			assert.HasError(t, err, "the error of Parse")

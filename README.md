@@ -66,12 +66,12 @@ Put the binary on your `PATH`.
 ## Run
 
 ```text
-techne [--version] [workspace]
+techne [-h | --help] [--version] [workspace]
 ```
 
-techne serves the workspace at the path that you pass, or the working directory. It writes
-only protocol messages to standard output, and its errors to standard error. `--version` prints
-the version and exits.
+techne serves the workspace at the path that you pass, or the working directory. While it
+serves, it writes only protocol messages to standard output, and its errors to standard error.
+`-h` and `--help` print the usage and exit. `--version` prints the version and exits.
 
 A write takes an advisory lock of the operating system for the workspace, and the write of
 another techne process waits until the lock is free. Agents that each run their own techne

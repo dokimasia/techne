@@ -8,19 +8,24 @@ import (
 	"strings"
 )
 
-// Usage is the text that the command writes to standard error for a command line that
-// [Parse] refuses.
-const Usage = `usage: techne [--version] [workspace]
+// Usage is the usage of techne. The command writes it to standard output for a help flag, and
+// to standard error after a command line that [Parse] refuses.
+const Usage = `usage: techne [-h | --help] [--version] [workspace]
 
 techne serves the tools of a workspace to a client of the Model Context Protocol over
 standard input and output. workspace is the root of the workspace, and the working
 directory when it is omitted.
 
-  --version  write the version to standard output and exit
+  -h, --help  write this text to standard output and exit
+  --version   write the version to standard output and exit
 `
 
-// versionFlag is the flag of [Command.Version].
-const versionFlag = "--version"
+const (
+	// versionFlag is the flag of [Command.Version].
+	versionFlag = "--version"
+	// helpFlag and helpLetter are the flags of [Command.Help].
+	helpFlag, helpLetter = "--help", "-h"
+)
 
 // Command is what a command line asks of techne.
 type Command struct {
@@ -30,15 +35,22 @@ type Command struct {
 
 	// Version asks for the version alone.
 	Version bool
+
+	// Help asks for the usage alone.
+	Help bool
 }
 
 // Parse returns the command of args, the arguments that follow the name of the program. It
-// returns an error for a flag other than --version and for a second workspace.
+// reads the arguments in order, and a help flag returns the command of the usage without
+// reading the arguments after it. Parse returns an error for a flag other than the help flags
+// and --version, and for a second workspace.
 func Parse(args []string) (Command, error) {
 	var out Command
 	rooted := false
 	for _, arg := range args {
 		switch {
+		case arg == helpFlag || arg == helpLetter:
+			return Command{Help: true}, nil
 		case arg == versionFlag:
 			out.Version = true
 		case strings.HasPrefix(arg, "-"):
