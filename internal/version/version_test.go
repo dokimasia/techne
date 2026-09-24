@@ -1,66 +1,49 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: MIT
 
-package version
+package version_test
 
-import "testing"
+import (
+	"testing"
 
-// TestFull pins the four output branches the cobra root reads
-// for `techne --version`:
-//
-//   - All build vars empty (dev build)      → "dev".
-//   - buildVersion set, buildCommit empty   → bare version.
-//   - buildVersion + buildCommit, no date   → "vX.Y.Z (sha)".
-//   - All three populated (release build)   → "vX.Y.Z (sha, built date)".
-//
-// buildVersion / buildCommit / buildDate are package-level vars
-// the linker sets; the test toggles them via package-internal
-// assignment for each branch and restores the originals on exit
-// so the test stays hermetic.
-func TestFull(t *testing.T) {
-	origVersion, origCommit, origDate := buildVersion, buildCommit, buildDate
-	t.Cleanup(func() {
-		buildVersion, buildCommit, buildDate = origVersion, origCommit, origDate
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/techne/internal/version"
+)
+
+func TestVersion(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Format", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns dev for an empty version", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, version.Format("", "abc123", "2026-01-01"), "dev", "the version string")
+		})
+
+		t.Run("returns the version for an empty commit", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, version.Format("1.2.3", "", "2026-01-01"), "1.2.3", "the version string")
+		})
+
+		t.Run("returns the version with the commit for an empty date", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, version.Format("1.2.3", "abc123", ""), "1.2.3 (abc123)", "the version string")
+		})
+
+		t.Run("returns the date of the build beside the commit", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, version.Format("1.2.3", "abc123", "2026-01-01"), "1.2.3 (abc123, built 2026-01-01)",
+				"the version string")
+		})
 	})
 
-	cases := []struct {
-		name    string
-		version string
-		commit  string
-		date    string
-		want    string
-	}{
-		{
-			name: "all empty returns dev",
-			want: "dev",
-		},
-		{
-			name:    "version only returns the bare tag",
-			version: "v1.2.3",
-			want:    "v1.2.3",
-		},
-		{
-			name:    "version plus commit returns parenthesised sha",
-			version: "v1.2.3",
-			commit:  "abc123",
-			want:    "v1.2.3 (abc123)",
-		},
-		{
-			name:    "all three returns version (sha, built date)",
-			version: "v1.2.3",
-			commit:  "abc123",
-			date:    "2026-01-01",
-			want:    "v1.2.3 (abc123, built 2026-01-01)",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			buildVersion = tc.version
-			buildCommit = tc.commit
-			buildDate = tc.date
-			if got := Full(); got != tc.want {
-				t.Errorf("Full() = %q, want %q", got, tc.want)
-			}
+	t.Run("Full", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns dev for a build without the flags", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, version.Full(), "dev", "the version of the test binary")
 		})
-	}
+	})
 }

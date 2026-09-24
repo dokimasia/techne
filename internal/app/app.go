@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -34,16 +35,10 @@ import (
 	"go.dokimi.dev/techne/tool"
 )
 
-// register is one language module's entry point. The list below is the
-// only place techne names a language.
+// register is the registration of one language module.
 type register func(lang.Workspace, *lang.Registry, *engine.Catalog) error
 
-// languages are the modules this binary ships with.
-//
-// Removing a language takes four edits, all in the root module: this
-// list, the import above, the require and replace in go.mod, and the use
-// line in go.work. The directory then goes. No other module names a
-// language, so none of them is touched.
+// languages are the registrations of the ten language modules of the binary.
 var languages = []register{
 	c.Register,
 	csharp.Register,
@@ -57,140 +52,68 @@ var languages = []register{
 	typescript.Register,
 }
 
-// Server is everything a transport needs, and what a test inspects.
+// mockVar is the variable of the environment whose value [Run] passes to [Build] as the
+// specification of the mock languages.
+const mockVar = "TECHNE_MOCK"
+
+// shutting is the time that [Run] gives the engines to stop after the session ends.
+const shutting = 5 * time.Second
+
+// Server is the tools and the languages of one workspace.
 type Server struct {
-	// Tools is what an agent may call.
+	// Tools are the tools that a client can call.
 	Tools *tool.Registry
-	// Languages are the ones registered, so a caller can report what
-	// this binary serves without knowing what was compiled in.
+
+	// Languages are the registered languages.
 	Languages []source.Language
 
-	// engines is what has to be stopped on the way out. A language
-	// server is a process, and one left running per language per run is
-	// a leak nobody sees until the machine is out of memory.
+	// engines are the engines of the languages, which Close closes.
 	engines *engine.Catalog
 }
 
-// Close stops every engine holding something that outlives a call.
-//
-// Whoever built the server calls it. An engine nobody asked anything
-// started nothing, so closing a server that answered no questions does
-// nothing.
+// Close closes every engine of the server that implements [engine.Closer], such as the engine
+// of a language server, within ctx. A language server starts at the first call of its engine.
 func (s *Server) Close(ctx context.Context) error { return s.engines.Close(ctx) }
 
-// mocked is the mock languages to register, read from the environment.
+// Build returns the server of the workspace w. It registers the ten language modules and the
+// mock languages of the specification mocks.
 //
-// Off unless asked for. A fake language in a real server's tool surface
-// would have an agent routing real work to something that answers from a
-// toy grammar, so it takes an explicit word to turn on.
+// The read tools read w, and the write tools write through files. Build leaves the write tools
+// out for a nil files. For a workspace that is not on disk, it registers only the engines that
+// read w.FS, such as the parsers, because a language server and the Go checker read the files
+// under w.Root.
 //
-//	TECHNE_MOCK=1                      one language, called mock
-//	TECHNE_MOCK=alpha,beta             two, which route separately
-//	TECHNE_MOCK=alpha,beta@syntactic   one that resolves beside one that
-//	                                   only parses
-//	TECHNE_MOCK=alpha@resolved/partial one that binds names and has not
-//	                                   finished reading the workspace
+// mocks is a list of entries separated by commas. An entry is the name of a mock language,
+// then optionally @ and a word of [trust.Fidelities], then optionally / and a word of
+// [trust.Completenesses]. The spec 1 or true is one language named mock, and the empty spec,
+// 0 or false is none.
 //
-// The tiers are what make a refusal drivable rather than described: an
-// operation that rewrites references is refused on partial coverage
-// however strong the binding, and there is no other way to stand a
-// workspace up in that state.
-func mocked() []register {
-	held := strings.TrimSpace(os.Getenv(mockVar))
-	switch held {
-	case "", "0", "false":
-		return nil
-	case "1", "true":
-		held = mock.Language
+// It returns an error for:
+//
+//   - a word of mocks that neither vocabulary has
+//   - a language module that does not register
+//   - a tool that does not build
+func Build(w lang.Workspace, files change.Files, mocks string) (*Server, error) {
+	simulated, err := mocked(mocks)
+	if err != nil {
+		return nil, err
 	}
-
-	var out []register
-	for spec := range strings.SplitSeq(held, ",") {
-		if spec = strings.TrimSpace(spec); spec != "" {
-			out = append(out, simulating(spec))
-		}
-	}
-	return out
-}
-
-// simulating reads one name@fidelity/completeness and returns its
-// registration.
-//
-// A tier nobody recognises is left at the default rather than refused.
-// This is a switch for driving the tools by hand, and failing to start
-// over a typo in it would be the wrong trade.
-func simulating(spec string) register {
-	name, tiers, _ := strings.Cut(spec, "@")
-	bound, covered, _ := strings.Cut(tiers, "/")
-
-	var opts []mock.Option
-	for held, f := range map[string]trust.Fidelity{
-		"none": trust.None, "syntactic": trust.Syntactic,
-		"indexed": trust.Indexed, "resolved": trust.Resolved,
-	} {
-		if held == bound {
-			opts = append(opts, mock.At(f))
-		}
-	}
-	for held, c := range map[string]trust.Completeness{
-		"unknown": trust.ScopeUnknown, "partial": trust.ScopePartial,
-		"total": trust.ScopeTotal,
-	} {
-		if held == covered {
-			opts = append(opts, mock.Covering(c))
-		}
-	}
-	return mock.Registering(name, opts...)
-}
-
-// mockVar names the languages to simulate.
-const mockVar = "TECHNE_MOCK"
-
-// shutting is how long a language server is given to stop before it is
-// killed. Long enough for one to write out what it was holding, short
-// enough that a client closing a connection does not wait on it.
-const shutting = 5 * time.Second
-
-// Build assembles a server over one workspace.
-//
-// The workspace is given twice: as the tree the engines read, and as the
-// [change.Files] the write path writes through. Passing nil for the
-// second registers the read tools alone, which is what a caller with
-// nothing to write to wants.
-//
-// A workspace carrying no root on disk registers parsers alone. A
-// language server is a process that opens files by name and cannot be
-// pointed at a tree that is nowhere, so it is left out rather than
-// declared and then failing on the first call.
-//
-// It reports an error when a language module refuses to register, which
-// is a mistake in that module rather than something a caller did.
-//
-// The result holds processes once anything is asked of it, so a caller
-// closes it.
-func Build(w lang.Workspace, files change.Files) (*Server, error) {
 	registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
-	shipped := append(slices.Clone(languages), mocked()...)
-	for _, add := range shipped {
-		if err := add(w, registry, catalogue); err != nil {
+	for _, add := range append(slices.Clone(languages), simulated...) {
+		if err = add(w, registry, catalogue); err != nil {
 			return nil, fmt.Errorf("app: %w", err)
 		}
 	}
 
 	reads := query.New(catalogue, registry)
 	tools := tool.NewRegistry()
-
-	// Every tool is built the same way and fails the same way, so the
-	// list below reads as what this server offers rather than as a
-	// check after each one. Joining rather than returning at the first
-	// means one run reports every tool that is broken.
-	offer := func(t tool.Tool, err error) error {
-		if err != nil {
-			return err
+	offer := func(t tool.Tool, failed error) error {
+		if failed != nil {
+			return failed
 		}
 		return tools.Add(t)
 	}
-	err := errors.Join(
+	err = errors.Join(
 		offer(tool.Outline(reads)),
 		offer(tool.Search(reads)),
 		offer(tool.Resolve(reads)),
@@ -215,31 +138,112 @@ func Build(w lang.Workspace, files change.Files) (*Server, error) {
 	return &Server{Tools: tools, Languages: registry.Languages(), engines: catalogue}, nil
 }
 
-// Run serves one workspace over stdio until the context is cancelled or
-// the client disconnects.
-func Run(ctx context.Context, root, version string) error {
-	if root == "" {
-		working, err := os.Getwd()
-		if err != nil {
-			return fmt.Errorf("app: workspace root: %w", err)
-		}
-		root = working
+// mocked returns the registrations of the mock languages of spec, in the syntax that [Build]
+// states.
+func mocked(spec string) ([]register, error) {
+	spec = strings.TrimSpace(spec)
+	switch spec {
+	case "", "0", "false":
+		return nil, nil
+	case "1", "true":
+		spec = mock.Language
 	}
 
-	workspace, err := files.Open(root)
+	var out []register
+	for entry := range strings.SplitSeq(spec, ",") {
+		if entry = strings.TrimSpace(entry); entry == "" {
+			continue
+		}
+		simulated, err := simulating(entry)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, simulated)
+	}
+	return out, nil
+}
+
+// simulating returns the registration of the mock language of one entry of a specification:
+// a name, then optionally @ and a fidelity, then optionally / and a completeness.
+func simulating(entry string) (register, error) {
+	name, tiers, _ := strings.Cut(entry, "@")
+	fidelity, completeness, _ := strings.Cut(tiers, "/")
+
+	var opts []mock.Option
+	if fidelity != "" {
+		f, err := word(name, "fidelity", fidelity, trust.Fidelities())
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, mock.At(f))
+	}
+	if completeness != "" {
+		c, err := word(name, "completeness", completeness, trust.Completenesses())
+		if err != nil {
+			return nil, err
+		}
+		opts = append(opts, mock.Covering(c))
+	}
+	return mock.Registering(name, opts...), nil
+}
+
+// word returns the value of values whose word is given, and an error that lists the words of
+// values when no value has it. name is the mock language, and what is the kind of the word.
+func word[T fmt.Stringer](name, what, given string, values []T) (T, error) {
+	words := make([]string, 0, len(values))
+	for _, v := range values {
+		if v.String() == given {
+			return v, nil
+		}
+		words = append(words, v.String())
+	}
+	var zero T
+	return zero, fmt.Errorf("app: the mock language %s does not take the %s %q. It takes %s",
+		name, what, given, strings.Join(words, ", "))
+}
+
+// Root returns given as an absolute path without symbolic links, and the working directory for
+// the empty path. [Run] passes this form to every engine and to the write path, so each of them
+// names a file of the workspace by the same path. It returns an error for a path that does not
+// exist.
+func Root(given string) (string, error) {
+	if given == "" {
+		given = "."
+	}
+	absolute, err := filepath.Abs(given)
+	if err != nil {
+		return "", fmt.Errorf("app: the workspace root %q: %w", given, err)
+	}
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return "", fmt.Errorf("app: the workspace root %q: %w", given, err)
+	}
+	return resolved, nil
+}
+
+// Run serves the workspace at root to a client over standard input and output. [Root] resolves
+// root, the variable TECHNE_MOCK is the specification of the mock languages of [Build], and the
+// server reports version to the client.
+//
+// Run returns nil when the client closes standard input, and the error of ctx when ctx is done.
+// After the session it gives the engines five seconds to stop.
+func Run(ctx context.Context, root, version string) error {
+	resolved, err := Root(root)
+	if err != nil {
+		return err
+	}
+	workspace, err := files.Open(resolved)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = workspace.Close() }()
 
-	built, err := Build(lang.Workspace{FS: workspace.FS(), Root: root}, workspace)
+	built, err := Build(lang.Workspace{FS: workspace.FS(), Root: resolved}, workspace, os.Getenv(mockVar))
 	if err != nil {
 		return err
 	}
-	// The servers outlive the request that started them and are stopped
-	// here, on a context of its own: the one that served is cancelled by
-	// the time this runs, and a shutdown needs one that is not.
 	defer func() {
+		// ctx is done after a signal, so the engines stop on a context that ctx does not cancel.
 		stopping, stop := context.WithTimeout(context.WithoutCancel(ctx), shutting)
 		defer stop()
 		_ = built.Close(stopping)

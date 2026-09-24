@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"io/fs"
-	"strings"
+	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 	"testing/fstest"
 
@@ -17,42 +19,45 @@ import (
 	"go.dokimi.dev/techne/lang"
 )
 
-// held is the workspace as something that can be written to, so a test
-// drives the write path without a directory and reads back what landed.
-type held struct{ files fstest.MapFS }
+// inMemory is the files of a workspace in memory, which the write path writes to.
+type inMemory struct{ files fstest.MapFS }
 
-func (h held) Read(p source.Path) ([]byte, error) {
-	one, there := h.files[string(p)]
+func (m inMemory) Read(p source.Path) ([]byte, error) {
+	one, there := m.files[string(p)]
 	if !there {
 		return nil, fs.ErrNotExist
 	}
 	return one.Data, nil
 }
 
-func (h held) Write(p source.Path, content []byte) error {
-	h.files[string(p)] = &fstest.MapFile{Data: content}
+func (m inMemory) Write(p source.Path, content []byte) error {
+	m.files[string(p)] = &fstest.MapFile{Data: content}
 	return nil
 }
 
-func (h held) Remove(p source.Path) error {
-	delete(h.files, string(p))
+func (m inMemory) Remove(p source.Path) error {
+	delete(m.files, string(p))
 	return nil
 }
 
-func (h held) Move(from, to source.Path) error {
-	one, there := h.files[string(from)]
+func (m inMemory) Move(from, to source.Path) error {
+	one, there := m.files[string(from)]
 	if !there {
 		return fs.ErrNotExist
 	}
-	h.files[string(to)] = one
-	delete(h.files, string(from))
+	m.files[string(to)] = one
+	delete(m.files, string(from))
 	return nil
 }
 
-func (held) Lock(context.Context) (func(), error) { return func() {}, nil }
+func (inMemory) Lock(context.Context) (func(), error) { return func() {}, nil }
 
-// workspace holds one file per language techne ships with, plus one it
-// serves for no language.
+// modules are the languages of the ten language modules, sorted.
+var modules = []source.Language{
+	"c", "csharp", "go", "java", "javascript", "python", "ruby", "rust", "scala", "typescript",
+}
+
+// workspace returns a file of each of five languages and a file of no language.
 func workspace() fstest.MapFS {
 	return fstest.MapFS{
 		"src/service.go":   {Data: []byte("package src\n\nfunc New() int { return 1 }\n")},
@@ -64,36 +69,46 @@ func workspace() fstest.MapFS {
 	}
 }
 
-func built(t *testing.T) *app.Server {
+// built returns the server of files with the write tools and the mock languages of mocks, and
+// closes it when the test ends.
+func built(t *testing.T, files fstest.MapFS, mocks string) *app.Server {
 	t.Helper()
-	s, _ := over(t, workspace())
+	s, err := app.Build(lang.Workspace{FS: files}, inMemory{files: files}, mocks)
+	assert.NoError(t, err, "the error of Build")
+	t.Cleanup(func() { _ = s.Close(context.WithoutCancel(t.Context())) })
 	return s
 }
 
-// over builds a server on one workspace and hands back the files, so a
-// test that writes can read what it wrote.
-func over(t *testing.T, files fstest.MapFS) (*app.Server, fstest.MapFS) {
-	t.Helper()
-	s, err := app.Build(lang.Workspace{FS: files}, held{files: files})
-	t.Cleanup(func() { _ = s.Close(t.Context()) })
-	assert.NoError(t, err, "every language techne ships with registers into one workspace")
-	return s, files
+// named returns the names of the tools of s, in the order of the registry.
+func named(s *app.Server) []string {
+	var out []string
+	for _, one := range s.Tools.Tools() {
+		out = append(out, one.Name())
+	}
+	return out
 }
 
-func run(t *testing.T, name, input string) map[string]any {
+// languages returns the languages of s, sorted.
+func languages(s *app.Server) []source.Language {
+	out := slices.Clone(s.Languages)
+	slices.Sort(out)
+	return out
+}
+
+// call returns the payload of a call of the tool name of s with input, decoded as an object.
+func call(t *testing.T, s *app.Server, name, input string) map[string]any {
 	t.Helper()
-	tools := built(t).Tools.Tools()
-	for _, candidate := range tools {
+	for _, candidate := range s.Tools.Tools() {
 		if candidate.Name() != name {
 			continue
 		}
 		got, err := candidate.Execute(t.Context(), json.RawMessage(input))
-		assert.NoError(t, err, "a well-formed call reaches the service")
+		assert.NoError(t, err, "the error of Execute of "+name)
 		var decoded map[string]any
-		assert.NoError(t, json.Unmarshal(got.Payload, &decoded), "the answer is JSON a caller can read")
+		assert.NoError(t, json.Unmarshal(got.Payload, &decoded), "the payload of "+name)
 		return decoded
 	}
-	t.Fatalf("no tool named %q is registered", name)
+	t.Fatalf("no tool is named %q", name)
 	return nil
 }
 
@@ -103,131 +118,207 @@ func TestApp(t *testing.T) {
 	t.Run("Build", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("registers every language techne ships with", func(t *testing.T) {
+		t.Run("registers the ten languages of the binary", func(t *testing.T) {
 			t.Parallel()
-			assert.Length(t, built(t).Languages, 10,
-				"a language is registered by an explicit call, so the set is what this root chose")
+			assert.Equal(t, languages(built(t, workspace(), "")), modules, "the languages of the server")
 		})
 
-		t.Run("offers the read tools", func(t *testing.T) {
+		t.Run("registers the mock languages of a specification", func(t *testing.T) {
 			t.Parallel()
-			var names []string
-			for _, registered := range built(t).Tools.Tools() {
-				names = append(names, registered.Name())
+			want := append(slices.Clone(modules), "alpha", "beta")
+			slices.Sort(want)
+			assert.Equal(t, languages(built(t, workspace(), "alpha, beta")), want, "the languages of the server")
+		})
+
+		t.Run("registers the language mock for the specification 1", func(t *testing.T) {
+			t.Parallel()
+			got := built(t, workspace(), "1").Languages
+			assert.True(t, slices.Contains(got, source.Language("mock")), "the languages of the server")
+		})
+
+		t.Run("registers no mock language for the specification 0", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, languages(built(t, workspace(), "0")), modules, "the languages of the server")
+		})
+
+		t.Run("registers a mock language at the tiers of a specification", func(t *testing.T) {
+			t.Parallel()
+			files := fstest.MapFS{"a.alpha": {Data: []byte("type Store\n")}}
+			got := call(t, built(t, files, "alpha@indexed/partial"), "outline", `{"scope":"a.alpha"}`)
+			provenance := got["provenance"].(map[string]any)
+			assert.Equal(t, provenance["fidelity"], any("indexed"), "the fidelity of the outline")
+			assert.Equal(t, provenance["completeness"], any("partial"), "the completeness of the outline")
+		})
+
+		t.Run("returns an error for a fidelity that trust does not declare", func(t *testing.T) {
+			t.Parallel()
+			_, err := app.Build(lang.Workspace{FS: fstest.MapFS{}}, nil, "alpha@resolvd")
+			assert.HasError(t, err, "the error of Build")
+			assert.Equal(t, err.Error(), `app: the mock language alpha does not take the fidelity "resolvd". `+
+				"It takes none, syntactic, indexed, resolved", "the error of Build")
+		})
+
+		t.Run("returns an error for a completeness that trust does not declare", func(t *testing.T) {
+			t.Parallel()
+			_, err := app.Build(lang.Workspace{FS: fstest.MapFS{}}, nil, "alpha@resolved/whole")
+			assert.HasError(t, err, "the error of Build")
+			assert.Equal(t, err.Error(), `app: the mock language alpha does not take the completeness "whole". `+
+				"It takes unknown, partial, total", "the error of Build")
+		})
+
+		t.Run("offers the read tools without files", func(t *testing.T) {
+			t.Parallel()
+			s, err := app.Build(lang.Workspace{FS: workspace()}, nil, "")
+			assert.NoError(t, err, "the error of Build")
+			t.Cleanup(func() { _ = s.Close(context.WithoutCancel(t.Context())) })
+			assert.Equal(t, named(s), []string{"outline", "search", "resolve", "relations", "verify", "capabilities"},
+				"the tools of the server")
+		})
+
+		t.Run("offers the write tools with files", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, named(built(t, workspace(), "")), []string{
+				"outline", "search", "resolve", "relations", "verify", "capabilities",
+				"document.symbol", "rename.symbol", "move.file", "extract.function", "apply.change",
+			}, "the tools of the server")
+		})
+
+		t.Run("starts the description of every tool with PREFER OVER", func(t *testing.T) {
+			t.Parallel()
+			for _, one := range built(t, workspace(), "").Tools.Tools() {
+				assert.HasPrefix(t, one.Description(), "PREFER OVER ", "the description of "+one.Name())
 			}
-			assert.Contains(t, names, "outline", "an agent can ask what a file declares")
-			assert.Contains(t, names, "search", "an agent can ask where something is declared")
-			assert.Contains(t, names, "capabilities", "an agent can ask what the server can do")
 		})
 
-		t.Run("names the built-in each tool replaces", func(t *testing.T) {
+		t.Run("outlines a file of each of five languages", func(t *testing.T) {
 			t.Parallel()
-			// An agent shown a tool with no reason to prefer it reaches
-			// for grep instead, and a tool nothing calls has no cost to
-			// measure.
-			for _, registered := range built(t).Tools.Tools() {
-				assert.HasPrefix(t, registered.Description(), "PREFER OVER ",
-					"every description says which built-in it replaces and why")
-			}
-		})
-	})
-
-	t.Run("outline", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("answers about every registered language", func(t *testing.T) {
-			t.Parallel()
-			for path, want := range map[string]string{
+			s := built(t, workspace(), "")
+			for path, language := range map[string]string{
 				"src/service.go":   "go",
 				"src/service.py":   "python",
 				"src/Service.java": "java",
 				"src/service.rs":   "rust",
 				"src/service.ts":   "typescript",
 			} {
-				got := run(t, "outline", `{"scope":"`+path+`"}`)
+				got := call(t, s, "outline", `{"scope":"`+path+`"}`)
 				_, failed := got["error"]
-				assert.False(t, failed, "a file of a registered language is answered")
-				items, ok := got["items"].([]any)
-				assert.True(t, ok, "an answer carries its items")
-				assert.NotEmpty(t, items, "a file declaring something outlines to something")
-				// The language is a fact about the whole answer, so it is
-				// stated once rather than on each of its items.
-				scope := got["scope"].(map[string]any)
-				assert.Equal(t, scope["language"].(string), want,
-					"the answer names the language that served it")
+				assert.False(t, failed, "the error of the outline of "+path)
+				assert.NotEmpty(t, got["items"], "the items of the outline of "+path)
+				assert.Equal(t, got["scope"].(map[string]any)["language"], any(language),
+					"the language of the outline of "+path)
 			}
 		})
 
-		t.Run("says a file it serves no language for is unsupported", func(t *testing.T) {
+		t.Run("returns unsupported for a file of no language", func(t *testing.T) {
 			t.Parallel()
-			// A capability gap is something a caller routes around.
-			got := run(t, "outline", `{"scope":"README.md"}`)
-			assert.Equal(t, got["error"].(map[string]any)["code"], "unsupported",
-				"no language claims a markdown file")
+			got := call(t, built(t, workspace(), ""), "outline", `{"scope":"README.md"}`)
+			assert.Equal(t, got["error"].(map[string]any)["code"], any("unsupported"), "the code of the error")
 		})
 
-		t.Run("never claims a parser proves absence", func(t *testing.T) {
+		t.Run("outlines a Go file at the syntactic tier", func(t *testing.T) {
 			t.Parallel()
-			got := run(t, "outline", `{"scope":"src/service.go"}`)
+			got := call(t, built(t, workspace(), ""), "outline", `{"scope":"src/service.go"}`)
 			provenance := got["provenance"].(map[string]any)
-			assert.Equal(t, provenance["fidelity"], "syntactic", "only a parser is registered so far")
-			assert.Equal(t, provenance["supportsNegativeClaim"], false,
-				"a name matched across files is coincidence, so an empty answer proves nothing")
+			assert.Equal(t, provenance["fidelity"], any("syntactic"), "the fidelity of the outline")
+			assert.Equal(t, provenance["supportsNegativeClaim"], any(false), "the negative claim of the outline")
 		})
-	})
 
-	t.Run("search", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("finds a declaration across the workspace", func(t *testing.T) {
+		t.Run("searches the workspace for a name", func(t *testing.T) {
 			t.Parallel()
-			got := run(t, "search", `{"text":"new","scope":"src","language":"go"}`)
+			got := call(t, built(t, workspace(), ""), "search", `{"text":"new","scope":"src","language":"go"}`)
 			_, failed := got["error"]
-			assert.False(t, failed, "a search over a registered language is answered")
-			assert.NotEmpty(t, got["items"], "the workspace declares something by that name")
+			assert.False(t, failed, "the error of the search")
+			assert.NotEmpty(t, got["items"], "the items of the search")
 		})
 
-		t.Run("returns one match whole, with no second call", func(t *testing.T) {
+		t.Run("returns a single match with its signature", func(t *testing.T) {
 			t.Parallel()
-			got := run(t, "search", `{"text":"New","scope":"src/service.go"}`)
+			got := call(t, built(t, workspace(), ""), "search", `{"text":"New","scope":"src/service.go"}`)
 			items := got["items"].([]any)
-			assert.Length(t, items, 1, "one declaration matched")
+			assert.Length(t, items, 1, "the items of the search")
 			first := items[0].(map[string]any)
-			assert.Equal(t, first["name"].(string), "New", "the declaration searched for comes back")
-			assert.NotNil(t, first["line"], "a single match carries where it lives")
-			assert.NotEmpty(t, first["signature"], "a single match carries how to call it")
+			assert.Equal(t, first["name"], any("New"), "the name of the match")
+			assert.NotNil(t, first["line"], "the line of the match")
+			assert.NotEmpty(t, first["signature"], "the signature of the match")
+		})
+
+		t.Run("reports the capabilities of the ten languages", func(t *testing.T) {
+			t.Parallel()
+			var got []source.Language
+			for _, item := range call(t, built(t, workspace(), ""), "capabilities", `{}`)["items"].([]any) {
+				language := source.Language(item.(map[string]any)["language"].(string))
+				if !slices.Contains(got, language) {
+					got = append(got, language)
+				}
+			}
+			slices.Sort(got)
+			assert.Equal(t, got, modules, "the languages of the capabilities")
+		})
+
+		t.Run("reports the outline of Go as available at the syntactic tier", func(t *testing.T) {
+			t.Parallel()
+			items := call(t, built(t, workspace(), ""), "capabilities", `{"language":"go"}`)["items"].([]any)
+			assert.NotEmpty(t, items, "the capabilities of Go")
+			first := items[0].(map[string]any)
+			assert.Equal(t, first["role"], any("outline"), "the role of the first capability")
+			assert.Equal(t, first["available"], any(true), "Available of the first capability")
+			assert.Equal(t, first["fidelity"], any("syntactic"), "the fidelity of the first capability")
 		})
 	})
 
-	t.Run("capabilities", func(t *testing.T) {
+	t.Run("Close", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("reports every language, so an agent need not guess", func(t *testing.T) {
+		t.Run("returns nil for a server that served no call", func(t *testing.T) {
 			t.Parallel()
-			raw := run(t, "capabilities", `{}`)
-			items, ok := raw["items"].([]any)
-			assert.True(t, ok, "the report carries its items")
+			s, err := app.Build(lang.Workspace{FS: workspace()}, nil, "")
+			assert.NoError(t, err, "the error of Build")
+			assert.NoError(t, s.Close(t.Context()), "the error of Close")
+		})
+	})
 
-			seen := map[string]bool{}
-			for _, item := range items {
-				seen[item.(map[string]any)["language"].(string)] = true
-			}
-			for _, language := range []string{"go", "python", "java", "rust", "typescript"} {
-				assert.True(t, seen[language],
-					"a caller asks the server what it serves rather than inferring it from tool names")
-			}
+	t.Run("Root", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("resolves a symbolic link in the root", func(t *testing.T) {
+			t.Parallel()
+			target := t.TempDir()
+			link := filepath.Join(t.TempDir(), "link")
+			assert.NoError(t, os.Symlink(target, link), "the error of Symlink")
+			want, err := filepath.EvalSymlinks(target)
+			assert.NoError(t, err, "the error of EvalSymlinks")
+			got, err := app.Root(link)
+			assert.NoError(t, err, "the error of Root")
+			assert.Equal(t, got, want, "the root of the link")
 		})
 
-		t.Run("reports the outline role as available", func(t *testing.T) {
+		t.Run("returns the working directory for the empty root", func(t *testing.T) {
 			t.Parallel()
-			raw := run(t, "capabilities", `{"language":"go"}`)
-			items := raw["items"].([]any)
-			assert.NotEmpty(t, items, "Go is served")
-			first := items[0].(map[string]any)
-			assert.Equal(t, first["role"], "outline", "the parser serves the outline role")
-			assert.Equal(t, first["available"], true, "an in-process parser can always run")
-			assert.False(t, strings.Contains(first["fidelity"].(string), "resolved"),
-				"no type checker is registered yet, so nothing claims resolved evidence")
+			working, err := os.Getwd()
+			assert.NoError(t, err, "the error of Getwd")
+			want, err := filepath.EvalSymlinks(working)
+			assert.NoError(t, err, "the error of EvalSymlinks")
+			got, err := app.Root("")
+			assert.NoError(t, err, "the error of Root")
+			assert.Equal(t, got, want, "the root of the empty path")
+		})
+
+		t.Run("resolves a relative root against the working directory", func(t *testing.T) {
+			t.Parallel()
+			working, err := os.Getwd()
+			assert.NoError(t, err, "the error of Getwd")
+			want, err := filepath.EvalSymlinks(filepath.Dir(working))
+			assert.NoError(t, err, "the error of EvalSymlinks")
+			got, err := app.Root("..")
+			assert.NoError(t, err, "the error of Root")
+			assert.Equal(t, got, want, "the root of ..")
+		})
+
+		t.Run("returns an error for a root that does not exist", func(t *testing.T) {
+			t.Parallel()
+			_, err := app.Root(filepath.Join(t.TempDir(), "nowhere"))
+			assert.HasError(t, err, "the error of Root")
+			assert.HasPrefix(t, err.Error(), "app: the workspace root ", "the error of Root")
 		})
 	})
 }

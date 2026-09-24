@@ -1,43 +1,44 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: MIT
 
-// Package version exposes the build metadata ldflags inject at
-// link time. Callers (typically a cobra root command) read [Full]
-// to populate `techne --version`; the release pipeline
-// (goreleaser) sets the three build-time variables via
-// `-X go.dokimi.dev/techne/internal/version.buildVersion=<value>`
-// (and similarly for buildCommit / buildDate).
 package version
 
-// buildVersion is the semver tag goreleaser stamps at link time.
-// Empty for unstamped local builds; [Full] then returns "dev".
-var buildVersion = ""
+// The variables of the build, which the release build sets with -X flags of the linker. Each is
+// empty in a build without the flags.
+var (
+	// buildVersion is the version of the release, such as 1.2.3.
+	buildVersion = ""
 
-// buildCommit is the git SHA goreleaser stamps at link time.
-// Empty for unstamped local builds.
-var buildCommit = ""
+	// buildCommit is the commit of the release.
+	buildCommit = ""
 
-// buildDate is the commit date goreleaser stamps at link time.
-// Empty for unstamped local builds.
-var buildDate = ""
+	// buildDate is the date of the commit.
+	buildDate = ""
+)
 
-// Full returns the human-facing version string for `--version`.
-// Output shape varies with how many fields the linker populated:
-//
-//   - all empty                   → "dev"
-//   - buildVersion only           → "vX.Y.Z"
-//   - buildVersion + buildCommit  → "vX.Y.Z (sha)"
-//   - all three                   → "vX.Y.Z (sha, built date)"
+// Full returns the version of this build, as [Format] writes the variables that the release
+// build sets.
 func Full() string {
-	if buildVersion == "" {
+	return Format(buildVersion, buildCommit, buildDate)
+}
+
+// Format returns the version string of a build of version, commit and date:
+//
+//   - dev for an empty version
+//   - the version for an empty commit
+//   - the version with the commit in parentheses for an empty date
+//   - the version with the commit and the date in parentheses otherwise
+//
+// Format("1.2.3", "abc123", "2026-01-01") returns "1.2.3 (abc123, built 2026-01-01)".
+func Format(version, commit, date string) string {
+	switch {
+	case version == "":
 		return "dev"
+	case commit == "":
+		return version
+	case date == "":
+		return version + " (" + commit + ")"
+	default:
+		return version + " (" + commit + ", built " + date + ")"
 	}
-	if buildCommit == "" {
-		return buildVersion
-	}
-	suffix := buildCommit
-	if buildDate != "" {
-		suffix += ", built " + buildDate
-	}
-	return buildVersion + " (" + suffix + ")"
 }

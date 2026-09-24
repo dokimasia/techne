@@ -1,12 +1,6 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: MIT
 
-// Command techne serves code intelligence over MCP.
-//
-// It reads the workspace given as its first argument, or the working
-// directory when given none, and speaks the protocol over stdin and
-// stdout. Nothing but protocol traffic is written to stdout: a stray
-// print there corrupts the stream, so every diagnostic goes to stderr.
 package main
 
 import (
@@ -21,32 +15,28 @@ import (
 )
 
 func main() {
-	os.Exit(run())
+	os.Exit(run(os.Args[1:]))
 }
 
-// run returns the exit code, so main holds the one os.Exit and every
-// deferred cleanup still runs.
-func run() int {
+// run runs the command line args and returns the exit status. main exits with it after the
+// deferred calls of run have returned.
+func run(args []string) int {
+	command, err := app.Parse(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "techne: %v\n%s", err, app.Usage)
+		return 2
+	}
+	if command.Version {
+		fmt.Println(version.Full())
+		return 0
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-
-	root := rootFrom(os.Args)
-
-	// A cancelled context is how a client disconnects or an operator
-	// interrupts, neither of which is a failure.
-	if err := app.Run(ctx, root, version.Full()); err != nil && ctx.Err() == nil {
+	// A signal ends the session, and the error of Run for it is ctx.Err().
+	if err := app.Run(ctx, command.Root, version.Full()); err != nil && ctx.Err() == nil {
 		fmt.Fprintln(os.Stderr, "techne:", err)
 		return 1
 	}
 	return 0
-}
-
-// rootFrom reads the workspace root from the command line. Empty means
-// the working directory, which is what an agent launching the server
-// with no arguments gets.
-func rootFrom(args []string) string {
-	if len(args) > 1 {
-		return args[1]
-	}
-	return ""
 }
