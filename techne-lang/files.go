@@ -12,105 +12,121 @@ import (
 	"go.dokimi.dev/techne/core/source"
 )
 
-// FilesIn returns the files in a scope that a language claims, in a
-// stable order.
-//
-// The scope is one file or one directory. A directory is walked; a file
-// yields itself. A file the language does not claim yields nothing
-// rather than an error, because a directory holding several languages is
-// the normal case and every engine walking one meets it.
-//
-// A scope that does not exist is an error. Answering nothing would read
-// as "this directory declares nothing", which is a different fact from
-// "there is no such directory".
-//
-// A directory holding code the workspace did not write is not walked;
-// see [Vendored] for which and why. What the workspace itself says is
-// not its source is not walked either; see [ignores]. The scope itself
-// is never skipped either way, so a caller that names one is answered
-// about it.
-//
-// Every engine reading files needs this, so it lives here rather than in
-// one of them.
-func FilesIn(fsys fs.FS, scope source.Path, extensions []string) ([]source.Path, error) {
-	name := path.Clean(string(scope))
-	if name == "" {
-		name = "."
-	}
+// Files are the files a walk returns.
+type Files struct {
+	// Read are the claimed files of at most Largest bytes, sorted.
+	Read []source.Path
+	// Unread are the claimed files larger than Largest, sorted. An engine
+	// reports them in a trust.CaveatUnread.
+	Unread []source.Path
+}
 
-	info, err := fs.Stat(fsys, name)
+// Walk returns the files in scope whose extension is one of extensions.
+// The scope is a file or a directory, relative to the root of fsys.
+//
+// Walk does not enter a directory that [Vendored] names or that the
+// .gitignore files of the workspace exclude, unless that directory is the
+// scope. It returns [GeneratedError] when the .gitignore files exclude the
+// scope, and an error when the scope does not exist. A file scope with an
+// extension outside extensions returns no files.
+func Walk(fsys fs.FS, scope source.Path, extensions []string) (Files, error) {
+	name, info, rules, err := located(fsys, scope)
 	if err != nil {
-		return nil, fmt.Errorf("lang: scope %q: %w", scope, err)
+		return Files{}, err
 	}
 
-	// The rules above the scope apply to everything in it, so they are
-	// read before anything else. A caller narrowing to one package still
-	// gets what the workspace root said about generated code, and a
-	// caller naming one file gets it as surely as one naming a
-	// directory: the 3.2 megabyte bundle that made this worth measuring
-	// is a file, and reached by name it was parsed.
-	var skipping ignores
-	for _, above := range ancestors(name) {
-		skipping.reading(fsys, above)
-	}
-	if skipping.skips(name, info.IsDir()) {
-		// The scope is what the workspace calls generated. A dependency
-		// directory is exempt when a caller names one, because reading a
-		// dependency is a thing to want; this is not the same — it is
-		// the project's own statement that this holds output, and
-		// parsing it costs whatever the build wrote.
-		//
-		// Reported rather than read, so a caller is told why the answer
-		// is empty instead of reading it as an empty directory.
-		return nil, GeneratedError{Scope: scope}
-	}
-
+	var out Files
 	if !info.IsDir() {
-		if !Claims(name, extensions) {
-			return nil, nil
+		if Claims(name, extensions) {
+			out.add(source.Path(name), info.Size())
 		}
-		return []source.Path{source.Path(name)}, nil
+		return out, nil
 	}
 
-	var out []source.Path
-	walkErr := fs.WalkDir(fsys, name, func(p string, d fs.DirEntry, err error) error {
+	err = fs.WalkDir(fsys, name, func(p string, d fs.DirEntry, err error) error {
 		switch {
 		case err != nil:
 			return err
 		case d.IsDir():
-			// The scope itself is never skipped. A caller that named a
-			// dependency directory asked about it, and answering nothing
-			// would report it as empty.
-			if p != name && (Vendored(path.Base(p)) || skipping.skips(p, true)) {
+			if p != name && (Vendored(path.Base(p)) || rules.skips(p, true)) {
 				return fs.SkipDir
 			}
-			// Read on the way in, so a directory's own rules apply to
-			// everything under it and to nothing above it.
-			skipping.reading(fsys, p)
+			rules.read(fsys, p)
 			return nil
-		case !Claims(p, extensions) || skipping.skips(p, false):
+		case !Claims(p, extensions) || rules.skips(p, false):
 			return nil
 		}
-		out = append(out, source.Path(p))
+		if size, ok := sizeOf(fsys, p, d); ok {
+			out.add(source.Path(p), size)
+		}
 		return nil
 	})
-	if walkErr != nil {
-		return nil, fmt.Errorf("lang: walk %q: %w", scope, walkErr)
+	if err != nil {
+		return Files{}, fmt.Errorf("lang: walk %q: %w", scope, err)
 	}
-	slices.Sort(out)
+	slices.Sort(out.Read)
+	slices.Sort(out.Unread)
 	return out, nil
 }
 
-// Claims reports whether one of the extensions covers a path.
-//
-// The rule is the file's extension and nothing else, so it needs no
-// filesystem and answers about a path that does not exist. An engine
-// that must decide whether a scope is one of its files before it reads
-// anything asks this rather than carrying its own copy: two copies of
-// the rule are two answers to "which language owns this path", and a
-// read and a write that disagree plan a change with one engine and gate
-// it with another.
+// FilesIn returns the read and unread files of [Walk] in one sorted list.
+func FilesIn(fsys fs.FS, scope source.Path, extensions []string) ([]source.Path, error) {
+	files, err := Walk(fsys, scope, extensions)
+	if err != nil {
+		return nil, err
+	}
+	all := slices.Concat(files.Read, files.Unread)
+	slices.Sort(all)
+	return all, nil
+}
+
+// Claims reports whether the extension of p is one of extensions. It reads
+// no filesystem, so it also applies to a path that does not exist.
 func Claims(p string, extensions []string) bool {
 	suffix := path.Ext(p)
 	return suffix != "" && slices.Contains(extensions, suffix)
+}
+
+// add records p in Read or Unread by its size.
+func (f *Files) add(p source.Path, size int64) {
+	if size > Largest {
+		f.Unread = append(f.Unread, p)
+		return
+	}
+	f.Read = append(f.Read, p)
+}
+
+// located cleans scope, reads the .gitignore files of every directory above
+// it, and returns the result with the FileInfo of scope. It returns
+// GeneratedError when those files exclude scope, and an error when scope
+// does not exist. Walk and Readable call it before they apply their own
+// rules.
+func located(fsys fs.FS, scope source.Path) (string, fs.FileInfo, *ignores, error) {
+	name := path.Clean(string(scope))
+	info, err := fs.Stat(fsys, name)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("lang: %q: %w", scope, err)
+	}
+	rules := &ignores{}
+	for _, dir := range ancestors(name) {
+		rules.read(fsys, dir)
+	}
+	if rules.excludes(name, info.IsDir()) {
+		return "", nil, nil, GeneratedError{Scope: scope}
+	}
+	return name, info, rules, nil
+}
+
+// sizeOf returns the size of the file at p, following a symbolic link. It
+// reports false for a link to a directory, a link to nothing, and a file
+// removed during the walk.
+func sizeOf(fsys fs.FS, p string, d fs.DirEntry) (int64, bool) {
+	info, err := d.Info()
+	if err == nil && info.Mode()&fs.ModeSymlink != 0 {
+		info, err = fs.Stat(fsys, p)
+	}
+	if err != nil || info.IsDir() {
+		return 0, false
+	}
+	return info.Size(), true
 }

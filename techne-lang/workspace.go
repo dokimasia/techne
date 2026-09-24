@@ -7,25 +7,17 @@ import "io/fs"
 
 // Workspace is the tree a language module builds its engines over.
 //
-// Two views of one tree, because the engines need different things from
-// it. A parser reads content and nothing else, so it takes an
-// [io/fs.FS]: every path stays relative, nothing can climb out, and the
-// tree need never have been written to disk. A language server is a
-// process that opens files itself and cannot be handed a filesystem that
-// is not one, so it takes a path.
-//
-// The second is therefore optional. A workspace that is nowhere on disk
-// carries an empty [Workspace.Root], and a module registers its parser
-// and no server rather than failing.
+// FS serves the parsers, which read content through io/fs. Root serves the
+// language servers, which open files by path. A workspace that exists only
+// in memory has an empty Root, and a language module then registers no
+// server.
 type Workspace struct {
-	// FS is the tree, rooted at the workspace.
+	// FS is the tree, rooted at the workspace root.
 	FS fs.FS
 
-	// Root is where that tree is on disk, and is empty when it is
-	// nowhere.
+	// Root is the directory of the tree on disk, or empty.
 	Root string
 }
 
-// OnDisk reports whether this workspace can host a process that opens
-// files by name.
+// OnDisk reports whether Root is set.
 func (w Workspace) OnDisk() bool { return w.Root != "" }

@@ -13,35 +13,30 @@ import (
 	"go.dokimi.dev/techne/core/source"
 )
 
-// Registry holds the declared languages and routes a path to one.
-//
-// A composition root builds one, registers every language module into
-// it, and then serves requests. It is safe for concurrent reads once
-// building is finished; nothing registers a language afterwards.
+// Registry maps extensions to the declared languages. A composition root
+// builds one and registers every language module before it serves requests.
+// After that, the methods of a Registry are safe for concurrent use.
 type Registry struct {
-	declared map[source.Language]Declaration
-	bySuffix map[string]source.Language
+	declared    map[source.Language]Declaration
+	byExtension map[string]source.Language
 }
 
-// NewRegistry returns a registry holding no languages.
+// NewRegistry returns an empty Registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		declared: map[source.Language]Declaration{},
-		bySuffix: map[string]source.Language{},
+		declared:    map[source.Language]Declaration{},
+		byExtension: map[string]source.Language{},
 	}
 }
 
-// Register records a language and adds its engines to the catalogue.
+// Register records d and adds engines to cat. It checks d and engines
+// before it changes r or cat, and returns an error when d is incomplete,
+// when another module declared d.Language or one of d.Extensions, when an
+// engine serves another language, or when two engines have one name.
 //
-// It refuses an incomplete declaration, a language or an extension
-// already claimed, and an engine answering about a different language.
-// A refusal changes nothing: the catalogue is only touched once every
-// check has passed, so a rejected module leaves no engines behind.
-//
-// A composition root calls this once per language. Nothing registers
-// from an init function: the set of languages has to be a value the
-// caller chooses, so that a test can build a registry holding one
-// language and a smaller binary can ship a subset.
+// A composition root calls Register once per language module, so the set
+// of languages is chosen by the caller: a test registers one language, and
+// a smaller binary registers a subset.
 func (r *Registry) Register(cat *engine.Catalog, d Declaration, engines ...engine.Engine) error {
 	if err := validate(d); err != nil {
 		return err
@@ -50,15 +45,20 @@ func (r *Registry) Register(cat *engine.Catalog, d Declaration, engines ...engin
 		return fmt.Errorf("lang: %q is already registered", d.Language)
 	}
 	for _, suffix := range d.Extensions {
-		if owner, taken := r.bySuffix[suffix]; taken {
-			return fmt.Errorf("lang: %q claims %q, already claimed by %q", d.Language, suffix, owner)
+		if owner, taken := r.byExtension[suffix]; taken {
+			return fmt.Errorf("lang: %q declares %q, which %q already declares", d.Language, suffix, owner)
 		}
 	}
+	names := map[string]bool{}
 	for _, e := range engines {
 		if e.Language() != d.Language {
-			return fmt.Errorf("lang: %q declares engine %q, which answers about %q",
+			return fmt.Errorf("lang: %q declares engine %q, which serves %q",
 				d.Language, e.Name(), e.Language())
 		}
+		if names[e.Name()] {
+			return fmt.Errorf("lang: %q declares engine %q twice", d.Language, e.Name())
+		}
+		names[e.Name()] = true
 	}
 
 	for _, e := range engines {
@@ -68,36 +68,33 @@ func (r *Registry) Register(cat *engine.Catalog, d Declaration, engines ...engin
 	}
 	r.declared[d.Language] = d
 	for _, suffix := range d.Extensions {
-		r.bySuffix[suffix] = d.Language
+		r.byExtension[suffix] = d.Language
 	}
 	return nil
 }
 
-// LanguageOf reports which language claims a path, by its extension.
-//
-// It reports false for a suffix nothing claimed and for a path with no
-// extension. Guessing would answer about a language nothing declared.
+// LanguageOf returns the language that declares the extension of p. It
+// reports false for a path without an extension and for an extension that
+// no language declares.
 func (r *Registry) LanguageOf(p source.Path) (source.Language, bool) {
 	suffix := path.Ext(string(p))
 	if suffix == "" {
 		return "", false
 	}
-	l, claimed := r.bySuffix[suffix]
-	return l, claimed
+	l, ok := r.byExtension[suffix]
+	return l, ok
 }
 
-// Declaration returns what a language declared about itself.
+// Declaration returns the declaration of l, and reports whether l is
+// registered.
 func (r *Registry) Declaration(l source.Language) (Declaration, bool) {
-	d, declared := r.declared[l]
-	return d, declared
+	d, ok := r.declared[l]
+	return d, ok
 }
 
-// Languages returns every registered language, sorted.
-//
-// A caller reports what is served without knowing what was compiled in,
-// and a service asking every language about a directory gets the same
-// order every time. Map iteration would make a merged answer reorder
-// itself between identical requests.
+// Languages returns every registered language, sorted. A service that asks
+// every language merges the answers in this order, so identical requests
+// return identical answers.
 func (r *Registry) Languages() []source.Language {
 	out := make([]source.Language, 0, len(r.declared))
 	for l := range r.declared {
@@ -107,13 +104,13 @@ func (r *Registry) Languages() []source.Language {
 	return out
 }
 
-// validate reports the first way a declaration is incomplete.
+// validate returns the first rule of [Declaration] that d breaks, or nil.
 func validate(d Declaration) error {
 	switch {
 	case d.Language == "":
-		return fmt.Errorf("lang: declaration names no language")
+		return fmt.Errorf("lang: declaration has no language")
 	case len(d.Extensions) == 0:
-		return fmt.Errorf("lang: %q declares no extension, so no path routes to it", d.Language)
+		return fmt.Errorf("lang: %q declares no extension", d.Language)
 	case d.IsTest == nil:
 		return fmt.Errorf("lang: %q declares no IsTest", d.Language)
 	case d.Namespace == nil:
@@ -123,7 +120,7 @@ func validate(d Declaration) error {
 	}
 	for _, suffix := range d.Extensions {
 		if !strings.HasPrefix(suffix, ".") {
-			return fmt.Errorf("lang: %q declares extension %q, which has no leading dot", d.Language, suffix)
+			return fmt.Errorf("lang: %q declares extension %q without a leading dot", d.Language, suffix)
 		}
 	}
 	return nil

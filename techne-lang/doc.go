@@ -1,51 +1,62 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: MIT
 
-// Package lang declares what a language is, independently of which
-// engine answers questions about it.
+// Package lang defines what a language is, independently of the engines
+// that serve it, and the file rules every engine applies.
 //
-// # Facts about a language, not about a grammar
+// # Declarations
 //
-// [Declaration] holds what stays true whichever engine serves the
-// language: which suffixes select it, where its project roots are, how
-// it writes comments and documentation, which identifiers bind nothing,
-// which files hold tests, how a path becomes a namespace, and what makes
-// a name visible outside its unit. A language served only by a language
-// server states all of it without constructing a parser it never uses.
+// A language module constructs one [Declaration] and registers it with
+// [Registry.Register] from a composition root. The declaration states the
+// facts that hold for every engine of the language: its extensions, its
+// project manifests, its comment forms, and its rules for test files, units
+// and visibility. Register checks the declaration and its engines before it
+// changes anything.
 //
-// # Documentation has more than one form
+// # Conventions
 //
-// [CommentStyle.Doc] is a list rather than a pair of fields, because a
-// language has several documentation forms and they are not
-// interchangeable. Rust has four, Java and C# two each, and C whatever
-// Doxygen reads. One token does not mean one thing across languages
-// either: /// is documentation in Java, Rust, C and C#, and a compiler
-// directive in TypeScript. [CommentStyle.Documents] is the form to
-// write; [CommentStyle.Documentation] recognises any of them.
+// [Stem], [JavaScriptTest] and [VisibilityByModifier] implement rules that
+// more than one language shares. A language that declares visibility with a
+// modifier, such as public in Java or pub in Rust, uses
+// VisibilityByModifier, because a name alone does not show the modifier.
 //
-// # Registration is a call, not an import
+// # Files
 //
-// [Registry.Register] is called once per language from a composition
-// root. Nothing registers from an init function, so the set of languages
-// is a value the caller chooses: a test builds a registry holding one
-// language, and a smaller binary ships a subset of the same calls.
+// [Walk] returns the files of a scope that a language claims, with the
+// files larger than [Largest] in a separate list. It skips the directories
+// [Vendored] names and the paths the .gitignore files of the workspace
+// exclude, by the rules of gitignore(5). [Readable] applies the .gitignore
+// rules and the size limit to one path.
 //
-// # Refusal is total
+// # Lowered answers
 //
-// Register checks the declaration, the language, every extension and
-// every engine before it touches the catalogue. A rejected module leaves
-// no engines behind for a language nothing can route to.
+// [Lowered] returns the tier of an answer that a type checker computed in a
+// project with errors. A type checker binds every name that it can in such a
+// project. Each use that it cannot bind is on a line that it reports as an
+// error. An error lowers the answer to
+// [go.dokimi.dev/techne/core/trust.Indexed] only when a [Hides] rule reports
+// its line:
+//
+//   - [Writing] reports a line outside the sites of the answer that writes
+//     the name the answer is about.
+//   - [Binding] reports the line of a definition, and every line when the
+//     definition found nothing.
+//   - [Everywhere] reports every line.
+//   - [Nowhere] does not report a line. A plan that rewrites no reference
+//     uses it.
+//
+// [Worded] finds a name as a word in a line, and [WordAt] returns the word
+// at an offset.
 //
 // # Routing
 //
-// [Registry.LanguageOf] answers which language claims a path, by
-// extension. It reports nothing for a suffix nobody claimed, because
-// guessing would answer about a language nothing declared at a fidelity
-// nothing earned.
+// [Registry.LanguageOf] returns the language that claims a path by its
+// extension. It reports false for a path whose extension no language
+// claims.
 //
 // # Dependency position
 //
-// Imports core and nothing else in this repository. A language module
-// imports this package; nothing here imports a language module, which is
-// what lets a language be deleted as a unit.
+// Imports the standard library, core/engine, core/sema, core/source and
+// core/trust. Language modules import lang, and lang does not import a
+// language module.
 package lang

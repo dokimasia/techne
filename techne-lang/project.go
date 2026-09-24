@@ -6,75 +6,71 @@ package lang
 import (
 	"io/fs"
 	"path"
+	"strings"
 
+	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
 )
 
-// ProjectOf is the directory a path compiles as part of: the nearest
-// ancestor holding one of this language's manifests.
+// ProjectOf returns the project that contains p: the nearest directory, at
+// or above p, that contains a file matching one of manifests. It returns
+// engine.Root when no directory does, when manifests is empty, and for a
+// path outside the workspace.
 //
-// # Why compilation is bounded here
-//
-// A workspace is not a compilation unit and a repository holding
-// seventeen modules does not build or fail as one. Whether the code a
-// question is about type-checks is a fact about its project, and reading
-// it as a fact about the workspace makes every project answer for every
-// other.
-//
-// Measured on one such repository: gopls reports "golang.org/x/mod is
-// not in your go.mod file" against the root module at error severity.
-// Read workspace-wide, that one untidy manifest withdrew the tier every
-// write operation needs, in every module, for the life of the session.
-//
-// The workspace root when no manifest is found above the path, so a
-// language that declares none, or a file outside any project, is
-// answered about as a whole. [Declaration.Manifests] is what each
-// language names its own by.
+// A manifest is a file name, such as "go.mod", or a path.Match pattern,
+// such as "*.csproj". Compilation errors are a fact about one project, so
+// engines lower the fidelity of an answer only when the project of its
+// scope has errors.
 func ProjectOf(fsys fs.FS, p source.Path, manifests []string) source.Path {
-	held := path.Clean(string(p))
-	if held == "" || held == "." || path.IsAbs(held) {
-		return Root
+	at := path.Clean(string(p))
+	if len(manifests) == 0 || path.IsAbs(at) {
+		return engine.Root
 	}
-	if len(manifests) == 0 {
-		return Root
+	for ; at != "." && at != "/"; at = path.Dir(at) {
+		if marked(fsys, at, manifests) {
+			return source.Path(at)
+		}
 	}
+	return engine.Root
+}
 
-	// From the path upwards, so the nearest manifest wins: a module
-	// inside a workspace is its own project, and the workspace's own
-	// manifest speaks only for what no nearer one claims.
-	for at := held; at != "." && at != "/"; at = path.Dir(at) {
-		if !holds(fsys, at) {
+// Within reports whether p is inside project or is project itself. It
+// compares whole path segments, so techne-lang-go is not inside
+// techne-lang. Every workspace path is within engine.Root. An absolute
+// path names a file outside the workspace, which is within no project.
+func Within(p, project source.Path) bool {
+	at := path.Clean(string(p))
+	switch {
+	case path.IsAbs(at):
+		return false
+	case project == engine.Root:
+		return true
+	}
+	root := path.Clean(string(project))
+	return at == root || strings.HasPrefix(at, root+"/")
+}
+
+// marked reports whether dir is a directory that contains a file matching
+// one of manifests. It lists dir only for a manifest that is a pattern.
+func marked(fsys fs.FS, dir string, manifests []string) bool {
+	var entries []fs.DirEntry
+	listed := false
+	for _, manifest := range manifests {
+		if !strings.ContainsAny(manifest, `*?[\`) {
+			if info, err := fs.Stat(fsys, path.Join(dir, manifest)); err == nil && !info.IsDir() {
+				return true
+			}
 			continue
 		}
-		for _, name := range manifests {
-			if _, err := fs.Stat(fsys, path.Join(at, name)); err == nil {
-				return source.Path(at)
+		if !listed {
+			entries, _ = fs.ReadDir(fsys, dir)
+			listed = true
+		}
+		for _, entry := range entries {
+			if ok, err := path.Match(manifest, entry.Name()); err == nil && ok && !entry.IsDir() {
+				return true
 			}
 		}
 	}
-	return Root
-}
-
-// Root is the workspace itself, and the project of anything no manifest
-// claims.
-const Root source.Path = "."
-
-// holds reports whether a path names a directory, so a file's own name
-// is not searched for a manifest inside it.
-func holds(fsys fs.FS, at string) bool {
-	info, err := fs.Stat(fsys, at)
-	return err == nil && info.IsDir()
-}
-
-// Within reports whether a path is inside a project.
-//
-// Prefix matching on whole segments, so techne-lang-go is not read as
-// being inside techne-lang.
-func Within(p, project source.Path) bool {
-	if project == Root {
-		return true
-	}
-	held, root := path.Clean(string(p)), path.Clean(string(project))
-	return held == root || len(held) > len(root) &&
-		held[:len(root)] == root && held[len(root)] == '/'
+	return false
 }

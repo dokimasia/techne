@@ -5,64 +5,78 @@ package lang
 
 import "strings"
 
-// CommentStyle is how a language writes comments and documentation. No
-// grammar states it, and both reading a declaration's documentation and
-// writing one need it.
+// CommentStyle is the comment and documentation syntax of a language.
 //
-// A language has more than one documentation form, and they are not
-// interchangeable. Rust has four: /// and /**...*/ document what
-// follows, //! and /*!...*/ document the item they are written inside.
-// Java has two, the traditional /**...*/ and the markdown ///. C# has
-// /// and /**...*/, and C has whatever Doxygen reads. One token does not
-// mean one thing across languages either: /// is documentation in Java,
-// Rust, C and C#, and a compiler directive in TypeScript.
-//
-// [CommentStyle.Doc] therefore holds a list rather than a pair of
-// fields, and each language states its own.
+// A language can have more than one documentation form, and the forms are
+// not interchangeable. Rust has four: /// and /** */ document the
+// declaration that follows, and //! and /*! */ document the item that
+// contains them. Java has /** */ and ///. One token can also mean different
+// things: /// is documentation in Java, Rust, C and C#, and a compiler
+// directive in TypeScript. Each language module lists its own forms in Doc.
 type CommentStyle struct {
-	// Line begins a comment running to the end of the line, trailing
-	// space included, as in "// " or "# ".
+	// Line starts a comment that ends at the end of the line, including the
+	// space after it, such as "// " or "# ".
 	Line string
 
-	// BlockOpen and BlockClose delimit a comment that may span lines.
-	// Python has neither: it has no block comment at all.
+	// BlockOpen and BlockClose delimit a comment that can span lines. They
+	// are empty for a language without block comments, such as Python.
 	BlockOpen, BlockClose string
 
-	// Doc holds every form the language's own documentation tool reads,
-	// preferred form first. [CommentStyle.Documents] writes the first;
-	// [CommentStyle.Documentation] recognises any of them.
+	// Doc lists every documentation form of the language, the preferred
+	// form first. [CommentStyle.Document] writes the first form, and
+	// [CommentStyle.Documentation] reads every form.
 	Doc []DocStyle
 }
 
-// DocStyle is one documentation form.
-//
-// Python's docstring is here as well as the comment forms. It is a
-// string literal rather than a comment, but it is what the language
-// documents with, and a caller reading or writing documentation wants
-// one answer rather than two mechanisms.
+// DocStyle is one documentation form. A Python docstring is a DocStyle
+// although it is a string literal, because Python documents with it. A form
+// with an empty Open matches no comment.
 type DocStyle struct {
-	// Open begins the form: "///", "/**", "//!", `"""`.
+	// Open starts the form, such as "///", "/**", "//!" or `"""`.
 	Open string
 
-	// Close ends it, and is empty for a form running to the end of the
-	// line. A line form documents one line, so several consecutive ones
-	// make one comment.
+	// Close is the delimiter that ends the form, or empty for a form that
+	// ends at the end of the line. Consecutive lines of a line form make one
+	// comment.
 	Close string
 
-	// Continuation prefixes the lines between Open and Close where the
-	// form has one, as Java's " * ". It is stripped when read and
-	// written when emitted.
+	// Continuation is the prefix of each line between Open and Close, such
+	// as " * " in Java. Reading removes it and writing adds it.
 	Continuation string
 
-	// Inside reports whether the form documents the item it is written
-	// inside rather than the declaration that follows it. Rust spells
-	// that "//!" and "/*!"; Python's docstring is the same relationship,
-	// written as the first statement in the body.
+	// Inside reports whether the form documents the item that contains it,
+	// such as Rust's //! or a Python docstring, rather than the declaration
+	// that follows it.
 	Inside bool
+
+	// Element is the XML element that wraps the text of the form, such as
+	// summary in the XML documentation of C#, or empty for a form without
+	// markup. Writing puts text that does not start with a tag inside the
+	// element, on lines of its own, and [CommentStyle.Unwrapped] removes the
+	// element again.
+	Element string
 }
 
-// Documents returns the form to write documentation in: the language's
-// preferred one, or its line comment where it states none.
+// Unwrapped returns doc, documentation that [CommentStyle.Documentation]
+// read, without the Element of the preferred form when the element alone
+// makes up doc. A doc with more markup keeps it, such as a summary followed
+// by the description of a parameter.
+func (c CommentStyle) Unwrapped(doc string) string {
+	element := c.Documents().Element
+	if element == "" {
+		return doc
+	}
+	opening, closing := "<"+element+">", "</"+element+">"
+	inner, opened := strings.CutPrefix(strings.TrimSpace(doc), opening)
+	inner, closed := strings.CutSuffix(inner, closing)
+	if !opened || !closed || strings.Contains(inner, closing) {
+		return doc
+	}
+	return strings.Join(bounded(strings.Split(inner, "\n")), "\n")
+}
+
+// Documents returns the form to write documentation in: the first form of
+// Doc, or a line comment when Doc is empty.
 func (c CommentStyle) Documents() DocStyle {
 	if len(c.Doc) > 0 {
 		return c.Doc[0]
@@ -70,11 +84,10 @@ func (c CommentStyle) Documents() DocStyle {
 	return DocStyle{Open: c.Line}
 }
 
-// Documentation reports whether a comment is documentation, and returns
-// its text with the delimiters and any continuation prefixes removed.
-//
-// The longest matching form wins, so a language declaring both "//" and
-// "///" reads "/// x" as the second rather than the first.
+// Documentation reports whether text is a documentation comment, and
+// returns its content without delimiters and continuation prefixes. When
+// more than one form matches, the form with the longest Open applies, so
+// "/// x" reads as "///" in a language that also declares "//".
 func (c CommentStyle) Documentation(text string) (string, bool) {
 	trimmed := strings.TrimLeft(text, " \t")
 
@@ -93,25 +106,24 @@ func (c CommentStyle) Documentation(text string) (string, bool) {
 	return c.Doc[best].read(trimmed), true
 }
 
-// Document renders documentation in the language's preferred form, at
-// one indentation.
+// Document returns text as a comment in the preferred form, with indent
+// before each line and no trailing newline.
 //
-// It is the other half of [CommentStyle.Documentation]: what that reads,
-// this writes. Reading a comment and writing the text back returns the
-// comment, which is what makes a tool that rewrites documentation leave
-// the rest of the file alone.
-//
-// The result carries no trailing newline. Where the comment goes relative
-// to the declaration is the caller's business, and a language whose
-// documentation sits inside the body puts it somewhere a line above the
-// declaration is wrong.
+// Documentation reverses it. For a block form, Documentation of the result
+// returns text. For a line form, Documentation of each line returns the
+// corresponding line of text. For a form with an Element, Unwrapped of what
+// Documentation returns is text.
 func (c CommentStyle) Document(text, indent string) string {
 	return c.Documents().write(text, indent)
 }
 
-// write renders text in this form.
+// write returns text as a comment in this form.
 func (d DocStyle) write(text, indent string) string {
-	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	if d.Element != "" && !strings.HasPrefix(strings.TrimSpace(text), "<") {
+		text = "<" + d.Element + ">\n" + strings.Trim(text, "\n") + "\n</" + d.Element + ">"
+	}
+	lines := strings.Split(text, "\n")
 	for i := range lines {
 		lines[i] = strings.TrimRight(lines[i], " \t")
 	}
@@ -130,12 +142,9 @@ func (d DocStyle) write(text, indent string) string {
 	}
 }
 
-// lineForm writes one comment per line, as Go, Rust, C# and Ruby
-// document with.
+// lineForm writes one line comment per line, as Go, Rust, C# and Ruby
+// document. A blank line is the marker without a trailing space.
 func (d DocStyle) lineForm(lines []string, indent string) string {
-	// A form written as the language's plain line comment carries the
-	// space that separates it from the text; one written as a
-	// documentation marker does not.
 	open := d.Open
 	if !strings.HasSuffix(open, " ") {
 		open += " "
@@ -153,9 +162,9 @@ func (d DocStyle) lineForm(lines []string, indent string) string {
 	return strings.Join(out, "\n")
 }
 
-// blockForm writes a delimited comment whose inner lines carry no
-// marker, which is how a Python docstring is laid out: the summary on
-// the opening line, the closing delimiter on its own.
+// blockForm writes a delimited comment without a marker on its inner lines,
+// as a Python docstring: the first line after the opening delimiter and the
+// closing delimiter on a line of its own.
 func (d DocStyle) blockForm(lines []string, indent string) string {
 	if len(lines) == 1 {
 		return indent + d.Open + lines[0] + d.Close
@@ -173,8 +182,8 @@ func (d DocStyle) blockForm(lines []string, indent string) string {
 	return strings.Join(append(out, indent+d.Close), "\n")
 }
 
-// markedForm writes a delimited comment whose inner lines carry a
-// marker, as Javadoc and its imitators do.
+// markedForm writes a delimited comment with a marker on each inner line,
+// as Javadoc. The closing delimiter is aligned under the marker.
 func (d DocStyle) markedForm(lines []string, indent string) string {
 	out := make([]string, 0, len(lines)+2)
 	out = append(out, indent+d.Open)
@@ -185,18 +194,21 @@ func (d DocStyle) markedForm(lines []string, indent string) string {
 		}
 		out = append(out, indent+d.Continuation+line)
 	}
-	// The closing delimiter aligns under the marker, so it is written at
-	// whatever the continuation puts before it.
 	return strings.Join(append(out, indent+aligned(d.Continuation)+d.Close), "\n")
 }
 
-// aligned returns the whitespace a continuation writes before its
-// marker, which is what puts a closing delimiter under it.
+// aligned returns the whitespace before the marker of a continuation.
 func aligned(continuation string) string {
 	return continuation[:len(continuation)-len(strings.TrimLeft(continuation, " \t"))]
 }
 
-// read strips one comment down to the text it documents with.
+// read returns the content of one comment in this form.
+//
+// It removes the delimiters, the continuation markers, and the one space
+// after a delimiter or marker. Further indentation belongs to the content,
+// such as a code block, and read keeps it. The lines after the first of a
+// form without markers have no delimiter, so read removes only the
+// indentation they share.
 func (d DocStyle) read(text string) string {
 	body := strings.TrimPrefix(text, d.Open)
 	if d.Close != "" {
@@ -212,15 +224,6 @@ func (d DocStyle) read(text string) string {
 		if i > 0 && d.Continuation != "" {
 			lines[i] = unprefixed(lines[i], strings.TrimSpace(d.Continuation))
 		}
-		// One space after the delimiter separates it from the text and
-		// is not part of it. Anything beyond that is the author's
-		// indentation, which a code block in the documentation depends
-		// on, so it stays.
-		//
-		// A marker-less block form writes no delimiter on the lines
-		// after the first, so there is no separating space to take off
-		// them and taking one would eat the author's first level of
-		// indentation.
 		if !bare || i == 0 {
 			lines[i] = strings.TrimPrefix(lines[i], " ")
 		}
@@ -229,17 +232,8 @@ func (d DocStyle) read(text string) string {
 	return strings.Join(bounded(lines), "\n")
 }
 
-// dedent removes the indentation a marker-less block form carries from
-// the code it sits in.
-//
-// A form whose inner lines carry no marker carries that indentation
-// instead: a Python docstring inside a method is indented to the body,
-// on every line, and none of that is the author's. What every line
-// shares goes and what one line has more of stays, so a code block
-// inside the documentation keeps its shape.
-//
-// The first line is left alone. It is written against the opening
-// delimiter rather than against the margin, so it carries no
+// dedent removes the indentation that every non-blank line after the first
+// shares. The first line follows the opening delimiter, so it has no
 // indentation to share.
 func dedent(lines []string) {
 	common := ""
@@ -263,7 +257,7 @@ func dedent(lines []string) {
 	}
 }
 
-// shared returns how many leading bytes two margins have in common.
+// shared returns the length of the common prefix of a and b.
 func shared(a, b string) int {
 	n := min(len(a), len(b))
 	for i := range n {
@@ -274,8 +268,8 @@ func shared(a, b string) int {
 	return n
 }
 
-// unprefixed removes a continuation marker and the one space after it,
-// leaving a line that does not carry the marker untouched.
+// unprefixed removes marker and the space after it from line. It returns a
+// line without the marker unchanged.
 func unprefixed(line, marker string) string {
 	trimmed := strings.TrimLeft(line, " \t")
 	if !strings.HasPrefix(trimmed, marker) {
@@ -284,8 +278,7 @@ func unprefixed(line, marker string) string {
 	return strings.TrimPrefix(trimmed, marker)
 }
 
-// bounded drops the blank lines a block form leaves at each end, which
-// are the delimiters' own lines rather than documentation.
+// bounded removes the blank lines at both ends of lines.
 func bounded(lines []string) []string {
 	start, end := 0, len(lines)
 	for start < end && strings.TrimSpace(lines[start]) == "" {

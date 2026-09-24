@@ -5,7 +5,6 @@ package lang_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -16,26 +15,30 @@ import (
 	"go.dokimi.dev/techne/lang"
 )
 
+// fixture is the language of the test declarations.
 const fixture = source.Language("fixture")
 
-// declared returns a complete declaration a case can spoil one field of.
+// declared returns a complete declaration of fixture.
 func declared() lang.Declaration {
 	return lang.Declaration{
 		Language:   fixture,
 		Extensions: []string{".fx"},
 		Manifests:  []string{"fixture.toml"},
 		Comment:    lang.CommentStyle{Line: "// ", Doc: []lang.DocStyle{{Open: "//"}}},
-		IsTest:     func(p string) bool { return strings.HasSuffix(p, "_test.fx") },
-		Namespace:  func(p string) string { return strings.TrimSuffix(p, ".fx") },
-		Visibility: visibility,
+		IsTest:     lang.JavaScriptTest,
+		Namespace:  lang.Stem,
+		Visibility: lang.VisibilityByModifier,
 	}
 }
 
-// stub serves one role for one language.
-type stub struct{ lang source.Language }
+// stub is an engine named name that serves RoleOutline for language.
+type stub struct {
+	name     string
+	language source.Language
+}
 
-func (stub) Name() string                        { return "stub" }
-func (s stub) Language() source.Language         { return s.lang }
+func (s stub) Name() string                      { return s.name }
+func (s stub) Language() source.Language         { return s.language }
 func (stub) Fidelity(engine.Role) trust.Fidelity { return trust.Syntactic }
 func (stub) Cost(engine.Role) engine.Cost        { return engine.CostParse }
 
@@ -49,149 +52,156 @@ func TestRegistry(t *testing.T) {
 	t.Run("Register", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("adds every engine to the catalogue", func(t *testing.T) {
+		t.Run("adds the engines to the catalogue", func(t *testing.T) {
 			t.Parallel()
 			r, cat := lang.NewRegistry(), engine.NewCatalog()
-			assert.NoError(t, r.Register(cat, declared(), stub{fixture}), "a complete declaration registers")
-			assert.Length(t, cat.For(t.Context(), fixture, engine.RoleOutline), 1,
-				"registering a language puts its engines where the catalogue can select them")
+			assert.NoError(t, r.Register(cat, declared(), stub{"parser", fixture}), "Register")
+			assert.Length(t, cat.For(t.Context(), fixture, engine.RoleOutline), 1, "engines")
 		})
 
-		t.Run("refuses a declaration naming no language", func(t *testing.T) {
-			t.Parallel()
-			d := declared()
-			d.Language = ""
-			assert.HasError(t, lang.NewRegistry().Register(engine.NewCatalog(), d),
-				"a declaration naming no language claims nothing to route to")
-		})
-
-		t.Run("refuses a declaration no file can route to", func(t *testing.T) {
-			t.Parallel()
-			// Without an extension nothing selects the language, so the
-			// module would register and never answer.
-			d := declared()
-			d.Extensions = nil
-			assert.HasError(t, lang.NewRegistry().Register(engine.NewCatalog(), d),
-				"without an extension nothing selects the language, so it would register and never answer")
-		})
-
-		t.Run("refuses a declaration missing a convention", func(t *testing.T) {
-			t.Parallel()
-			// A nil func panics at the first call. Startup is where a
-			// language module's mistake should surface.
-			for name, spoil := range map[string]func(*lang.Declaration){
-				"IsTest":     func(d *lang.Declaration) { d.IsTest = nil },
-				"Namespace":  func(d *lang.Declaration) { d.Namespace = nil },
-				"Visibility": func(d *lang.Declaration) { d.Visibility = nil },
-			} {
+		incomplete := []struct {
+			name  string
+			spoil func(*lang.Declaration)
+		}{
+			{
+				name:  "returns an error for a declaration without a language",
+				spoil: func(d *lang.Declaration) { d.Language = "" },
+			},
+			{
+				name:  "returns an error for a declaration without an extension",
+				spoil: func(d *lang.Declaration) { d.Extensions = nil },
+			},
+			{
+				name:  "returns an error for an extension without a leading dot",
+				spoil: func(d *lang.Declaration) { d.Extensions = []string{"fx"} },
+			},
+			{
+				name:  "returns an error for a declaration without IsTest",
+				spoil: func(d *lang.Declaration) { d.IsTest = nil },
+			},
+			{
+				name:  "returns an error for a declaration without Namespace",
+				spoil: func(d *lang.Declaration) { d.Namespace = nil },
+			},
+			{
+				name:  "returns an error for a declaration without Visibility",
+				spoil: func(d *lang.Declaration) { d.Visibility = nil },
+			},
+		}
+		for _, tt := range incomplete {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
 				d := declared()
-				spoil(&d)
-				_ = name
-				assert.HasError(t, lang.NewRegistry().Register(engine.NewCatalog(), d),
-					"a nil convention panics on the first call, so startup is where it must surface")
-			}
-		})
+				tt.spoil(&d)
+				assert.HasError(t, lang.NewRegistry().Register(engine.NewCatalog(), d), "Register")
+			})
+		}
 
-		t.Run("refuses a second claim on one language", func(t *testing.T) {
+		t.Run("returns an error for a language already registered", func(t *testing.T) {
 			t.Parallel()
 			r, cat := lang.NewRegistry(), engine.NewCatalog()
-			assert.NoError(t, r.Register(cat, declared()), "the first module claims the language")
-			assert.HasError(t, r.Register(cat, declared()),
-				"two modules claiming one language would make routing depend on registration order")
+			assert.NoError(t, r.Register(cat, declared()), "first Register")
+			assert.HasError(t, r.Register(cat, declared()), "second Register")
 		})
 
-		t.Run("refuses a second claim on one extension", func(t *testing.T) {
+		t.Run("returns an error for an extension another language declares", func(t *testing.T) {
 			t.Parallel()
-			// Two languages claiming one suffix makes routing depend on
-			// registration order, which nothing states.
 			r, cat := lang.NewRegistry(), engine.NewCatalog()
-			assert.NoError(t, r.Register(cat, declared()), "the first module claims the extension")
+			assert.NoError(t, r.Register(cat, declared()), "first Register")
 			other := declared()
-			other.Language = source.Language("other")
-			assert.HasError(t, r.Register(cat, other),
-				"two languages claiming one suffix would make routing depend on registration order")
+			other.Language = "other"
+			assert.HasError(t, r.Register(cat, other), "second Register")
 		})
 
-		t.Run("refuses an engine for a different language", func(t *testing.T) {
+		t.Run("returns an error for an engine of another language", func(t *testing.T) {
 			t.Parallel()
-			// The declaration and its engines have to agree, or the
-			// catalogue holds an engine no path routes to.
-			err := lang.NewRegistry().Register(engine.NewCatalog(), declared(), stub{source.Language("elsewhere")})
-			assert.HasError(t, err,
-				"a declaration and its engines must agree, or the catalogue holds an engine no path routes to")
+			err := lang.NewRegistry().Register(engine.NewCatalog(), declared(), stub{"parser", "elsewhere"})
+			assert.HasError(t, err, "Register")
 		})
 
-		t.Run("leaves the catalogue untouched when it refuses", func(t *testing.T) {
+		t.Run("returns an error for two engines with one name", func(t *testing.T) {
 			t.Parallel()
-			// A partial registration would leave engines behind for a
-			// language nothing can route to.
+			err := lang.NewRegistry().Register(engine.NewCatalog(), declared(),
+				stub{"parser", fixture}, stub{"parser", fixture})
+			assert.HasError(t, err, "Register")
+		})
+
+		t.Run("leaves the catalogue unchanged when it returns an error", func(t *testing.T) {
+			t.Parallel()
 			cat := engine.NewCatalog()
-			d := declared()
-			d.Extensions = nil
-			_ = lang.NewRegistry().Register(cat, d, stub{fixture})
-			assert.Empty(t, cat.For(t.Context(), fixture, engine.RoleOutline),
-				"a rejected module leaves no engines behind for a language nothing can route to")
+			err := lang.NewRegistry().Register(cat, declared(), stub{"first", fixture}, stub{"first", fixture})
+			assert.HasError(t, err, "Register")
+			assert.Empty(t, cat.For(t.Context(), fixture, engine.RoleOutline), "engines")
 		})
-	})
 
-	t.Run("Languages", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("answers in a stable order", func(t *testing.T) {
+		t.Run("leaves the registry unchanged when it returns an error", func(t *testing.T) {
 			t.Parallel()
-			// A service asking every language about a directory merges
-			// their answers. Map iteration would reorder the result
-			// between two identical requests.
-			r, cat := lang.NewRegistry(), engine.NewCatalog()
-			assert.NoError(t, r.Register(cat, declared()), "the case needs a language registered")
-
-			other := declared()
-			other.Language = source.Language("alpha")
-			other.Extensions = []string{".al"}
-			assert.NoError(t, r.Register(cat, other), "the case needs a second language registered")
-
-			assert.Equal(t, r.Languages(), []source.Language{"alpha", "fixture"},
-				"two identical requests see the same order")
+			r := lang.NewRegistry()
+			d := declared()
+			d.Visibility = nil
+			assert.HasError(t, r.Register(engine.NewCatalog(), d), "Register")
+			_, ok := r.LanguageOf("a.fx")
+			assert.False(t, ok, "LanguageOf")
 		})
 	})
 
 	t.Run("LanguageOf", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("routes a path by its extension", func(t *testing.T) {
+		r := lang.NewRegistry()
+		assert.NoError(t, r.Register(engine.NewCatalog(), declared()), "Register")
+
+		tests := []struct {
+			name   string
+			give   source.Path
+			want   source.Language
+			wantOK bool
+		}{
+			{name: "returns the language that declares the extension", give: "a/b/c.fx", want: fixture, wantOK: true},
+			{name: "returns false for an undeclared extension", give: "a/b/c.unknown"},
+			{name: "returns false for a path without an extension", give: "Makefile"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				got, ok := r.LanguageOf(tt.give)
+				assert.Equal(t, ok, tt.wantOK, "ok")
+				assert.Equal(t, got, tt.want, "language")
+			})
+		}
+	})
+
+	t.Run("Declaration", func(t *testing.T) {
+		t.Parallel()
+
+		r := lang.NewRegistry()
+		assert.NoError(t, r.Register(engine.NewCatalog(), declared()), "Register")
+
+		t.Run("returns the registered declaration", func(t *testing.T) {
 			t.Parallel()
-			r := lang.NewRegistry()
-			assert.NoError(t, r.Register(engine.NewCatalog(), declared()), "the case needs the language registered")
-			got, routed := r.LanguageOf("a/b/c.fx")
-			assert.True(t, routed, "a path whose suffix a language claims routes to it")
-			assert.Equal(t, got, fixture, "a path whose suffix a language claims routes to it")
+			got, ok := r.Declaration(fixture)
+			assert.True(t, ok, "ok")
+			assert.Equal(t, got.Extensions, []string{".fx"}, "Extensions")
 		})
 
-		t.Run("reports nothing for an unclaimed extension", func(t *testing.T) {
+		t.Run("returns false for an unregistered language", func(t *testing.T) {
 			t.Parallel()
-			// Guessing here would answer about a language nothing
-			// declared, at a fidelity nothing earned.
-			r := lang.NewRegistry()
-			assert.NoError(t, r.Register(engine.NewCatalog(), declared()), "the case needs the language registered")
-			_, routed := r.LanguageOf("a/b/c.unclaimed")
-			assert.False(t, routed, "guessing would answer about a language nothing declared")
-		})
-
-		t.Run("reports nothing for a path with no extension", func(t *testing.T) {
-			t.Parallel()
-			r := lang.NewRegistry()
-			assert.NoError(t, r.Register(engine.NewCatalog(), declared()), "the case needs the language registered")
-			_, routed := r.LanguageOf("Makefile")
-			assert.False(t, routed, "a path carrying no suffix names no language")
+			_, ok := r.Declaration("other")
+			assert.False(t, ok, "ok")
 		})
 	})
-}
 
-// visibility is the fixture language's rule: a capitalised name is
-// visible outside its unit.
-func visibility(n string) sema.Visibility {
-	if n != "" && n[0] >= 'A' && n[0] <= 'Z' {
-		return sema.Exported
-	}
-	return sema.Unexported
+	t.Run("Languages", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the languages sorted", func(t *testing.T) {
+			t.Parallel()
+			r, cat := lang.NewRegistry(), engine.NewCatalog()
+			assert.NoError(t, r.Register(cat, declared()), "Register fixture")
+			alpha := declared()
+			alpha.Language, alpha.Extensions = "alpha", []string{".al"}
+			assert.NoError(t, r.Register(cat, alpha), "Register alpha")
+			assert.Equal(t, r.Languages(), []source.Language{"alpha", fixture}, "languages")
+		})
+	})
 }
