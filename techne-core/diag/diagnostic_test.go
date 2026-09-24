@@ -4,6 +4,7 @@
 package diag_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -13,44 +14,82 @@ import (
 func TestDiagnostic(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Severity", func(t *testing.T) {
+	words := map[diag.Severity]string{
+		diag.SeverityUnset:   "unset",
+		diag.SeverityHint:    "hint",
+		diag.SeverityInfo:    "info",
+		diag.SeverityWarning: "warning",
+		diag.SeverityError:   "error",
+	}
+
+	t.Run("Diagnostic", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("rises from hint to error", func(t *testing.T) {
+		t.Run("has SeverityUnset when zero", func(t *testing.T) {
 			t.Parallel()
-			ordered := []diag.Severity{
-				diag.SeverityUnset, diag.SeverityHint, diag.SeverityInfo,
-				diag.SeverityWarning, diag.SeverityError,
-			}
-			assert.Pairwise(t, ordered, func(earlier, later diag.Severity) bool {
-				return earlier < later
-			}, "the order rises, so a caller filters with one comparison")
+			var zero diag.Diagnostic
+			assert.Equal(t, zero.Severity, diag.SeverityUnset, "severity")
 		})
 
-		t.Run("lets a caller filter with one comparison", func(t *testing.T) {
+		t.Run("names no source when zero", func(t *testing.T) {
 			t.Parallel()
-			for _, s := range []diag.Severity{diag.SeverityHint, diag.SeverityInfo, diag.SeverityWarning} {
-				assert.True(t, s < diag.SeverityError,
-					"asking for errors alone does not mean enumerating every other value")
+			var zero diag.Diagnostic
+			assert.Empty(t, zero.Source, "source")
+		})
+	})
+
+	t.Run("Severities", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("lists every severity in increasing order", func(t *testing.T) {
+			t.Parallel()
+			assert.Length(t, diag.Severities(), len(words), "severities")
+			assert.Pairwise(t, diag.Severities(), func(lower, higher diag.Severity) bool {
+				return lower < higher
+			}, "severity order")
+		})
+	})
+
+	t.Run("String", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the pinned string of every severity", func(t *testing.T) {
+			t.Parallel()
+			for s, want := range words {
+				assert.Equal(t, s.String(), want, "wire string")
+			}
+		})
+
+		t.Run("returns unset for an undeclared severity", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, diag.Severity(200).String(), "unset", "wire string")
+		})
+	})
+
+	t.Run("MarshalJSON", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("round-trips every severity", func(t *testing.T) {
+			t.Parallel()
+			for s, want := range words {
+				encoded, err := json.Marshal(s)
+				assert.NoError(t, err, "marshal")
+				assert.Equal(t, string(encoded), `"`+want+`"`, "encoding")
+				var decoded diag.Severity
+				assert.NoError(t, json.Unmarshal(encoded, &decoded), "unmarshal")
+				assert.Equal(t, decoded, s, "round trip")
 			}
 		})
 	})
 
-	t.Run("zero value", func(t *testing.T) {
+	t.Run("UnmarshalJSON", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("carries no severity", func(t *testing.T) {
+		t.Run("decodes an unknown string to SeverityUnset", func(t *testing.T) {
 			t.Parallel()
-			var unset diag.Diagnostic
-			assert.Equal(t, unset.Severity, diag.SeverityUnset,
-				"a diagnostic nobody graded claims no severity")
-		})
-
-		t.Run("names no reporting tool", func(t *testing.T) {
-			t.Parallel()
-			var unset diag.Diagnostic
-			assert.Empty(t, unset.Source, "an unattributed diagnostic reads as neither a build nor a linter")
-			assert.Empty(t, unset.Code, "an unattributed diagnostic carries no rule to suppress by")
+			got := diag.SeverityError
+			assert.NoError(t, json.Unmarshal([]byte(`"fatal"`), &got), "unmarshal")
+			assert.Equal(t, got, diag.SeverityUnset, "decoded severity")
 		})
 	})
 }

@@ -3,29 +3,38 @@
 
 package engine
 
-// Role is one question an engine may answer. It names the port rather
-// than the tool: several tools may rest on one role, and an engine
-// declares a fidelity and a cost per role.
+import "go.dokimi.dev/techne/core/internal/wire"
+
+// Role is a question an engine can answer. Each role has its own port
+// interface, and engines declare a fidelity and a cost per role. The zero
+// value is RoleUnset.
 type Role uint8
 
 const (
-	// RoleUnset means no role was named. It is never valid on a request.
+	// RoleUnset is no role. It is never valid on a request.
 	RoleUnset Role = iota
+	// RoleOutline lists the declarations in a scope. See Outliner.
 	RoleOutline
+	// RoleSearch finds declarations by name. See Searcher.
 	RoleSearch
+	// RoleResolve finds the declaration a name denotes. See Resolver.
 	RoleResolve
+	// RoleRelate finds the edges of a declaration. See Relator.
 	RoleRelate
+	// RolePlan computes the edits of an operation. See Planner.
 	RolePlan
+	// RoleFormat computes formatting edits. See Formatter.
 	RoleFormat
+	// RoleCheck reports problems in content that is not on disk. See
+	// Checker.
 	RoleCheck
+	// RoleVerify reports problems in a scope on disk. See Verifier.
 	RoleVerify
+	// RoleIndex produces the facts an index stores. See Indexer.
 	RoleIndex
 )
 
-// roleNames is the single definition point for the wire form of each
-// role. A capability report names roles, so these strings reach a
-// caller.
-var roleNames = map[Role]string{
+var roleWords = wire.New(RoleUnset, map[Role]string{
 	RoleUnset:   "unset",
 	RoleOutline: "outline",
 	RoleSearch:  "search",
@@ -36,18 +45,13 @@ var roleNames = map[Role]string{
 	RoleCheck:   "check",
 	RoleVerify:  "verify",
 	RoleIndex:   "index",
-}
+})
 
-// String returns the wire form of the role, or the form of [RoleUnset]
-// for a value outside the declared set.
-func (r Role) String() string {
-	if name, ok := roleNames[r]; ok {
-		return name
-	}
-	return roleNames[RoleUnset]
-}
+// String returns the wire string of r, or "unset" if r is not a declared
+// Role.
+func (r Role) String() string { return roleWords.String(r) }
 
-// Roles returns every role a port exists for, excluding [RoleUnset].
+// Roles returns every Role except RoleUnset, in declaration order.
 func Roles() []Role {
 	return []Role{
 		RoleOutline, RoleSearch, RoleResolve, RoleRelate,
@@ -55,46 +59,33 @@ func Roles() []Role {
 	}
 }
 
-// costNames is the single definition point for the wire form of each
-// price. A capability report names costs, so these strings reach a
-// caller.
-var costNames = map[Cost]string{
+// Cost is what producing an answer takes, cheapest first. It is independent
+// of fidelity: the catalogue orders engines by fidelity and breaks ties by
+// cost.
+type Cost uint8
+
+const (
+	// CostMemory is a lookup in a structure already in memory.
+	CostMemory Cost = iota
+	// CostParse is a parse of each file in scope.
+	CostParse
+	// CostAnalyze is a type check of a package graph.
+	CostAnalyze
+	// CostSession is expensive once and cheap afterwards, such as a language
+	// server that loads the workspace when it starts.
+	CostSession
+	// CostProcess is a subprocess per call.
+	CostProcess
+)
+
+var costWords = wire.New(CostProcess, map[Cost]string{
 	CostMemory:  "memory",
 	CostParse:   "parse",
 	CostAnalyze: "analyze",
 	CostSession: "session",
 	CostProcess: "process",
-}
+})
 
-// String returns the wire form of the price, or that of [CostProcess]
-// for a value outside the set: an unknown price is treated as the
-// dearest rather than the cheapest.
-func (c Cost) String() string {
-	if name, ok := costNames[c]; ok {
-		return name
-	}
-	return costNames[CostProcess]
-}
-
-// Cost is what producing one answer takes.
-//
-// It is independent of [trust.Fidelity]: the same facts can be had at
-// very different prices, so a catalogue orders by evidence first and by
-// cost among equals. The order rises, so cheaper sorts first.
-type Cost uint8
-
-const (
-	// CostMemory is a lookup in a structure already built.
-	CostMemory Cost = iota
-	// CostParse is parsing one file.
-	CostParse
-	// CostAnalyze is type-checking a graph of units.
-	CostAnalyze
-	// CostSession is expensive once and cheap afterwards, such as a
-	// language server that indexes a workspace on startup. Pricing it at
-	// its first call would make a caller avoid the fastest engine it
-	// has.
-	CostSession
-	// CostProcess is a subprocess for every call.
-	CostProcess
-)
+// String returns the wire string of c, or "process" if c is not a declared
+// Cost, so an unknown cost reads as the most expensive.
+func (c Cost) String() string { return costWords.String(c) }

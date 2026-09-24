@@ -3,76 +3,45 @@
 
 package sema
 
-import "encoding/json"
+import "go.dokimi.dev/techne/core/internal/wire"
 
-// Visibility is whether a declaration can be named outside the unit that
-// declares it.
+// Visibility reports whether code outside a declaration's unit can refer to
+// it.
 //
-// It is three-valued because an engine may be unable to tell. Go and
-// Python spell visibility in the name, so a parser reads it. Java, Rust
-// and TypeScript spell it as a modifier or a keyword, which a name
-// carries nothing of, and a parser that guessed would report every
-// declaration as public.
-//
-// The zero value is [VisibilityUnknown], so an engine that cannot tell
-// says so rather than claiming the commoner answer.
+// Go and Python encode visibility in the name, so a parser can read it. Java,
+// Rust, and TypeScript use modifiers, and a parser that reads names alone
+// reports VisibilityUnknown for them. The zero value is VisibilityUnknown.
 type Visibility uint8
 
 const (
-	// VisibilityUnknown means the engine could not tell. It is not a
-	// synonym for unexported: a caller filtering to public API must not
-	// silently drop everything an engine was unsure about.
+	// VisibilityUnknown means the engine did not determine the visibility.
+	// Filters for exported declarations keep such a declaration, because it
+	// can be exported.
 	VisibilityUnknown Visibility = iota
-	// Unexported means the declaration cannot be named outside its unit.
+	// Unexported declarations cannot be referred to outside their unit.
 	Unexported
-	// Exported means it can.
+	// Exported declarations can be referred to outside their unit.
 	Exported
 )
 
-// visibilityNames is the single definition point for the wire form.
-var visibilityNames = map[Visibility]string{
+var visibilityWords = wire.New(VisibilityUnknown, map[Visibility]string{
 	VisibilityUnknown: "unknown",
 	Unexported:        "unexported",
 	Exported:          "exported",
-}
+})
 
-// String returns the wire form, or that of [VisibilityUnknown] for a
-// value outside the set.
-func (v Visibility) String() string {
-	if name, ok := visibilityNames[v]; ok {
-		return name
-	}
-	return visibilityNames[VisibilityUnknown]
-}
+// String returns the wire string of v, or "unknown" if v is not a declared
+// Visibility.
+func (v Visibility) String() string { return visibilityWords.String(v) }
 
-// MarshalJSON writes the wire form rather than the number, so a caller
-// reads a visibility without a lookup table.
-func (v Visibility) MarshalJSON() ([]byte, error) {
-	return json.Marshal(v.String())
-}
+// MarshalJSON encodes v as its wire string.
+func (v Visibility) MarshalJSON() ([]byte, error) { return visibilityWords.Marshal(v) }
 
-// UnmarshalJSON reads the wire form back. A word this package does not
-// know becomes [VisibilityUnknown], which is the answer for a
-// declaration nothing could tell about either way.
-func (v *Visibility) UnmarshalJSON(b []byte) error {
-	var name string
-	if err := json.Unmarshal(b, &name); err != nil {
-		return err
-	}
-	*v = VisibilityUnknown
-	for held, spelt := range visibilityNames {
-		if spelt == name {
-			*v = held
-			return nil
-		}
-	}
-	return nil
-}
+// UnmarshalJSON decodes a wire string. An unknown string decodes to
+// VisibilityUnknown.
+func (v *Visibility) UnmarshalJSON(b []byte) error { return visibilityWords.Unmarshal(b, v) }
 
-// Visibilities returns every value, [VisibilityUnknown] included.
-//
-// Unlike [Kinds], the unknown value is one of the answers rather than
-// the absence of one: an engine that could not tell says so.
+// Visibilities returns every Visibility, including VisibilityUnknown.
 func Visibilities() []Visibility {
 	return []Visibility{VisibilityUnknown, Unexported, Exported}
 }

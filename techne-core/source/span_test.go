@@ -4,6 +4,7 @@
 package source_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -13,26 +14,27 @@ import (
 func TestSpan(t *testing.T) {
 	t.Parallel()
 
-	t.Run("zero value", func(t *testing.T) {
+	t.Run("Span", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("names no file and covers nothing", func(t *testing.T) {
+		t.Run("names no file when zero", func(t *testing.T) {
 			t.Parallel()
-			var empty source.Span
-			assert.Empty(t, string(empty.Path), "an unset span names no file")
-			assert.Equal(t, empty.Start, empty.End, "an unset span covers no bytes")
+			var zero source.Span
+			assert.Equal(t, zero.Path, source.Path(""), "path")
 		})
-	})
 
-	t.Run("range", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("is empty when Start equals End", func(t *testing.T) {
+		t.Run("encodes its fields under lowercase JSON names", func(t *testing.T) {
 			t.Parallel()
-			at := source.Position{Offset: 12, Line: 1, Column: 4}
-			insertion := source.Span{Path: "a/b.go", Start: at, End: at}
-			assert.Equal(t, insertion.Start, insertion.End,
-				"an insertion point is a replacement of nothing, so the two ends meet")
+			span := source.Span{
+				Path:  "a/b.go",
+				Start: source.Position{Offset: 12, Line: 1, Column: 4},
+				End:   source.Position{Offset: 15, Line: 1, Column: 7},
+			}
+			encoded, err := json.Marshal(span)
+			assert.NoError(t, err, "marshal")
+			assert.Equal(t, string(encoded),
+				`{"path":"a/b.go","start":{"offset":12,"line":1,"column":4},"end":{"offset":15,"line":1,"column":7}}`,
+				"encoding")
 		})
 	})
 }

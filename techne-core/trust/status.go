@@ -3,63 +3,45 @@
 
 package trust
 
-// Status is what happened to a request.
-//
-// It is not a severity. [Degraded] and [Partial] both carry a payload
-// worth reading; [Unsupported] and [Refused] carry none. An empty item
-// list means something different under each, which is why they are
-// separate values rather than a boolean and an error string.
-//
-// The zero value is [Unset], so an answer whose status nobody assigned
-// cannot read as a success.
+import "go.dokimi.dev/techne/core/internal/wire"
+
+// Status is the outcome of a request. OK, Degraded, and Partial answers have
+// a payload. Unsupported and Refused answers do not. The zero value is Unset,
+// so a status nobody assigned never reads as success.
 type Status uint8
 
 const (
-	// Unset means nobody assigned a status. It is never valid on an
-	// answer that left a service.
+	// Unset means no status was assigned. Services never return it.
 	Unset Status = iota
-	// OK means an engine answered at the fidelity it advertises.
+	// OK means an engine answered at its declared tier.
 	OK
-	// Degraded means an engine answered below the fidelity the caller
-	// asked for.
+	// Degraded means an engine answered below the tier the caller asked for.
 	Degraded
-	// Partial means some of the requested scope was not covered. The
-	// caveats name what was missed.
+	// Partial means part of the scope was not covered. The caveats name it.
 	Partial
-	// Unsupported means nothing serves this language and role. There is
-	// no payload, and a caller routes around it.
+	// Unsupported means nothing serves this language and role.
 	Unsupported
-	// Refused means the system declined: policy, or a target that does
-	// not exist. There is no payload, and a caller changes the request.
+	// Refused means the request was declined by policy or named a target
+	// that does not exist.
 	Refused
 )
 
-// statusNames is the single definition point for the wire form of each
-// status. An answer carries these strings to a caller.
-var statusNames = map[Status]string{
+var statusWords = wire.New(Unset, map[Status]string{
 	Unset:       "unset",
 	OK:          "ok",
 	Degraded:    "degraded",
 	Partial:     "partial",
 	Unsupported: "unsupported",
 	Refused:     "refused",
-}
+})
 
-// String returns the wire form of the status, or that of [Unset] for a
-// value outside the set.
-func (s Status) String() string {
-	if name, ok := statusNames[s]; ok {
-		return name
-	}
-	return statusNames[Unset]
-}
+// String returns the wire string of s, or "unset" if s is not a declared
+// Status.
+func (s Status) String() string { return statusWords.String(s) }
 
-// Answered reports whether an engine produced a payload.
-//
-// A false result means the item list is empty because nothing ran, not
-// because nothing matched, so a caller must not read it as evidence of
-// absence. Use [SupportsNegativeClaim] to decide what an empty list from
-// an answer that did run is worth.
+// Answered reports whether an engine produced a payload. An empty item list
+// from an answer that did not run is not evidence of absence. For answers
+// that ran, see SupportsNegativeClaim.
 func (s Status) Answered() bool {
 	return s == OK || s == Degraded || s == Partial
 }

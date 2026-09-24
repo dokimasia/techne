@@ -4,6 +4,7 @@
 package edit_test
 
 import (
+	"slices"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -17,80 +18,53 @@ func TestSpec(t *testing.T) {
 	t.Run("SpecFor", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("answers for every declared operation", func(t *testing.T) {
+		t.Run("returns the spec of every declared operation", func(t *testing.T) {
 			t.Parallel()
 			for _, op := range edit.Operations() {
-				_, declared := edit.SpecFor(op)
-				assert.True(t, declared,
-					"an operation without a spec is validated against nothing, "+
-						"and admitted on whatever a planner produced")
+				spec, declared := edit.SpecFor(op)
+				assert.True(t, declared, string(op))
+				assert.Equal(t, spec.Operation, op, string(op))
 			}
 		})
 
-		t.Run("reports an operation nobody declared", func(t *testing.T) {
+		t.Run("returns false for an undeclared operation", func(t *testing.T) {
 			t.Parallel()
 			_, declared := edit.SpecFor(edit.Operation("rename.everything"))
-			assert.False(t, declared, "an operation outside the catalogue is not silently accepted")
+			assert.False(t, declared, "declared")
 		})
 
-		t.Run("returns the spec of the operation asked for", func(t *testing.T) {
+		t.Run("returns at least one target kind for every operation", func(t *testing.T) {
 			t.Parallel()
 			for _, op := range edit.Operations() {
 				spec, _ := edit.SpecFor(op)
-				assert.Equal(t, spec.Operation, op, "a spec describes the operation it was asked about")
-			}
-		})
-	})
-
-	t.Run("Accepts", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("names at least one target kind", func(t *testing.T) {
-			t.Parallel()
-			for _, op := range edit.Operations() {
-				spec, _ := edit.SpecFor(op)
-				assert.NotEmpty(t, spec.Accepts, "an operation nothing can be pointed at cannot be invoked")
-			}
-		})
-	})
-
-	t.Run("MinFidelity", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("is a tier something can actually reach", func(t *testing.T) {
-			t.Parallel()
-			for _, op := range edit.Operations() {
-				spec, _ := edit.SpecFor(op)
-				assert.NotEqual(t, spec.MinFidelity, trust.None,
-					"an operation declaring no minimum could never be admitted")
+				assert.NotEmpty(t, spec.Accepts, string(op))
 			}
 		})
 
-		t.Run("is syntactic only where nothing but the target is rewritten", func(t *testing.T) {
+		t.Run("returns a minimum above None for every operation", func(t *testing.T) {
 			t.Parallel()
 			for _, op := range edit.Operations() {
 				spec, _ := edit.SpecFor(op)
-				if spec.MinFidelity != trust.Syntactic {
-					continue
+				assert.NotEqual(t, spec.MinFidelity, trust.None, string(op))
+			}
+		})
+
+		t.Run("requires Resolved for every reference rewrite", func(t *testing.T) {
+			t.Parallel()
+			for _, op := range edit.Operations() {
+				if spec, _ := edit.SpecFor(op); spec.RewritesReferences {
+					assert.Equal(t, spec.MinFidelity, trust.Resolved, string(op))
 				}
-				assert.False(t, spec.RewritesReferences,
-					"a parser matches text, so it cannot find every reference to rewrite")
 			}
 		})
-	})
 
-	t.Run("RewritesReferences", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("demands resolved binding", func(t *testing.T) {
+		t.Run("lists no key as both required and optional", func(t *testing.T) {
 			t.Parallel()
 			for _, op := range edit.Operations() {
 				spec, _ := edit.SpecFor(op)
-				if !spec.RewritesReferences {
-					continue
+				for _, key := range spec.Required {
+					assert.False(t, slices.Contains(spec.Optional, key), string(op)+" "+string(key))
 				}
-				assert.Equal(t, spec.MinFidelity, trust.Resolved,
-					"finding every reference is a claim no others exist, which needs a type checker")
 			}
 		})
 	})

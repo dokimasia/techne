@@ -9,58 +9,63 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// Answer is what a service publishes to a caller: what an engine found,
-// and the evidence behind it.
+// Answer is a published result: the items an engine returned and the
+// evidence behind them. Services build an Answer with [Publish]. Engines
+// return a [Result] and never build an Answer.
 //
-// An engine returns a [Result] and never builds one of these. [Publish]
-// stamps the provenance from the engine that answered, so an adapter
-// cannot name itself or its own tier.
-//
-// Items being empty means nothing on its own. Read [trust.Status.Answered]
-// to learn whether an engine ran at all, and
-// [trust.SupportsNegativeClaim] over the provenance to learn whether an
-// empty result means there are none.
+// Empty Items do not prove absence. [trust.Status.Answered] reports whether
+// an engine ran, and [trust.Provenance.SupportsNegativeClaim] reports whether
+// an empty list proves that none exist.
 type Answer[T any] struct {
 	Items      []T
 	Status     trust.Status
 	Provenance trust.Provenance
 
-	// Skipped reports that the scope held no file this engine reads, and
-	// is carried so a service merging several languages can leave it
-	// out. A caller reads the provenance and never this.
+	// Skipped is [Result.Skipped] of the engine that answered. Services use it
+	// to leave the answer out of a merge across languages. Callers read
+	// Provenance.
 	Skipped bool
 }
 
-// Request is the scope of one question.
+// Request is the scope of one question, and the number of relations that the
+// caller keeps from the answer.
 type Request struct {
-	// Scope is one file or one directory, relative to the workspace
-	// root.
-	Scope    source.Path
+	// Scope is a file or a directory, relative to the workspace root.
+	Scope source.Path
+
+	// Language restricts the request to one language. Empty selects the
+	// languages that [Languages] returns for Scope.
 	Language source.Language
-	// Preferred is the weakest evidence the caller wants. An engine
-	// answering below it is reported as [trust.Degraded] rather than
-	// refused, because a weaker answer with its tier stated is worth
-	// more than nothing.
+
+	// Preferred is the lowest tier the caller wants. An answer below it is
+	// published as [trust.Degraded], not refused.
 	Preferred trust.Fidelity
-	// Tests includes the files a language calls tests. It is false by
-	// default because a caller asking what a package offers is asking
-	// about what it ships, and only the language module knows which
-	// paths those are.
+
+	// Tests includes the files the language treats as tests. The language
+	// module defines which paths those are.
 	Tests bool
+
+	// Limit is the number of relations that the caller keeps from
+	// [Relator.Relate], and zero keeps every relation. An engine may return
+	// only the first Limit relations by the path and offset of their sites. It
+	// then adds a [trust.CaveatTruncated] caveat that counts the relations it
+	// found.
+	Limit int
 }
 
-// Query is what to search for.
-//
-// Text matches declaration names fuzzily and documentation by content,
-// so a caller that knows neither the exact name nor the unit can still
-// find something. A caller that knows the name passes the name.
+// Query is a search for declarations.
 type Query struct {
+	// Text matches declaration names by fuzzy match and documentation by
+	// content.
 	Text string
-	// Kind narrows to one kind of declaration. The zero value matches
-	// any.
+
+	// Kind restricts matches to one kind. KindUnknown matches every kind.
 	Kind sema.Kind
-	// Private includes declarations not visible outside their unit.
+
+	// Private includes declarations that are not visible outside their
+	// unit.
 	Private bool
-	// Limit caps the items returned. Zero means the engine's default.
+
+	// Limit caps the number of items. Zero selects the engine's default.
 	Limit int
 }

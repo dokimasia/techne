@@ -4,70 +4,146 @@
 package engine_test
 
 import (
+	"cmp"
 	"context"
 	"testing"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// outlineOnly serves one role. It exists to prove that an engine
-// declines a capability by not having the method, rather than by
-// returning an error at run time.
-type outlineOnly struct{}
+// The languages of the test engines.
+const (
+	fixture = source.Language("fixture")
+	other   = source.Language("other")
+)
 
-func (outlineOnly) Name() string                        { return "outline-only" }
-func (outlineOnly) Language() source.Language           { return source.Language("go") }
-func (outlineOnly) Fidelity(engine.Role) trust.Fidelity { return trust.Syntactic }
-func (outlineOnly) Cost(engine.Role) engine.Cost        { return engine.CostParse }
+// fake is an engine that implements Outliner and no other port. It declares
+// one fidelity and one cost for every role, and serves fixture unless
+// language is set. Outline returns err when it is set, and counts its calls
+// in calls when calls is set.
+type fake struct {
+	name     string
+	language source.Language
+	fidelity trust.Fidelity
+	cost     engine.Cost
+	err      error
+	calls    *int
+}
 
-func (outlineOnly) Outline(context.Context, engine.Request) (engine.Result[sema.Symbol], error) {
+func (f fake) Name() string                        { return f.name }
+func (f fake) Language() source.Language           { return cmp.Or(f.language, fixture) }
+func (f fake) Fidelity(engine.Role) trust.Fidelity { return f.fidelity }
+func (f fake) Cost(engine.Role) engine.Cost        { return f.cost }
+
+func (f fake) Outline(context.Context, engine.Request) (engine.Result[sema.Symbol], error) {
+	if f.calls != nil {
+		*f.calls++
+	}
+	if f.err != nil {
+		return engine.Result[sema.Symbol]{}, f.err
+	}
 	return engine.Result[sema.Symbol]{Completeness: trust.ScopeTotal}, nil
 }
+
+// complete is a fake that implements every port and Available. Available
+// returns unusable, and counts its calls in checks when checks is set.
+type complete struct {
+	fake
+	unusable error
+	checks   *int
+}
+
+func (c complete) Available(context.Context) error {
+	if c.checks != nil {
+		*c.checks++
+	}
+	return c.unusable
+}
+
+func (complete) Search(context.Context, engine.Request, engine.Query) (engine.Result[sema.Symbol], error) {
+	return engine.Result[sema.Symbol]{}, nil
+}
+
+func (complete) Resolve(context.Context, engine.Request, source.Position) (engine.Result[sema.Symbol], error) {
+	return engine.Result[sema.Symbol]{}, nil
+}
+
+func (complete) Relate(
+	context.Context,
+	engine.Request,
+	sema.ID,
+	sema.RelationKind,
+) (engine.Result[sema.Relation], error) {
+	return engine.Result[sema.Relation]{}, nil
+}
+
+func (complete) Plan(
+	context.Context,
+	engine.Request,
+	edit.Operation,
+	edit.Target,
+	edit.Args,
+) (engine.Result[edit.Change], error) {
+	return engine.Result[edit.Change]{}, nil
+}
+
+func (complete) Format(context.Context, []source.Path) (engine.Result[edit.Change], error) {
+	return engine.Result[edit.Change]{}, nil
+}
+
+func (complete) Check(context.Context, map[source.Path][]byte) (engine.Result[edit.Finding], error) {
+	return engine.Result[edit.Finding]{}, nil
+}
+
+func (complete) Verify(context.Context, engine.Request, []string) (engine.Result[edit.Finding], error) {
+	return engine.Result[edit.Finding]{}, nil
+}
+
+func (complete) Index(context.Context, source.Path) (engine.Result[sema.Symbol], error) {
+	return engine.Result[sema.Symbol]{}, nil
+}
+
+func (complete) Granularity() engine.Invalidation   { return engine.InvalidateFile }
+func (complete) Affected(source.Path) []source.Path { return nil }
+
+var (
+	_ engine.Outliner  = complete{}
+	_ engine.Searcher  = complete{}
+	_ engine.Resolver  = complete{}
+	_ engine.Relator   = complete{}
+	_ engine.Planner   = complete{}
+	_ engine.Formatter = complete{}
+	_ engine.Checker   = complete{}
+	_ engine.Verifier  = complete{}
+	_ engine.Indexer   = complete{}
+	_ engine.Available = complete{}
+)
 
 func TestPort(t *testing.T) {
 	t.Parallel()
 
-	t.Run("satisfaction", func(t *testing.T) {
+	t.Run("Invalidation", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("one role is enough to be an engine", func(t *testing.T) {
+		t.Run("orders granularities from narrowest to widest", func(t *testing.T) {
 			t.Parallel()
-			var e engine.Engine = outlineOnly{}
-			_, serves := e.(engine.Outliner)
-			assert.True(t, serves, "one role is enough: an engine need not implement ports it cannot serve")
+			widening := []engine.Invalidation{
+				engine.InvalidateFile, engine.InvalidateUnit, engine.InvalidateWorkspace,
+			}
+			assert.Pairwise(t, widening, func(narrow, wide engine.Invalidation) bool {
+				return narrow < wide
+			}, "granularities")
 		})
 
-		t.Run("a role not implemented is not claimed", func(t *testing.T) {
+		t.Run("is InvalidateFile when zero", func(t *testing.T) {
 			t.Parallel()
-			// The catalogue selects by type assertion. An engine that
-			// claimed every role and errored at run time would advertise
-			// capabilities that are not there.
-			var e engine.Engine = outlineOnly{}
-			for name, claimed := range map[string]bool{
-				"Searcher":  assertSearcher(e),
-				"Resolver":  assertResolver(e),
-				"Relator":   assertRelator(e),
-				"Planner":   assertPlanner(e),
-				"Formatter": assertFormatter(e),
-				"Verifier":  assertVerifier(e),
-				"Indexer":   assertIndexer(e),
-			} {
-				_ = name
-				assert.False(t, claimed,
-					"selection is by type assertion, so an engine declines a role by lacking the method")
-			}
+			var zero engine.Invalidation
+			assert.Equal(t, zero, engine.InvalidateFile, "zero value")
 		})
 	})
 }
-
-func assertSearcher(e engine.Engine) bool  { _, ok := e.(engine.Searcher); return ok }
-func assertResolver(e engine.Engine) bool  { _, ok := e.(engine.Resolver); return ok }
-func assertRelator(e engine.Engine) bool   { _, ok := e.(engine.Relator); return ok }
-func assertPlanner(e engine.Engine) bool   { _, ok := e.(engine.Planner); return ok }
-func assertFormatter(e engine.Engine) bool { _, ok := e.(engine.Formatter); return ok }
-func assertVerifier(e engine.Engine) bool  { _, ok := e.(engine.Verifier); return ok }
-func assertIndexer(e engine.Engine) bool   { _, ok := e.(engine.Indexer); return ok }

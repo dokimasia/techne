@@ -1,32 +1,28 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: MIT
 
-// Package source names where code lives: the language a file is written
-// in, the path it sits at, and the bytes it occupies.
+// Package source defines where code is: the language of a file, its path,
+// and the positions and ranges in its bytes.
 //
 // # Coordinates
 //
-// Offsets, lines and columns are zero-based and counted in bytes.
-// [Position.Offset] is authoritative; [Position.Line] and
-// [Position.Column] travel with it so an answer stays readable without
-// the file to hand. An engine speaking a protocol that counts UTF-16
-// code units converts at its own boundary and never hands those units
-// across: a position right in one unit and wrong in the other falls
-// inside a token and usually still compiles.
+// Offsets, lines and columns are zero-based byte counts. [Position.Offset]
+// is authoritative. [Position.Line] and [Position.Column] are derived from
+// it, so an answer is readable without the file. An engine whose protocol
+// counts UTF-16 code units converts them to bytes before it returns a
+// position.
 //
 // # Paths
 //
-// [Path] is slash-separated and relative to the workspace root on every
-// platform. Absolute paths do not cross a port, because they leak the
-// machine's directory layout and make an answer useless elsewhere.
+// A [Path] is slash-separated and relative to the workspace root on every
+// platform. No port accepts or returns an absolute path.
 //
 // # Ranges
 //
-// [Span] is half-open: Start is included, End is not. The zero Span
-// names no file and covers nothing.
+// A [Span] is half-open: it includes Start and excludes End.
 //
 // # Dependency position
 //
-// Imports the standard library only. Every other package in core sits on
-// this one.
+// It does not import any package. The packages sema, trust, diag, edit and
+// engine of core import it.
 package source

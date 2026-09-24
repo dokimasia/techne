@@ -8,22 +8,23 @@ import (
 	"go.dokimi.dev/techne/core/source"
 )
 
-// TargetKind is what an operation can be pointed at.
+// TargetKind is the kind of thing an operation applies to. The zero value is
+// TargetUnset.
 type TargetKind uint8
 
 const (
+	// TargetUnset is no target. No operation accepts it.
 	TargetUnset TargetKind = iota
+	// TargetSymbol is a declaration, named by Target.Symbol.
 	TargetSymbol
+	// TargetFile is a file, named by Target.Path.
 	TargetFile
+	// TargetSpan is a range of a file, named by Target.Span.
 	TargetSpan
 )
 
-// Target says what an operation is pointed at. Exactly one field
-// matching Kind carries a value; the rest are zero.
-//
-// The zero Target has kind [TargetUnset] and points at nothing, so a
-// request that forgot to name a target is refused rather than served
-// against whatever the zero values happen to mean.
+// Target is what an operation applies to. Kind selects the field that is
+// set: Symbol, Path or Span. The other fields are zero.
 type Target struct {
 	Kind   TargetKind
 	Symbol sema.ID

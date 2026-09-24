@@ -4,17 +4,16 @@
 package sema_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/sema"
 )
 
-// wireForms pins the string every kind is written as. An identity an
-// index stored embeds one of these, so they are listed rather than
-// derived: a rename that a derivation would follow silently is exactly
-// the change that invalidates stored data.
-var wireForms = map[sema.Kind]string{
+// kindWords pins the wire strings. Stored IDs embed them, so the test lists
+// them instead of deriving them from the code under test.
+var kindWords = map[sema.Kind]string{
 	sema.KindUnknown:        "unknown",
 	sema.KindModule:         "module",
 	sema.KindPackage:        "package",
@@ -41,108 +40,112 @@ var wireForms = map[sema.Kind]string{
 	sema.KindLabel:          "label",
 }
 
+// local are the kinds whose names are bound in one scope only.
+var local = map[sema.Kind]bool{
+	sema.KindParameter:     true,
+	sema.KindTypeParameter: true,
+	sema.KindLabel:         true,
+	sema.KindImport:        true,
+}
+
 func TestKind(t *testing.T) {
 	t.Parallel()
+
+	t.Run("Kind", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("is KindUnknown when zero", func(t *testing.T) {
+			t.Parallel()
+			var zero sema.Kind
+			assert.Equal(t, zero, sema.KindUnknown, "zero value")
+		})
+	})
 
 	t.Run("String", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("is the wire form of the kind", func(t *testing.T) {
+		t.Run("returns the pinned string of every kind", func(t *testing.T) {
 			t.Parallel()
-			for kind, want := range wireForms {
-				assert.Equal(t, kind.String(), want,
-					"an identity an index stored embeds this string, so it is pinned rather than derived")
+			for kind, want := range kindWords {
+				assert.Equal(t, kind.String(), want, "wire string")
 			}
 		})
 
-		t.Run("falls back to unknown outside the set", func(t *testing.T) {
+		t.Run("returns unknown for an undeclared value", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, sema.Kind(200).String(), "unknown",
-				"an invented kind must not produce an identity with an empty segment")
+			assert.Equal(t, sema.Kind(200).String(), "unknown", "wire string")
+		})
+	})
+
+	t.Run("MarshalJSON", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("round-trips every kind", func(t *testing.T) {
+			t.Parallel()
+			for kind, want := range kindWords {
+				encoded, err := json.Marshal(kind)
+				assert.NoError(t, err, "marshal")
+				assert.Equal(t, string(encoded), `"`+want+`"`, "encoding")
+				var decoded sema.Kind
+				assert.NoError(t, json.Unmarshal(encoded, &decoded), "unmarshal")
+				assert.Equal(t, decoded, kind, "round trip")
+			}
+		})
+	})
+
+	t.Run("UnmarshalJSON", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("decodes an unknown string to KindUnknown", func(t *testing.T) {
+			t.Parallel()
+			got := sema.KindStruct
+			assert.NoError(t, json.Unmarshal([]byte(`"trait-alias"`), &got), "unmarshal")
+			assert.Equal(t, got, sema.KindUnknown, "decoded kind")
 		})
 
-		t.Run("differs between kinds", func(t *testing.T) {
+		t.Run("rejects a JSON number", func(t *testing.T) {
 			t.Parallel()
-			seen := map[string]bool{}
-			for _, k := range sema.Kinds() {
-				assert.False(t, seen[k.String()],
-					"two kinds sharing a wire form would make two symbols one identity")
-				seen[k.String()] = true
-			}
+			var got sema.Kind
+			assert.HasError(t, json.Unmarshal([]byte(`5`), &got), "unmarshal of a number")
 		})
 	})
 
 	t.Run("Kinds", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("names every kind that carries a wire form", func(t *testing.T) {
+		t.Run("lists every pinned kind except KindUnknown", func(t *testing.T) {
 			t.Parallel()
 			listed := map[sema.Kind]bool{}
 			for _, k := range sema.Kinds() {
 				listed[k] = true
 			}
-			for kind := range wireForms {
-				if kind == sema.KindUnknown {
-					continue
-				}
-				assert.True(t, listed[kind],
-					"a caller checking a value against the set must not meet a kind the set omits")
-			}
-		})
-
-		t.Run("leaves out unknown", func(t *testing.T) {
-			t.Parallel()
-			for _, k := range sema.Kinds() {
-				assert.NotEqual(t, k, sema.KindUnknown,
-					"unknown is the absence of a classification, not one of them")
-			}
+			assert.Length(t, listed, len(kindWords)-1, "listed kinds")
+			assert.False(t, listed[sema.KindUnknown], "KindUnknown listed")
 		})
 	})
 
 	t.Run("Declares", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("is false for a binding that does not leave its scope", func(t *testing.T) {
+		t.Run("returns false for kinds bound in one scope", func(t *testing.T) {
 			t.Parallel()
-			for _, k := range []sema.Kind{
-				sema.KindParameter, sema.KindTypeParameter,
-				sema.KindLabel, sema.KindImport,
-			} {
-				assert.False(t, k.Declares(),
-					"a caller listing what a file offers drops these in one check")
+			for k := range local {
+				assert.False(t, k.Declares(), k.String())
 			}
 		})
 
-		t.Run("is false for unknown", func(t *testing.T) {
+		t.Run("returns false for KindUnknown", func(t *testing.T) {
 			t.Parallel()
-			assert.False(t, sema.KindUnknown.Declares(),
-				"a declaration nobody classified is not one a caller can refer to")
+			assert.False(t, sema.KindUnknown.Declares(), "KindUnknown")
 		})
 
-		t.Run("is true for every other kind", func(t *testing.T) {
+		t.Run("returns true for every other kind", func(t *testing.T) {
 			t.Parallel()
-			scoped := map[sema.Kind]bool{
-				sema.KindParameter: true, sema.KindTypeParameter: true,
-				sema.KindLabel: true, sema.KindImport: true,
-			}
 			for _, k := range sema.Kinds() {
-				if scoped[k] {
-					continue
+				if !local[k] {
+					assert.True(t, k.Declares(), k.String())
 				}
-				assert.True(t, k.Declares(),
-					"a kind naming something other code refers to is reported as declaring")
 			}
-		})
-	})
-
-	t.Run("zero value", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("is unknown", func(t *testing.T) {
-			t.Parallel()
-			var unset sema.Kind
-			assert.Equal(t, unset, sema.KindUnknown,
-				"a symbol nobody classified claims no kind")
 		})
 	})
 }

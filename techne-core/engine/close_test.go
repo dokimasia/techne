@@ -10,92 +10,67 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
-	"go.dokimi.dev/techne/core/source"
-	"go.dokimi.dev/techne/core/trust"
 )
 
-// running stands for an engine that holds a process: it records being
-// closed and can refuse to close.
-type running struct {
+// closing is a fake that implements Closer. Close counts its calls in closed
+// and returns err.
+type closing struct {
 	fake
 	closed *int
-	refuse error
+	err    error
 }
 
-func (h running) Close(context.Context) error {
-	*h.closed++
-	return h.refuse
+func (c closing) Close(context.Context) error {
+	*c.closed++
+	return c.err
 }
+
+var _ engine.Closer = closing{}
 
 func TestClose(t *testing.T) {
 	t.Parallel()
 
-	held := source.Language("held")
-
 	t.Run("Close", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("stops every engine that holds something", func(t *testing.T) {
+		t.Run("closes every engine that implements Closer", func(t *testing.T) {
 			t.Parallel()
-			// A language server is a process. One left running per
-			// language per run is a leak nobody sees until the machine is
-			// out of memory.
 			first, second := 0, 0
-			c := engine.NewCatalog()
-			mustAdd(t, c, running{name: "one", lang: held, closed: &first})
-			mustAdd(t, c, running{name: "two", lang: held, closed: &second})
-
-			assert.NoError(t, c.Close(t.Context()), "closing a catalogue of live engines succeeds")
-			assert.Equal(t, first, 1, "the first was stopped")
-			assert.Equal(t, second, 1, "and so was the second")
+			c := catalog(t, closing{name: "first", closed: &first}, closing{name: "second", closed: &second})
+			assert.NoError(t, c.Close(t.Context()), "Close")
+			assert.Equal(t, []int{first, second}, []int{1, 1}, "Close calls")
 		})
 
-		t.Run("leaves alone an engine that holds nothing", func(t *testing.T) {
+		t.Run("returns nil for engines without Closer", func(t *testing.T) {
 			t.Parallel()
-			// An in-process parser has nothing outside the process.
-			// Making it implement the port would mean every adapter
-			// carrying a method that returns nil.
-			c := engine.NewCatalog()
-			mustAdd(t, c, fake{name: "parser", lang: held})
-			assert.NoError(t, c.Close(t.Context()), "an engine running nothing is not asked")
+			assert.NoError(t, catalog(t, fake{name: "parser"}).Close(t.Context()), "Close")
 		})
 
-		t.Run("asks the rest after one refuses", func(t *testing.T) {
+		t.Run("closes the remaining engines after a failure", func(t *testing.T) {
 			t.Parallel()
-			// Stopping at the first failure would leave a process running
-			// for every engine after it, which is the leak this exists to
-			// prevent happening on the way out.
-			broken := errors.New("engine: will not stop")
 			first, second := 0, 0
-			c := engine.NewCatalog()
-			mustAdd(t, c, running{name: "one", lang: held, closed: &first, refuse: broken})
-			mustAdd(t, c, running{name: "two", lang: held, closed: &second})
+			c := catalog(t,
+				closing{name: "first", closed: &first, err: errors.New("first: stuck")},
+				closing{name: "second", closed: &second})
+			assert.HasError(t, c.Close(t.Context()), "Close")
+			assert.Equal(t, second, 1, "second Close calls")
+		})
 
+		t.Run("returns every failure", func(t *testing.T) {
+			t.Parallel()
+			one, two := errors.New("first: stuck"), errors.New("second: stuck")
+			first, second := 0, 0
+			c := catalog(t,
+				closing{name: "first", closed: &first, err: one},
+				closing{name: "second", closed: &second, err: two})
 			err := c.Close(t.Context())
-			assert.ErrorIs(t, err, broken, "the refusal reaches the caller")
-			assert.Equal(t, second, 1, "and the engine after it was still stopped")
+			assert.ErrorIs(t, err, one, "first failure")
+			assert.ErrorIs(t, err, two, "second failure")
 		})
 
-		t.Run("reports every refusal rather than the first", func(t *testing.T) {
+		t.Run("returns nil for an empty catalogue", func(t *testing.T) {
 			t.Parallel()
-			one, two := errors.New("engine: one stuck"), errors.New("engine: two stuck")
-			first, second := 0, 0
-			c := engine.NewCatalog()
-			mustAdd(t, c, running{name: "one", lang: held, closed: &first, refuse: one})
-			mustAdd(t, c, running{name: "two", lang: held, closed: &second, refuse: two})
-
-			err := c.Close(t.Context())
-			assert.ErrorIs(t, err, one, "the first refusal is reported")
-			assert.ErrorIs(t, err, two, "and so is the second")
-		})
-
-		t.Run("does nothing to an empty catalogue", func(t *testing.T) {
-			t.Parallel()
-			assert.NoError(t, engine.NewCatalog().Close(t.Context()),
-				"a binary that registered nothing has nothing to stop")
+			assert.NoError(t, engine.NewCatalog().Close(t.Context()), "Close")
 		})
 	})
 }
-
-// assert the port is what the catalogue looks for.
-var _ engine.Closer = running{fidelity: trust.None}

@@ -5,10 +5,10 @@ package edit
 
 import "strings"
 
-// Family is the verb an operation belongs to. A family can be advertised
-// or refused as a unit.
+// Family is the verb of an operation, such as rename or extract.
 type Family string
 
+// The families of the declared operations.
 const (
 	FamilyRename    Family = "rename"
 	FamilyMove      Family = "move"
@@ -19,9 +19,11 @@ const (
 	FamilyDocument  Family = "document"
 )
 
-// Operation is one thing a caller can ask for, named family.subject.
+// Operation names an operation a caller can request, in the form
+// family.subject.
 type Operation string
 
+// The declared operations. [SpecFor] returns the spec of each one.
 const (
 	RenameSymbol       Operation = "rename.symbol"
 	RenameFile         Operation = "rename.file"
@@ -37,21 +39,15 @@ const (
 	DocumentSymbol     Operation = "document.symbol"
 )
 
-// Family returns the part before the dot, or the whole name when an
-// operation has no subject.
+// Family returns the part of o before the first dot, or o itself when it
+// contains no dot.
 func (o Operation) Family() Family {
-	name, _, found := strings.Cut(string(o), ".")
-	if !found {
-		return Family(o)
-	}
+	name, _, _ := strings.Cut(string(o), ".")
 	return Family(name)
 }
 
-// Operations returns every declared operation, in catalogue order.
-//
-// It is the list the spec table is checked against, so an operation
-// added here without a spec fails the package's tests rather than
-// reaching a caller with nothing to validate it.
+// Operations returns every declared operation, grouped by family. Each call
+// returns a new slice.
 func Operations() []Operation {
 	return []Operation{
 		RenameSymbol, RenameFile,

@@ -4,41 +4,25 @@
 package engine_test
 
 import (
-	"context"
 	"errors"
 	"testing"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
-	"go.dokimi.dev/techne/core/sema"
-	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// fake is an engine whose tier, price and availability a case sets. It
-// serves RoleOutline, which is enough to be selected for.
-type fake struct {
-	name     string
-	lang     source.Language
-	fidelity trust.Fidelity
-	cost     engine.Cost
-	unusable error
+// catalog returns a catalogue of engines, registered in order.
+func catalog(t *testing.T, engines ...engine.Engine) *engine.Catalog {
+	t.Helper()
+	c := engine.NewCatalog()
+	for _, e := range engines {
+		assert.NoError(t, c.Add(e), "Add "+e.Name())
+	}
+	return c
 }
 
-func (f fake) Name() string                        { return f.name }
-func (f fake) Language() source.Language           { return f.lang }
-func (f fake) Fidelity(engine.Role) trust.Fidelity { return f.fidelity }
-func (f fake) Cost(engine.Role) engine.Cost        { return f.cost }
-
-func (fake) Outline(context.Context, engine.Request) (engine.Result[sema.Symbol], error) {
-	return engine.Result[sema.Symbol]{Completeness: trust.ScopeTotal}, nil
-}
-
-// gated is a fake that depends on something outside the process.
-type gated struct{ fake }
-
-func (g gated) Available(context.Context) error { return g.unusable }
-
+// names returns the names of engines, in order.
 func names(engines []engine.Engine) []string {
 	out := make([]string, 0, len(engines))
 	for _, e := range engines {
@@ -50,169 +34,131 @@ func names(engines []engine.Engine) []string {
 func TestCatalog(t *testing.T) {
 	t.Parallel()
 
-	const lang = source.Language("fixture")
-
 	t.Run("Add", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("refuses two engines with one name for one language", func(t *testing.T) {
+		t.Run("returns an error for a second engine with one name and language", func(t *testing.T) {
 			t.Parallel()
-			// Provenance names the engine that answered. Two engines
-			// sharing a name make an answer untraceable.
 			c := engine.NewCatalog()
-			assert.NoError(t, c.Add(fake{name: "parser", lang: lang}), "the first engine registers")
-			assert.HasError(t, c.Add(fake{name: "parser", lang: lang}),
-				"a provenance names the engine that answered, so two engines cannot share a name")
+			assert.NoError(t, c.Add(fake{name: "parser"}), "first Add")
+			assert.HasError(t, c.Add(fake{name: "parser"}), "second Add")
 		})
 
-		t.Run("accepts one name answering about two languages", func(t *testing.T) {
+		t.Run("accepts one name for two languages", func(t *testing.T) {
 			t.Parallel()
-			// One program serves several: typescript-language-server
-			// answers about TypeScript and about JavaScript, clangd about
-			// C and C++. Refusing the second would make a language lose
-			// its server for being second in the list.
 			c := engine.NewCatalog()
-			assert.NoError(t, c.Add(fake{name: "shared", lang: lang}), "the first registers")
-			assert.NoError(t, c.Add(fake{name: "shared", lang: source.Language("elsewhere")}),
-				"and so does the same program answering about another language")
+			assert.NoError(t, c.Add(fake{name: "shared"}), "fixture")
+			assert.NoError(t, c.Add(fake{name: "shared", language: other}), "other")
 		})
 	})
 
 	t.Run("For", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("puts stronger evidence first", func(t *testing.T) {
-			t.Parallel()
-			c := engine.NewCatalog()
-			mustAdd(t, c, fake{name: "parser", lang: lang, fidelity: trust.Syntactic, cost: engine.CostParse})
-			mustAdd(t, c, fake{name: "checker", lang: lang, fidelity: trust.Resolved, cost: engine.CostAnalyze})
-
-			assert.Equal(t, names(c.For(t.Context(), lang, engine.RoleOutline)),
-				[]string{"checker", "parser"},
-				"the strongest evidence is tried first")
-		})
-
-		t.Run("puts the cheaper of two equals first", func(t *testing.T) {
-			t.Parallel()
-			// A warm index and the parser that filled it produce the
-			// same facts. Nothing else separates them, so price does.
-			c := engine.NewCatalog()
-			mustAdd(t, c, fake{name: "parser", lang: lang, fidelity: trust.Syntactic, cost: engine.CostParse})
-			mustAdd(t, c, fake{name: "index", lang: lang, fidelity: trust.Syntactic, cost: engine.CostMemory})
-
-			assert.Equal(t, names(c.For(t.Context(), lang, engine.RoleOutline)),
-				[]string{"index", "parser"},
-				"two engines producing the same facts are separated by price alone")
-		})
-
-		t.Run("skips an engine that does not serve the role", func(t *testing.T) {
-			t.Parallel()
-			c := engine.NewCatalog()
-			mustAdd(t, c, fake{name: "outliner", lang: lang, fidelity: trust.Syntactic})
-			assert.Empty(t, c.For(t.Context(), lang, engine.RoleVerify),
-				"an engine lacking the method does not serve the role")
-		})
-
-		t.Run("skips an engine that cannot run", func(t *testing.T) {
-			t.Parallel()
-			// An engine whose server is not installed must not be
-			// advertised, or the ladder stops on something absent.
-			c := engine.NewCatalog()
-			mustAdd(t, c, gated{fake{
-				name: "server", lang: lang, fidelity: trust.Resolved,
-				unusable: errors.New("engine: not on PATH"),
-			}})
-			mustAdd(t, c, fake{name: "parser", lang: lang, fidelity: trust.Syntactic})
-
-			assert.Equal(t, names(c.For(t.Context(), lang, engine.RoleOutline)),
-				[]string{"parser"},
-				"an engine whose server is absent is not advertised")
-		})
-
-		t.Run("keeps an engine that declares no availability", func(t *testing.T) {
-			t.Parallel()
-			// An in-process engine has nothing outside to check. Making
-			// it implement Available would mean every adapter carrying a
-			// method that returns nil.
-			c := engine.NewCatalog()
-			mustAdd(t, c, fake{name: "parser", lang: lang, fidelity: trust.Syntactic})
-			assert.Length(t, c.For(t.Context(), lang, engine.RoleOutline), 1,
-				"an in-process engine has nothing outside to check and is always usable")
-		})
-
-		t.Run("skips an engine that reaches nothing for the role", func(t *testing.T) {
-			t.Parallel()
-			// An engine implements a port for the roles it serves and
-			// cannot implement it for some and not others, so declaring
-			// no evidence is how it declines the rest. Offered anyway, it
-			// would be tried when the engine above it declines, and would
-			// appear in a capability report as serving at no tier.
-			c := engine.NewCatalog()
-			mustAdd(t, c, fake{name: "silent", lang: lang, fidelity: trust.None})
-			assert.Empty(t, c.For(t.Context(), lang, engine.RoleOutline),
-				"an engine holding no evidence for a role has nothing to say about it")
-		})
-
-		t.Run("skips another language", func(t *testing.T) {
-			t.Parallel()
-			c := engine.NewCatalog()
-			mustAdd(t, c, fake{
-				name: "other", lang: source.Language("elsewhere"),
-				fidelity: trust.Syntactic,
+		tests := []struct {
+			name string
+			give []engine.Engine
+			want []string
+		}{
+			{
+				name: "orders engines by fidelity",
+				give: []engine.Engine{
+					fake{name: "parser", fidelity: trust.Syntactic, cost: engine.CostParse},
+					fake{name: "checker", fidelity: trust.Resolved, cost: engine.CostAnalyze},
+				},
+				want: []string{"checker", "parser"},
+			},
+			{
+				name: "orders engines of equal fidelity by cost",
+				give: []engine.Engine{
+					fake{name: "parser", fidelity: trust.Syntactic, cost: engine.CostParse},
+					fake{name: "index", fidelity: trust.Syntactic, cost: engine.CostMemory},
+				},
+				want: []string{"index", "parser"},
+			},
+			{
+				name: "keeps the registration order of equal engines",
+				give: []engine.Engine{
+					fake{name: "first", fidelity: trust.Syntactic, cost: engine.CostParse},
+					fake{name: "second", fidelity: trust.Syntactic, cost: engine.CostParse},
+				},
+				want: []string{"first", "second"},
+			},
+			{
+				name: "skips an engine that declares None for the role",
+				give: []engine.Engine{fake{name: "silent", fidelity: trust.None}},
+				want: []string{},
+			},
+			{
+				name: "skips an engine whose Available returns an error",
+				give: []engine.Engine{
+					complete{name: "server", fidelity: trust.Resolved, unusable: errors.New("server: not on PATH")},
+					fake{name: "parser", fidelity: trust.Syntactic},
+				},
+				want: []string{"parser"},
+			},
+			{
+				name: "selects an engine that does not implement Available",
+				give: []engine.Engine{fake{name: "parser", fidelity: trust.Syntactic}},
+				want: []string{"parser"},
+			},
+			{
+				name: "skips an engine of another language",
+				give: []engine.Engine{fake{name: "parser", language: other, fidelity: trust.Syntactic}},
+				want: []string{},
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				got := catalog(t, tt.give...).For(t.Context(), fixture, engine.RoleOutline)
+				assert.Equal(t, names(got), tt.want, "engines")
 			})
-			assert.Empty(t, c.For(t.Context(), lang, engine.RoleOutline),
-				"an engine answers about one language and is not offered for another")
+		}
+
+		t.Run("skips an engine that does not implement the port", func(t *testing.T) {
+			t.Parallel()
+			c := catalog(t, fake{name: "parser", fidelity: trust.Syntactic})
+			assert.Empty(t, c.For(t.Context(), fixture, engine.RoleVerify), "engines")
 		})
 	})
 
 	t.Run("Capabilities", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("reports no role an engine reaches nothing for", func(t *testing.T) {
+		t.Run("lists every role an engine offers", func(t *testing.T) {
 			t.Parallel()
-			// The report and the selection ask the same question. One
-			// advertising a role the other will never select tells a
-			// caller it can do something it cannot.
-			c := engine.NewCatalog()
-			mustAdd(t, c, fake{name: "silent", lang: lang, fidelity: trust.None})
-			assert.Empty(t, c.Capabilities(t.Context()),
-				"nothing is advertised that nothing can be selected for")
+			c := catalog(t, complete{name: "complete", fidelity: trust.Resolved})
+			var roles []engine.Role
+			for _, capability := range c.Capabilities(t.Context()) {
+				roles = append(roles, capability.Role)
+			}
+			assert.Equal(t, roles, engine.Roles(), "roles")
 		})
 
-		t.Run("reports what each engine serves, and why it cannot", func(t *testing.T) {
+		t.Run("omits a role the engine declares None for", func(t *testing.T) {
 			t.Parallel()
-			c := engine.NewCatalog()
-			mustAdd(t, c, gated{fake{
-				name: "server", lang: lang, fidelity: trust.Resolved,
-				unusable: errors.New("engine: not on PATH"),
-			}})
-
-			var found bool
-			for _, cap := range c.Capabilities(t.Context()) {
-				if cap.Engine != "server" || cap.Role != engine.RoleOutline {
-					continue
-				}
-				found = true
-				assert.False(t, cap.Available, "an engine whose server is absent cannot run")
-				assert.NotEmpty(t, cap.Unavailable,
-					"a missing server is a different problem from a missing capability, so it says which")
-			}
-			assert.True(t, found, "an engine is reported for every role it serves")
+			c := catalog(t, fake{name: "silent", fidelity: trust.None})
+			assert.Empty(t, c.Capabilities(t.Context()), "capabilities")
 		})
 
-		t.Run("reports nothing for a role no engine serves", func(t *testing.T) {
+		t.Run("reports the Available error of an engine", func(t *testing.T) {
 			t.Parallel()
-			c := engine.NewCatalog()
-			mustAdd(t, c, fake{name: "outliner", lang: lang})
-			for _, cap := range c.Capabilities(t.Context()) {
-				assert.NotEqual(t, cap.Role, engine.RoleVerify,
-					"a role no engine serves is not reported as a capability")
+			c := catalog(t, complete{
+				name: "server", fidelity: trust.Resolved, unusable: errors.New("server: not on PATH"),
+			})
+			for _, capability := range c.Capabilities(t.Context()) {
+				assert.False(t, capability.Available, capability.Role.String())
+				assert.Equal(t, capability.Unavailable, "server: not on PATH", capability.Role.String())
 			}
+		})
+
+		t.Run("calls Available once per engine", func(t *testing.T) {
+			t.Parallel()
+			checks := 0
+			c := catalog(t, complete{name: "server", fidelity: trust.Resolved, checks: &checks})
+			c.Capabilities(t.Context())
+			assert.Equal(t, checks, 1, "Available calls")
 		})
 	})
-}
-
-func mustAdd(t *testing.T, c *engine.Catalog, e engine.Engine) {
-	t.Helper()
-	assert.NoError(t, c.Add(e), "the case needs this engine registered")
 }

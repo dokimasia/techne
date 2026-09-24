@@ -3,24 +3,11 @@
 
 package source
 
-// Language identifies a language on every request and every answer.
+// Language identifies a programming language on requests and answers. The
+// zero value is the empty string, which is not a language.
 //
-// The type lives here because core names languages constantly and knows
-// none of them. The values do not: each language module declares its
-// own, so deleting that module removes every mention of the language
-// from the tree.
-//
-// It is a string rather than an integer so it survives a round trip
-// through JSON without a lookup table, and so a language registered at
-// run time needs no constant compiled in anywhere.
-//
-// The set is open. A caller asks the catalogue what is registered rather
-// than comparing against a list, and two modules claiming one value are
-// rejected at registration rather than colliding silently.
-//
-// The value is the wire form. It reaches a caller and, through a sema
-// identity, an index that outlives the process, so a module changing its
-// own value invalidates stored data.
-//
-// The zero Language is the empty string and names nothing.
+// Each language module declares its own value, and core declares none. The
+// language registry refuses a value that two modules declare. The value is
+// part of every [go.dokimi.dev/techne/core/sema.ID], so changing it
+// invalidates the IDs an index has stored.
 type Language string

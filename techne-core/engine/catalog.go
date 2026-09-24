@@ -13,80 +13,60 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// Catalog holds the registered engines and orders them for a question.
-//
-// It is safe for concurrent reads once building is finished. [Catalog.Add]
-// is called from a composition root before any request is served, and
-// nothing adds an engine afterwards.
+// Catalog is the set of registered engines. Add is not safe for concurrent
+// use. Build the catalog before serving requests, after which every other
+// method is safe for concurrent use.
 type Catalog struct {
 	engines []Engine
 	named   map[named]bool
 }
 
-// named is an engine's name within one language, which is what has to be
-// unique.
+// named identifies an engine within one language.
 type named struct {
 	language source.Language
 	engine   string
 }
 
-// NewCatalog returns an empty catalogue.
+// NewCatalog returns an empty Catalog.
 func NewCatalog() *Catalog {
 	return &Catalog{named: map[named]bool{}}
 }
 
-// Add registers an engine.
-//
-// It reports an error when an engine of that name already answers about
-// that language: a provenance names the engine that answered, so two of
-// them sharing a name make an answer untraceable.
-//
-// Unique within a language rather than across all of them, because one
-// program serves several: typescript-language-server answers about
-// TypeScript and about JavaScript, and clangd about C and C++. Those are
-// two engines with one name, and an answer naming it is not ambiguous —
-// only one of them was ever asked, because [Catalog.For] selects by
-// language first.
+// Add registers an engine. It returns an error if an engine with the same
+// name already serves the same language, because a provenance identifies the
+// engine that answered by name. One name can serve more than one language,
+// as typescript-language-server does for TypeScript and JavaScript.
 func (c *Catalog) Add(e Engine) error {
-	held := named{language: e.Language(), engine: e.Name()}
-	if c.named[held] {
-		return fmt.Errorf("engine: %q already answers about %q", held.engine, held.language)
+	key := named{language: e.Language(), engine: e.Name()}
+	if c.named[key] {
+		return fmt.Errorf("engine: %q already serves %q", key.engine, key.language)
 	}
-	c.named[held] = true
+	c.named[key] = true
 	c.engines = append(c.engines, e)
 	return nil
 }
 
-// For returns the engines that can answer this role for this language,
-// strongest evidence first and cheapest among equals.
-//
-// An engine that does not serve the role, serves another language, or
-// cannot run is left out. Asking an engine is the caller's job: the
-// order here is the order to try, and [ErrDecline] means move to the
-// next.
+// For returns the engines that serve role for lang and can run now, highest
+// fidelity first and cheapest first among equals. Engines of equal fidelity
+// and cost keep their registration order. Callers try them in order and move
+// to the next one when an engine returns ErrDecline.
 func (c *Catalog) For(ctx context.Context, lang source.Language, role Role) []Engine {
 	var usable []Engine
 	for _, e := range c.engines {
-		if e.Language() != lang || !offers(e, role) {
-			continue
+		if e.Language() == lang && offers(e, role) && unavailable(ctx, e) == nil {
+			usable = append(usable, e)
 		}
-		if reason := unavailable(ctx, e); reason != nil {
-			continue
-		}
-		usable = append(usable, e)
 	}
-
 	slices.SortStableFunc(usable, func(a, b Engine) int {
-		// Strongest evidence first, so the comparison is reversed.
-		if byTier := cmp.Compare(b.Fidelity(role), a.Fidelity(role)); byTier != 0 {
-			return byTier
-		}
-		return cmp.Compare(a.Cost(role), b.Cost(role))
+		return cmp.Or(
+			cmp.Compare(b.Fidelity(role), a.Fidelity(role)),
+			cmp.Compare(a.Cost(role), b.Cost(role)),
+		)
 	})
 	return usable
 }
 
-// Capability is what one engine can answer for one language and role.
+// Capability is one role that one engine serves for one language.
 type Capability struct {
 	Language source.Language
 	Role     Role
@@ -95,19 +75,18 @@ type Capability struct {
 	Cost     Cost
 	// Available reports whether the engine can run now.
 	Available bool
-	// Unavailable says why it cannot, and is empty when it can.
+	// Unavailable is the reason the engine cannot run, or empty.
 	Unavailable string
 }
 
-// Capabilities reports every language and role an engine serves.
-//
-// It answers "can you rename this Python symbol" as a value, rather than
-// leaving a caller to infer it from which tools exist. An engine that
-// cannot run is reported with the reason rather than omitted, because a
-// missing server is a different problem from a missing capability.
+// Capabilities returns one Capability for every role that each engine
+// offers, in registration order. It includes the engines that cannot run, with
+// Available false and the error text in Unavailable, so a caller can tell a
+// missing server from a missing capability.
 func (c *Catalog) Capabilities(ctx context.Context) []Capability {
 	var out []Capability
 	for _, e := range c.engines {
+		why := unavailable(ctx, e)
 		for _, role := range Roles() {
 			if !offers(e, role) {
 				continue
@@ -118,11 +97,10 @@ func (c *Catalog) Capabilities(ctx context.Context) []Capability {
 				Engine:    e.Name(),
 				Fidelity:  e.Fidelity(role),
 				Cost:      e.Cost(role),
-				Available: true,
+				Available: why == nil,
 			}
-			if reason := unavailable(ctx, e); reason != nil {
-				capability.Available = false
-				capability.Unavailable = reason.Error()
+			if why != nil {
+				capability.Unavailable = why.Error()
 			}
 			out = append(out, capability)
 		}
@@ -130,40 +108,23 @@ func (c *Catalog) Capabilities(ctx context.Context) []Capability {
 	return out
 }
 
-// offers reports whether an engine answers a role at all.
-//
-// Two things have to hold, and both are the engine's own statement about
-// itself. It must implement the port, which is how it declines a role
-// outright. And it must reach some tier for the role, which is how it
-// declines one whose port it implements: an engine implements a port for
-// every role that port covers and cannot implement it for some and not
-// others, so a language server that leaves outline to a parser says so
-// by reaching nothing for it.
-//
-// Selection and the capability report both ask this. Asking it in one
-// place is what keeps a report from advertising a role that can never be
-// selected.
+// offers reports whether e serves role: it implements the role's port and
+// declares a fidelity above None for it. An engine declines a role of a port
+// it implements by declaring None.
 func offers(e Engine, role Role) bool {
 	return serves(e, role) && e.Fidelity(role) != trust.None
 }
 
-// unavailable reports why an engine cannot run, or nil. An engine that
-// does not implement [Available] has nothing outside the process to
-// check and is always usable.
+// unavailable returns why e cannot run, or nil. An engine that does not
+// implement Available can always run.
 func unavailable(ctx context.Context, e Engine) error {
-	gate, declared := e.(Available)
-	if !declared {
-		return nil
+	if a, ok := e.(Available); ok {
+		return a.Available(ctx)
 	}
-	return gate.Available(ctx)
+	return nil
 }
 
-// serves reports whether an engine implements the port for a role.
-//
-// Selection is by type assertion, so an engine declines a role by not
-// having the method. This is the one place the roles and the ports are
-// mapped onto each other; a port added without a case here can never be
-// selected.
+// serves reports whether e implements the port of role.
 func serves(e Engine, role Role) bool {
 	switch role {
 	case RoleOutline:

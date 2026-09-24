@@ -11,34 +11,38 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// TestDoc covers the contract the package comment states across the
-// ports and the engine interface together.
-func TestDoc(t *testing.T) {
-	t.Parallel()
+// server is a complete engine that declares Resolved for RoleRelate and
+// Syntactic for every other role, at CostSession.
+type server struct{ complete }
 
-	t.Run("fidelity is per role", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("so one engine can bind strongly and outline weakly", func(t *testing.T) {
-			t.Parallel()
-			// A language server resolves references through a type
-			// system while returning an outline its own parser produced.
-			// One tier per engine would force it to claim the weaker of
-			// the two for both.
-			var e engine.Engine = graded{}
-			assert.True(t, e.Fidelity(engine.RoleRelate) > e.Fidelity(engine.RoleOutline),
-				"one tier per engine would force a server to claim the weaker of what it does for both")
-		})
-	})
-}
-
-// graded stands for a language server: strong on references, weaker on
-// document outline.
-type graded struct{ outlineOnly }
-
-func (graded) Fidelity(r engine.Role) trust.Fidelity {
+func (server) Fidelity(r engine.Role) trust.Fidelity {
 	if r == engine.RoleRelate {
 		return trust.Resolved
 	}
 	return trust.Syntactic
+}
+
+func (server) Cost(engine.Role) engine.Cost { return engine.CostSession }
+
+func TestDoc(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Catalog.For", func(t *testing.T) {
+		t.Parallel()
+
+		lsp := server{complete{name: "server"}}
+		parser := complete{name: "parser", fidelity: trust.Syntactic, cost: engine.CostParse}
+
+		t.Run("selects the parser first for RoleOutline", func(t *testing.T) {
+			t.Parallel()
+			got := catalog(t, lsp, parser).For(t.Context(), fixture, engine.RoleOutline)
+			assert.Equal(t, names(got), []string{"parser", "server"}, "engines")
+		})
+
+		t.Run("selects the server first for RoleRelate", func(t *testing.T) {
+			t.Parallel()
+			got := catalog(t, lsp, parser).For(t.Context(), fixture, engine.RoleRelate)
+			assert.Equal(t, names(got), []string{"server", "parser"}, "engines")
+		})
+	})
 }

@@ -10,36 +10,31 @@ import (
 	"go.dokimi.dev/techne/core/source"
 )
 
-// ID identifies a symbol across processes and across runs.
-//
-// The form is language:unit#qualified-name:kind, for example
-// go:./internal/fsx#Digest:function.
+// ID identifies a declaration across processes and runs. Its form is
+// language:unit#name:kind, as in go:./internal/fsx#Store.Digest:method.
 type ID string
 
-// NewID builds the identity of one declaration.
-//
-// It derives the identity from what the declaration is rather than from
-// where it sits, so moving it inside its file leaves the ID unchanged
-// and an index that stored it stays valid. Renaming the symbol or its
-// unit does change the ID, which is correct: that is a different
-// declaration.
+// NewID returns the ID of the declaration named qualified, of kind, in unit
+// of lang. The qualified name is the name that [Qualify] builds from the
+// declarations that contain the declaration. The ID does not depend on the
+// position of the declaration, so an edit elsewhere in the file keeps it
+// valid.
 func NewID(lang source.Language, unit source.Path, qualified string, kind Kind) ID {
 	return ID(fmt.Sprintf("%s:%s#%s:%s", lang, unit, qualified, kind))
 }
 
-// Name is the qualified name inside an identity, and the empty string
-// for a value that is not one.
-//
-// Read here rather than by whoever needs it, because the format is this
-// package's: an identity taken apart somewhere else is a second copy of
-// the format, and the two drift the moment a field is added.
-//
-// It exists because two engines answering about one declaration need not
-// agree on its kind — a parser calls a method in a Scala object a
-// function and the language server calls it a method — and an identity
-// that differs in that field alone still names the same declaration. A
-// caller matching on identity first and name second settles it, and the
-// name is the part it cannot get at otherwise.
+// Qualify returns name qualified by the qualified name of its container: the
+// two joined by a dot, or name alone for an empty container.
+func Qualify(container, name string) string {
+	if container == "" {
+		return name
+	}
+	return container + "." + name
+}
+
+// Name returns the qualified name in i, or an empty string if i does not have
+// the form that NewID returns. Engines can report one declaration with
+// different kinds, so a caller compares the names of IDs whose kinds differ.
 func (i ID) Name() string {
 	_, after, found := strings.Cut(string(i), "#")
 	if !found {
@@ -49,4 +44,12 @@ func (i ID) Name() string {
 		return after[:at]
 	}
 	return after
+}
+
+// Base returns the part of the qualified name in i after its last dot, such
+// as Get for Store.Get. It returns a name without a dot whole, and an empty
+// string if i does not have the form that NewID returns.
+func (i ID) Base() string {
+	name := i.Name()
+	return name[strings.LastIndex(name, ".")+1:]
 }

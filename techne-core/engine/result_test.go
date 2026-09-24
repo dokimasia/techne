@@ -9,129 +9,127 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
-	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 )
 
 func TestResult(t *testing.T) {
 	t.Parallel()
 
-	const lang = source.Language("fixture")
-	answered := fake{name: "parser", lang: lang, fidelity: trust.Syntactic, cost: engine.CostParse}
-	strong := fake{name: "checker", lang: lang, fidelity: trust.Resolved, cost: engine.CostAnalyze}
+	parser := fake{name: "parser", fidelity: trust.Syntactic, cost: engine.CostParse}
+	checker := fake{name: "checker", fidelity: trust.Resolved, cost: engine.CostAnalyze}
+	total := engine.Result[sema.Symbol]{Completeness: trust.ScopeTotal}
 
 	t.Run("Publish", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("takes the engine's name and tier, not the result's word", func(t *testing.T) {
+		t.Run("takes the engine name from the engine", func(t *testing.T) {
 			t.Parallel()
-			// A Result has no field for either. An adapter cannot claim
-			// a tier it does not hold, which is the same reason a role
-			// is declined by lacking a method.
-			r := engine.Result[sema.Symbol]{Completeness: trust.ScopeTotal}
-			got := engine.Publish(r, strong, engine.RoleOutline, trust.None)
-
-			assert.Equal(t, got.Provenance.Engine, "checker",
-				"a Result has no field for a name, so the engine that answered is named by Publish")
-			assert.Equal(t, got.Provenance.Fidelity, trust.Resolved,
-				"a Result has no field for a tier, so an adapter cannot claim one it does not hold")
+			got := engine.Publish(total, checker, engine.RoleOutline, trust.None)
+			assert.Equal(t, got.Provenance.Engine, "checker", "engine")
 		})
 
-		t.Run("lets an engine lower its own tier for one answer", func(t *testing.T) {
+		t.Run("takes the tier from the engine", func(t *testing.T) {
 			t.Parallel()
-			// A type checker over a workspace that does not compile
-			// binds some names and not others, and every answer it
-			// gives is worth what a half-bound program is worth. That is
-			// a property of the answer rather than of the engine, so it
-			// travels on the result.
-			r := engine.Result[sema.Symbol]{
-				Completeness: trust.ScopeTotal, Lowered: trust.Indexed,
-			}
-			got := engine.Publish(r, strong, engine.RoleOutline, trust.None)
-			assert.Equal(t, got.Provenance.Fidelity, trust.Indexed,
-				"the answer is worth less than the engine usually is")
+			got := engine.Publish(total, checker, engine.RoleOutline, trust.None)
+			assert.Equal(t, got.Provenance.Fidelity, trust.Resolved, "fidelity")
 		})
 
-		t.Run("does not let an engine raise it", func(t *testing.T) {
+		t.Run("lowers the tier to Lowered", func(t *testing.T) {
 			t.Parallel()
-			// Understating is the engine's to do and overstating is not.
-			r := engine.Result[sema.Symbol]{
-				Completeness: trust.ScopeTotal, Lowered: trust.Resolved,
-			}
-			got := engine.Publish(r, answered, engine.RoleOutline, trust.None)
-			assert.Equal(t, got.Provenance.Fidelity, trust.Syntactic,
-				"a result claiming more than the engine declares is not believed")
+			r := engine.Result[sema.Symbol]{Completeness: trust.ScopeTotal, Lowered: trust.Indexed}
+			got := engine.Publish(r, checker, engine.RoleOutline, trust.None)
+			assert.Equal(t, got.Provenance.Fidelity, trust.Indexed, "fidelity")
 		})
 
-		t.Run("carries the completeness only the engine knows", func(t *testing.T) {
+		t.Run("ignores a Lowered tier above the declared tier", func(t *testing.T) {
+			t.Parallel()
+			r := engine.Result[sema.Symbol]{Completeness: trust.ScopeTotal, Lowered: trust.Resolved}
+			got := engine.Publish(r, parser, engine.RoleOutline, trust.None)
+			assert.Equal(t, got.Provenance.Fidelity, trust.Syntactic, "fidelity")
+		})
+
+		t.Run("copies the completeness of the result", func(t *testing.T) {
 			t.Parallel()
 			r := engine.Result[sema.Symbol]{Completeness: trust.ScopePartial}
-			got := engine.Publish(r, strong, engine.RoleOutline, trust.None)
-			assert.Equal(t, got.Provenance.Completeness, trust.ScopePartial,
-				"only the engine knows what it covered, so completeness comes from the result")
+			got := engine.Publish(r, checker, engine.RoleOutline, trust.None)
+			assert.Equal(t, got.Provenance.Completeness, trust.ScopePartial, "completeness")
 		})
 
-		t.Run("reports OK when the tier was met and the scope covered", func(t *testing.T) {
+		t.Run("copies the items of the result", func(t *testing.T) {
 			t.Parallel()
-			r := engine.Result[sema.Symbol]{Completeness: trust.ScopeTotal}
-			assert.Equal(t, engine.Publish(r, strong, engine.RoleOutline, trust.Resolved).Status, trust.OK,
-				"the tier the caller asked for was met and the scope was covered")
+			r := engine.Result[sema.Symbol]{Items: []sema.Symbol{{Name: "F"}}}
+			got := engine.Publish(r, checker, engine.RoleOutline, trust.None)
+			assert.Equal(t, got.Items, r.Items, "items")
 		})
 
-		t.Run("reports Degraded when the tier is below what was asked", func(t *testing.T) {
+		t.Run("copies the caveats of the result", func(t *testing.T) {
 			t.Parallel()
-			r := engine.Result[sema.Symbol]{Completeness: trust.ScopeTotal}
-			assert.Equal(t, engine.Publish(r, answered, engine.RoleOutline, trust.Resolved).Status, trust.Degraded,
-				"an engine below the caller's floor answers and says so rather than refusing")
+			r := engine.Result[sema.Symbol]{Caveats: []trust.Caveat{{Code: trust.CaveatDynamic}}}
+			got := engine.Publish(r, checker, engine.RoleOutline, trust.None)
+			assert.Equal(t, got.Provenance.Caveats, r.Caveats, "caveats")
 		})
 
-		t.Run("reports Partial when the scope was not covered", func(t *testing.T) {
+		t.Run("copies Skipped from the result", func(t *testing.T) {
 			t.Parallel()
-			r := engine.Result[sema.Symbol]{Completeness: trust.ScopePartial}
-			assert.Equal(t, engine.Publish(r, strong, engine.RoleOutline, trust.Resolved).Status, trust.Partial,
-				"a scope the engine did not cover is reported, and the caveats name the gap")
+			r := engine.Result[sema.Symbol]{Skipped: true}
+			got := engine.Publish(r, checker, engine.RoleOutline, trust.None)
+			assert.True(t, got.Skipped, "Skipped")
 		})
 
-		t.Run("prefers Degraded when the tier is short and the scope is too", func(t *testing.T) {
-			t.Parallel()
-			// Both are true and the status is one value. The caller
-			// asked for a floor and did not get it, which changes what
-			// the answer is worth more than a named gap does; the gap
-			// is still in the caveats.
-			r := engine.Result[sema.Symbol]{Completeness: trust.ScopePartial}
-			assert.Equal(t, engine.Publish(r, answered, engine.RoleOutline, trust.Resolved).Status, trust.Degraded,
-				"a caller that named a floor and missed it learns more from that than from a gap the caveats name")
-		})
+		tests := []struct {
+			name         string
+			giveEngine   fake
+			giveCoverage trust.Completeness
+			giveWant     trust.Fidelity
+			wantStatus   trust.Status
+		}{
+			{
+				name:         "returns OK for total coverage at the requested tier",
+				giveEngine:   checker,
+				giveCoverage: trust.ScopeTotal,
+				giveWant:     trust.Resolved,
+				wantStatus:   trust.OK,
+			},
+			{
+				name:         "returns Degraded below the requested tier",
+				giveEngine:   parser,
+				giveCoverage: trust.ScopeTotal,
+				giveWant:     trust.Resolved,
+				wantStatus:   trust.Degraded,
+			},
+			{
+				name:         "returns Partial for partial coverage",
+				giveEngine:   checker,
+				giveCoverage: trust.ScopePartial,
+				giveWant:     trust.Resolved,
+				wantStatus:   trust.Partial,
+			},
+			{
+				name:         "prefers Degraded over Partial",
+				giveEngine:   parser,
+				giveCoverage: trust.ScopePartial,
+				giveWant:     trust.Resolved,
+				wantStatus:   trust.Degraded,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				r := engine.Result[sema.Symbol]{Completeness: tt.giveCoverage}
+				got := engine.Publish(r, tt.giveEngine, engine.RoleOutline, tt.giveWant)
+				assert.Equal(t, got.Status, tt.wantStatus, "status")
+			})
+		}
 
-		t.Run("never reports Unset", func(t *testing.T) {
+		t.Run("returns an answered status for every completeness at every tier", func(t *testing.T) {
 			t.Parallel()
-			// A published answer has run. Leaving the zero status would
-			// make it read as though nothing did.
-			for _, c := range []trust.Completeness{trust.ScopeUnknown, trust.ScopePartial, trust.ScopeTotal} {
-				for _, want := range []trust.Fidelity{trust.None, trust.Syntactic, trust.Resolved} {
-					r := engine.Result[sema.Symbol]{Completeness: c}
-					got := engine.Publish(r, answered, engine.RoleOutline, want)
-					assert.NotEqual(t, got.Status, trust.Unset,
-						"a published answer has run, so it never reads as though nothing did")
-					assert.True(t, got.Status.Answered(),
-						"a published answer has run, so it always carries a payload")
+			for _, coverage := range trust.Completenesses() {
+				for _, want := range trust.Fidelities() {
+					r := engine.Result[sema.Symbol]{Completeness: coverage}
+					got := engine.Publish(r, parser, engine.RoleOutline, want)
+					assert.True(t, got.Status.Answered(), coverage.String()+" at "+want.String())
 				}
 			}
-		})
-
-		t.Run("carries the items and caveats through unchanged", func(t *testing.T) {
-			t.Parallel()
-			r := engine.Result[sema.Symbol]{
-				Items:        []sema.Symbol{{Name: "F"}},
-				Completeness: trust.ScopeTotal,
-				Caveats:      []trust.Caveat{{Code: trust.CaveatDynamic}},
-			}
-			got := engine.Publish(r, strong, engine.RoleOutline, trust.None)
-			assert.Length(t, got.Items, 1, "stamping an answer does not change what the engine found")
-			assert.Equal(t, got.Items[0].Name, "F", "stamping an answer does not change what the engine found")
-			assert.Length(t, got.Provenance.Caveats, 1, "a limit only the engine knew about survives stamping")
-			assert.Equal(t, got.Provenance.Caveats[0].Code, trust.CaveatDynamic,
-				"a limit only the engine knew about survives stamping")
 		})
 	})
 }

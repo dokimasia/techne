@@ -1,34 +1,30 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: MIT
 
-// Package trust describes the evidence behind an answer and what a
-// caller may read into it.
+// Package trust describes the evidence behind an answer and what a caller
+// may conclude from it.
 //
-// # Two axes, not one
+// # Fidelity and completeness
 //
-// [Fidelity] says how an answer was bound. [Completeness] says how much
-// of the requested scope the engine examined. They are independent: a
-// language server binds names through a type system and may still hold a
-// partial index. Reading an empty answer as proof of absence needs both,
-// which is what [SupportsNegativeClaim] decides.
+// [Fidelity] is how an answer was bound. [Completeness] is how much of the
+// scope the engine examined. They vary independently: a language server
+// binds names through a type checker while its index may still be loading.
+// An empty answer proves absence only when both are at their strongest,
+// which [SupportsNegativeClaim] checks.
 //
-// # Who builds these values
+// # Provenance
 //
-// An engine declares a fixed fidelity and returns per-answer caveats. A
-// service stamps the rest of [Provenance]. An adapter therefore cannot
-// overstate its own evidence, and a service cannot discard a limit only
-// the adapter knew about.
+// Engines declare a fixed fidelity per role and return caveats with each
+// answer. Services combine the two into a [Provenance]. Engines never build
+// one, so they cannot overstate their evidence.
 //
-// # Empty is not one thing
+// # Status
 //
-// [Status] separates an answer nothing could serve from one that ran and
-// matched nothing. [Status.Answered] reports whether a payload was
-// produced at all, so an empty item list is never mistaken for evidence
-// of absence.
+// [Status] separates an answer that nothing could serve from one that ran
+// and found nothing. [Status.Answered] reports whether an engine produced a
+// payload.
 //
 // # Dependency position
 //
-// Imports the standard library and core/source. Every service, every
-// engine and every language module names these types; nothing here
-// imports a service.
+// Imports the standard library, core/source, and core/internal/wire.
 package trust

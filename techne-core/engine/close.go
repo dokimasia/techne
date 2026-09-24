@@ -8,34 +8,24 @@ import (
 	"errors"
 )
 
-// Closer is implemented by an engine holding something that outlives a
-// call: a subprocess, a connection, a handle on a file.
-//
-// A composition root closes the catalogue when it is done, which closes
-// these. An engine that holds nothing does not implement it, so no
-// adapter carries a method that returns nil.
+// Closer is implemented by an engine that keeps a subprocess or a connection
+// open across calls. [Catalog.Close] closes it.
 type Closer interface {
 	Close(ctx context.Context) error
 }
 
-// Close stops every engine holding something that outlives a call.
-//
-// All of them are asked even when one fails, and every failure is
-// reported. Stopping at the first would leave a process running for each
-// engine after it, and a tool that leaks one per language per run is
-// unusable.
-//
-// The catalogue is not usable afterwards. Nothing checks: closing is
-// what a composition root does on the way out, and a check would be a
-// lock on every call to serve a case that cannot arise.
+// Close closes every registered engine that implements [Closer]. It calls
+// every engine even when one fails, and returns the failures joined with
+// [errors.Join]. The catalogue is not usable after Close, and Close is not
+// safe for concurrent use with other methods.
 func (c *Catalog) Close(ctx context.Context) error {
 	var failed []error
 	for _, e := range c.engines {
-		held, closes := e.(Closer)
-		if !closes {
+		closer, ok := e.(Closer)
+		if !ok {
 			continue
 		}
-		if err := held.Close(ctx); err != nil {
+		if err := closer.Close(ctx); err != nil {
 			failed = append(failed, err)
 		}
 	}

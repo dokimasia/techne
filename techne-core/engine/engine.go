@@ -11,49 +11,41 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// ErrDecline reports that an engine cannot serve one particular request,
-// though it serves the role in general.
-//
-// A service moves on to the next engine. Any other error stops selection
-// instead, because substituting a weaker answer for a broken engine
-// hides the breakage.
+// ErrDecline reports that an engine serves the role but cannot serve this
+// request. [Ask] records the reason in [Declined] and tries the next engine.
+// Wrap it with the reason, as in fmt.Errorf("%w: reason", ErrDecline).
 var ErrDecline = errors.New("engine: decline")
 
-// ErrRefuse reports that an engine will not serve a request it
-// understands, for a reason the caller can act on.
-//
-// A service stops looking and passes the reason back. It is separate
-// from [ErrDecline] because the two lead somewhere different: a decline
-// says another engine may do better, and a refusal says no engine will
-// until the request changes. Both are separate from an error, which says
-// something is broken and the caller did nothing wrong.
+// ErrRefuse reports that an engine understands a request and will not serve
+// it, for a reason the caller can act on. [Ask] returns it without trying
+// another engine, because the request must change before any engine can
+// serve it. The write path reports it as a refusal with the reason.
 var ErrRefuse = errors.New("engine: refuse")
 
-// Engine is what every adapter implements, on top of whichever roles it
-// serves.
+// Engine is the interface every adapter implements. An adapter also
+// implements the port of each role it serves.
 type Engine interface {
-	// Name identifies the adapter in a provenance and a capability
-	// report. It names the engine, not the language.
+	// Name identifies the engine in a provenance and a capability report.
 	Name() string
 
-	// Language is the one language this engine answers about.
+	// Language returns the language the engine serves.
 	Language() source.Language
 
-	// Fidelity is the tier this engine claims for a role, fixed for the
-	// engine's lifetime. A role it does not serve may return any value:
-	// a service asks only after asserting the port.
+	// Fidelity returns the tier the engine declares for a role. The value is
+	// fixed for the engine's lifetime. [trust.None] declines the role. The
+	// catalogue calls Fidelity only for roles whose port the engine
+	// implements.
 	Fidelity(Role) trust.Fidelity
 
-	// Cost is what answering that role takes.
+	// Cost returns what serving a role takes.
 	Cost(Role) Cost
 }
 
-// Available is implemented by an engine that depends on something
-// outside the process, such as a language server on the path.
-//
-// A service skips an engine whose Available returns an error and reports
-// the reason, rather than advertising a capability that cannot run. An
-// engine that does not implement this is always available.
+// Available is implemented by an engine that depends on something outside
+// the process, such as a language server binary. The catalogue does not
+// select an engine whose Available returns an error, and
+// [Catalog.Capabilities] reports the error. An engine that does not
+// implement Available is always available.
 type Available interface {
 	Available(ctx context.Context) error
 }

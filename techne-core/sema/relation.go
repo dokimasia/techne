@@ -4,36 +4,41 @@
 package sema
 
 import (
-	"encoding/json"
-
+	"go.dokimi.dev/techne/core/internal/wire"
 	"go.dokimi.dev/techne/core/source"
 )
 
-// RelationKind is how one declaration reaches another.
-//
-// Every directed kind has an inverse, so an engine implements whichever
-// direction it can compute and a service asks for the direction the
-// caller wanted. The zero value is [RelationUnknown], which has no
-// inverse.
+// RelationKind is the direction of an edge between two declarations.
+// [RelationKind.Inverse] returns the opposite direction. The zero value is
+// RelationUnknown.
 type RelationKind uint8
 
 const (
-	// RelationUnknown means the edge was not classified.
+	// RelationUnknown is an unclassified edge. It has no inverse.
 	RelationUnknown RelationKind = iota
+	// Calls leads from a callable to the callables it calls.
 	Calls
+	// CalledBy leads from a callable to its callers.
 	CalledBy
+	// Implements leads from a type to the interfaces it satisfies.
 	Implements
+	// ImplementedBy leads from an interface to the types that satisfy it.
 	ImplementedBy
+	// References leads from a declaration to the declarations it refers to.
 	References
+	// ReferencedBy leads from a declaration to the declarations that refer
+	// to it.
 	ReferencedBy
+	// Imports leads from a file to the names it imports.
 	Imports
+	// ImportedBy leads from a name to the files that import it.
 	ImportedBy
+	// Embeds leads from a type to the types it embeds or extends.
 	Embeds
+	// EmbeddedBy leads from a type to the types that embed or extend it.
 	EmbeddedBy
 )
 
-// inverses is the single definition point for the pairing. Every kind in
-// [RelationKinds] appears exactly twice, once on each side.
 var inverses = map[RelationKind]RelationKind{
 	Calls:         CalledBy,
 	CalledBy:      Calls,
@@ -47,12 +52,22 @@ var inverses = map[RelationKind]RelationKind{
 	EmbeddedBy:    Embeds,
 }
 
-// RelationKinds returns every directed kind, excluding
-// [RelationUnknown].
-//
-// It is the list the pairing is checked against, so a kind added without
-// an inverse fails this package's tests rather than reaching a service
-// that cannot turn the question around.
+var relationWords = wire.New(RelationUnknown, map[RelationKind]string{
+	RelationUnknown: "unknown",
+	Calls:           "calls",
+	CalledBy:        "called-by",
+	Implements:      "implements",
+	ImplementedBy:   "implemented-by",
+	References:      "references",
+	ReferencedBy:    "referenced-by",
+	Imports:         "imports",
+	ImportedBy:      "imported-by",
+	Embeds:          "embeds",
+	EmbeddedBy:      "embedded-by",
+})
+
+// RelationKinds returns every RelationKind except RelationUnknown, each next
+// to its inverse.
 func RelationKinds() []RelationKind {
 	return []RelationKind{
 		Calls, CalledBy,
@@ -63,75 +78,31 @@ func RelationKinds() []RelationKind {
 	}
 }
 
-// relationNames is the single definition point for the wire form of
-// each direction.
-var relationNames = map[RelationKind]string{
-	RelationUnknown: "unknown",
-	Calls:           "calls", CalledBy: "called-by",
-	Implements: "implements", ImplementedBy: "implemented-by",
-	References: "references", ReferencedBy: "referenced-by",
-	Imports: "imports", ImportedBy: "imported-by",
-	Embeds: "embeds", EmbeddedBy: "embedded-by",
-}
+// Inverse returns the kind that follows the same edges in the opposite
+// direction, or RelationUnknown if r has no inverse.
+func (r RelationKind) Inverse() RelationKind { return inverses[r] }
 
-// String returns the wire form of the direction.
-func (r RelationKind) String() string {
-	if name, ok := relationNames[r]; ok {
-		return name
-	}
-	return relationNames[RelationUnknown]
-}
+// String returns the wire string of r, or "unknown" if r is not a declared
+// RelationKind.
+func (r RelationKind) String() string { return relationWords.String(r) }
 
-// Inverse returns the kind that asks the same question from the other
-// end, and [RelationUnknown] for a kind with no pairing.
-func (r RelationKind) Inverse() RelationKind {
-	return inverses[r]
-}
+// MarshalJSON encodes r as its wire string.
+func (r RelationKind) MarshalJSON() ([]byte, error) { return relationWords.Marshal(r) }
 
-// Relation is one edge found from the declaration a caller asked about.
-//
-// It names one end. The other is the declaration the question was about,
-// which is the same for every edge in an answer and is already in the
-// request; carrying it on each of five hundred callers states one fact
-// five hundred times.
-//
-// That end is a whole [Symbol] rather than an identity. An engine that
-// found the edge knows what it points at: the name, the kind, the file
-// and the line are in front of it. Reducing that to an identity makes
-// whoever renders the answer look every one of them up again, and an
-// identity does not pick out one declaration in the first place, because
-// a unit declaring two methods called Get satisfies one twice.
+// UnmarshalJSON decodes a wire string. An unknown string decodes to
+// RelationUnknown.
+func (r *RelationKind) UnmarshalJSON(b []byte) error { return relationWords.Unmarshal(b, r) }
+
+// Relation is one edge from the declaration a question is about. It records
+// the far end only, because the near end is the same for every edge in an
+// answer.
 type Relation struct {
-	// Kind is the direction as the caller asked for it, not as an
-	// engine happens to store it.
+	// Kind is the direction the caller asked for.
 	Kind RelationKind `json:"kind"`
-	// To is the declaration at the far end.
+	// To is the declaration at the far end of the edge.
 	To Symbol `json:"to"`
-	// At is where the edge was written, which is the reference site
-	// rather than either declaration.
+	// At is the source range of the call or reference.
 	At source.Span `json:"at"`
-	// Via is the source line the edge was written on. A caller asking
-	// who calls this wants to read the call, and fetching each one
-	// costs a turn per caller.
+	// Via is the trimmed source line that At starts on.
 	Via string `json:"via,omitempty"`
-}
-
-// MarshalJSON writes the wire form rather than the number.
-func (r *RelationKind) UnmarshalJSON(b []byte) error {
-	var name string
-	if err := json.Unmarshal(b, &name); err != nil {
-		return err
-	}
-	*r = RelationUnknown
-	for held, spelt := range relationNames {
-		if spelt == name {
-			*r = held
-			return nil
-		}
-	}
-	return nil
-}
-
-func (r RelationKind) MarshalJSON() ([]byte, error) {
-	return json.Marshal(relationNames[r])
 }

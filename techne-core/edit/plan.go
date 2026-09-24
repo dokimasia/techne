@@ -10,16 +10,13 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// Plan is what an operation would do, and what stands behind it.
+// Plan is the set of changes an operation makes, with the evidence behind
+// them. A Plan has no file handle, so it can be inspected and discarded
+// without touching the workspace.
 //
-// It holds no filesystem handle, so it can be inspected, diffed and
-// thrown away without touching the workspace. A dry run is the real call
-// without the write.
-//
-// A planner produces the changes. The write path fills in the
-// preconditions and the provenance: a planner that sealed its own would
-// produce a plan that applies cleanly to a file it never read, and one
-// that stamped its own provenance could claim evidence it does not hold.
+// A planner sets Operation and Changes. The write path sets Preconditions
+// and Provenance, so a planner cannot seal content it did not read or state
+// its own evidence.
 type Plan struct {
 	Operation     Operation
 	Changes       []Change
@@ -27,23 +24,18 @@ type Plan struct {
 	Provenance    trust.Provenance
 }
 
-// Precondition pins the content a plan was computed against.
-//
-// Byte ranges computed against different content describe something
-// else, and the result usually still compiles, so nothing downstream
-// catches it.
+// Precondition records the content of one file that a plan was computed
+// against. The write path does not write a file whose digest differs from
+// its precondition.
 type Precondition struct {
 	Path source.Path
-	// Digest is the SHA-256 of the file as the plan was computed
-	// against it.
+	// Digest is the SHA-256 of the file content.
 	Digest [32]byte
 }
 
-// Paths returns every path the plan touches, sorted and without
-// repeats.
-//
-// A move touches two: the file it leaves and the file it becomes. Both
-// need a lock and both must be free to write, so both are here.
+// Paths returns every path the plan changes, sorted and without duplicates.
+// A move contributes its source and its destination. The write path locks
+// the paths in this order.
 func (p Plan) Paths() []source.Path {
 	out := make([]source.Path, 0, len(p.Changes))
 	for _, c := range p.Changes {
@@ -56,11 +48,9 @@ func (p Plan) Paths() []source.Path {
 	return slices.Compact(out)
 }
 
-// Reads returns the paths whose current content the plan depends on.
-//
-// A created file has no content to depend on, so pinning one would
-// refuse every plan that makes a file. Everything else is read before it
-// is written and must be what the planner saw.
+// Reads returns every path whose current content the plan depends on,
+// sorted and without duplicates. These are the changed paths except the
+// ones the plan creates.
 func (p Plan) Reads() []source.Path {
 	out := make([]source.Path, 0, len(p.Changes))
 	for _, c := range p.Changes {

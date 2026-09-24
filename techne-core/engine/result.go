@@ -5,73 +5,43 @@ package engine
 
 import "go.dokimi.dev/techne/core/trust"
 
-// Result is what an engine returns.
-//
-// It carries what the engine found and the limits only the engine knows.
-// It carries nothing the engine could use to overstate itself: there is
-// no field for the engine's name, and the one field naming a tier can
-// only lower the declared one. That is the same reason a role is
-// declined by lacking a method rather than by returning an error.
-//
-// A service turns one into an [Answer] with [Publish].
+// Result is the return value of every engine port. It has no field for the
+// engine's name or tier, and Lowered can only lower the tier the engine
+// declares, so an engine cannot overstate its evidence. Services turn a
+// Result into an Answer with Publish.
 type Result[T any] struct {
 	Items []T
 
-	// Completeness is how much of the requested scope the engine
-	// examined. Only the engine knows, so this is the one judgement it
-	// makes about its own answer.
+	// Completeness is how much of the requested scope the engine examined.
 	Completeness trust.Completeness
 
-	// Caveats are limits on this answer that a tier cannot express: what
-	// drifted, what was truncated, what no static analysis sees.
+	// Caveats are limits on this answer, such as files the engine did not
+	// read.
 	Caveats []trust.Caveat
 
-	// Lowered is a tier below the engine's declared one, for an answer
-	// worth less than the engine usually is. The zero value takes the
-	// declared tier.
-	//
-	// An engine may understate itself and cannot overstate itself:
-	// [Publish] takes whichever is weaker. A type checker over a
-	// workspace that does not compile binds some names and not others,
-	// and every answer it gives is worth what a half-bound program is
-	// worth — which is not what the same engine is worth tomorrow, so it
-	// is a property of the answer rather than of the engine.
+	// Lowered is a tier below the engine's declared one, for an answer worth
+	// less than usual, such as a type check of code that does not compile.
+	// Publish uses the lower of the two. The zero value keeps the declared
+	// tier.
 	Lowered trust.Fidelity
 
-	// Skipped reports that the scope held no file this engine reads.
-	//
-	// It is a different answer from reading a scope and finding nothing
-	// in it. The second says there are none, and is worth exactly what
-	// the engine's tier is worth. The first says nothing at all: a
-	// directory with no Ruby in it tells you nothing about Ruby, and a
-	// parser saying so must not lower the evidence of a type checker
-	// that did read the files beside it.
-	//
-	// The zero value counts, so an engine that does not set this is
-	// merged as it always was. Setting it wrongly costs an answer its
-	// say; leaving it unset costs nothing but the precision this exists
-	// for.
+	// Skipped reports that the scope contains no file of the engine's
+	// language. Services leave skipped answers out of the evidence they merge
+	// across languages. An engine that read files without a match returns an
+	// empty result with Skipped false. An engine that cannot find what the
+	// request names returns ErrDecline.
 	Skipped bool
 }
 
-// Publish stamps a result with the evidence behind it.
+// Publish stamps r with the evidence behind it. The engine name and tier
+// come from e, never from r. The status is Degraded when the tier is below
+// want, Partial when the coverage is partial, and OK otherwise. Degraded
+// takes precedence over Partial.
 //
-// The engine's name and tier are read from the engine rather than taken
-// from the result. The status is derived here and nowhere else, so what
-// counts as degraded cannot drift between one role and another.
-//
-// A published answer has run, so its status always reports a payload.
-// When the tier is below the caller's floor and the scope is also short,
-// the status is [trust.Degraded]: the caller asked for evidence and did
-// not get it, which changes what the answer is worth more than a named
-// gap does, and the gap is still in the caveats.
-//
-// Services call this. Engines never do.
+// Services call Publish. Engines never do.
 func Publish[T any](r Result[T], e Engine, role Role, want trust.Fidelity) Answer[T] {
 	held := e.Fidelity(role)
 	if r.Lowered != trust.None && r.Lowered < held {
-		// Understating is the engine's to do and overstating is not, so
-		// the weaker of the two wins whichever way they disagree.
 		held = r.Lowered
 	}
 

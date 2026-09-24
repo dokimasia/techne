@@ -4,98 +4,62 @@
 package diag
 
 import (
-	"strconv"
-
+	"go.dokimi.dev/techne/core/internal/wire"
 	"go.dokimi.dev/techne/core/source"
 )
 
-// Severity is how much a diagnostic matters.
-//
-// The order rises, so a caller wanting errors alone compares against
-// [SeverityError] rather than enumerating the rest. The zero value is
-// [SeverityUnset].
+// Severity is how much a diagnostic matters. Values increase with severity,
+// so callers filter with a comparison. The zero value is SeverityUnset.
 type Severity uint8
 
 const (
-	// SeverityUnset means nobody assigned one. It is never valid on a
-	// diagnostic a verifier returned.
+	// SeverityUnset means the reporting tool assigned no severity.
 	SeverityUnset Severity = iota
+	// SeverityHint is a suggestion.
 	SeverityHint
+	// SeverityInfo is information that does not require action.
 	SeverityInfo
+	// SeverityWarning is a problem that does not stop the build.
 	SeverityWarning
+	// SeverityError is a problem that stops the build.
 	SeverityError
 )
 
-// severityNames is the single definition point for the wire form of
-// each severity. An answer names them, so these strings reach a caller.
-var severityNames = map[Severity]string{
+var severityWords = wire.New(SeverityUnset, map[Severity]string{
 	SeverityUnset:   "unset",
 	SeverityHint:    "hint",
 	SeverityInfo:    "info",
 	SeverityWarning: "warning",
 	SeverityError:   "error",
-}
+})
 
-// String returns the wire form of the severity, or the form of
-// [SeverityUnset] for a value outside the declared set.
-func (s Severity) String() string {
-	if name, ok := severityNames[s]; ok {
-		return name
-	}
-	return severityNames[SeverityUnset]
-}
+// String returns the wire string of s, or "unset" if s is not a declared
+// Severity.
+func (s Severity) String() string { return severityWords.String(s) }
 
-// MarshalJSON writes the severity as the word a caller reads.
-//
-// A caller branching on a number would have to know the order, and the
-// order is this package's to change.
-func (s Severity) MarshalJSON() ([]byte, error) {
-	return []byte(strconv.Quote(s.String())), nil
-}
+// MarshalJSON encodes s as its wire string.
+func (s Severity) MarshalJSON() ([]byte, error) { return severityWords.Marshal(s) }
 
-// UnmarshalJSON reads the wire form back. A word this package does not
-// know becomes [SeverityUnset], which is what a verifier that did not
-// say how much something matters reports.
-func (s *Severity) UnmarshalJSON(b []byte) error {
-	name, err := strconv.Unquote(string(b))
-	if err != nil {
-		return err
-	}
-	*s = SeverityUnset
-	for held, spelt := range severityNames {
-		if spelt == name {
-			*s = held
-			return nil
-		}
-	}
-	return nil
-}
+// UnmarshalJSON decodes a wire string. An unknown string decodes to
+// SeverityUnset.
+func (s *Severity) UnmarshalJSON(b []byte) error { return severityWords.Unmarshal(b, s) }
 
-// Severities returns every severity, including [SeverityUnset].
-//
-// Unset is in the set because it is an answer: a verifier that did not
-// say how much something matters is different from one that said it
-// matters least.
+// Severities returns every Severity, including SeverityUnset, in increasing
+// order.
 func Severities() []Severity {
-	return []Severity{
-		SeverityUnset, SeverityHint, SeverityInfo, SeverityWarning, SeverityError,
-	}
+	return []Severity{SeverityUnset, SeverityHint, SeverityInfo, SeverityWarning, SeverityError}
 }
 
-// Diagnostic is one thing a verifier reported about one span of code.
+// Diagnostic is one problem a verifier reported in one span of code.
 type Diagnostic struct {
 	Severity Severity
-	// Code is the reporting tool's own identifier, such as a linter rule
-	// name, carried unchanged so a caller can suppress by it without
-	// matching the message text.
+	// Code is the reporting tool's identifier for the rule, such as a lint
+	// check name. Callers suppress by it.
 	Code    string
 	Message string
 	Span    source.Span
-	// Source names the tool that reported it, so a broken build can be
-	// told from a linter's objection.
+	// Source names the reporting tool, such as a compiler or a linter.
 	Source string
-	// Snippet is the source the diagnostic is about. Whoever renders it
-	// has no filesystem, and a message without the line it is about
-	// costs a read per diagnostic to make sense of.
+	// Snippet is the source line the diagnostic is about.
 	Snippet string
 }

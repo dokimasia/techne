@@ -1,45 +1,53 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: MIT
 
-// Package sema describes what code means: the declarations a scope
-// makes, how they reach each other, and the identity by which one is
-// named across processes.
+// Package sema describes declarations, the edges between them, and the IDs
+// that identify them across processes.
 //
-// # Identity
+// # IDs
 //
-// [ID] is derived from what a declaration is, never from where it sits.
-// Moving a declaration inside its file leaves its identity unchanged, so
-// an index may store one and a later process may still resolve it.
-// Renaming the symbol or its unit does change the identity, which is
-// correct: that is a different declaration. [NewID] is the only way to
-// build one.
+// NewID derives an ID from a declaration's language, unit, qualified name,
+// and kind. Moving a declaration within its file keeps its ID, so IDs can be
+// stored in an index. Renaming the declaration or its unit changes the ID.
 //
-// # A shared vocabulary, not a union
+// The qualified name joins the names of the declarations that contain a
+// declaration and its own name with dots, as [Qualify] does:
 //
-// [Kind] and [RelationKind] are smaller than any one language's grammar.
-// A language that draws a distinction they do not carry maps both sides
-// onto the nearest value rather than adding one, so a caller reads the
-// same set whichever language answered. [Kinds] is the whole set, and
-// [Kind.Declares] separates the kinds naming something other code can
-// refer to from the bindings that never leave their scope.
+//   - A method Get of a type Store is Store.Get, and a parameter p of Get is
+//     Store.Get.p.
+//   - A Go method is contained by the type of its receiver, which the syntax
+//     writes outside the type.
+//   - An import is not qualified, because its name is a path.
 //
-// # Metadata is not a declaration
+// Members of one name and kind in different containers of one unit have
+// different IDs. Overloads in one container share one ID.
 //
-// A Java annotation, a Python or TypeScript decorator, a Rust attribute
-// and a Go struct tag bind no name, so none of them is a [Symbol]. They
-// travel as [Annotation] values on the declaration they are written
-// onto. Declaring an annotation type is the other case and is a [Symbol]
-// of [KindAnnotation].
+// # A shared vocabulary
+//
+// [Kind] and [RelationKind] are shared by every language. Each language maps
+// the distinctions of its grammar onto the closest value, so a caller does
+// not depend on the language of a declaration. [Kind.Declares] separates
+// declarations that code elsewhere can name from bindings local to one
+// scope.
+//
+// # Annotations
+//
+// Annotations, decorators, attributes, and struct tags declare nothing. Each
+// is an [Annotation] of the declaration it is attached to. A declared
+// annotation type is a [Symbol] of [KindAnnotation].
 //
 // # Directions
 //
-// Every [RelationKind] in [RelationKinds] has an inverse. An engine
-// implements whichever direction it can compute and a service turns the
-// question around, so a caller asks for callers or callees without
-// knowing which the engine stored.
+// Every [RelationKind] in [RelationKinds] has its inverse in RelationKinds,
+// and [RelationKind.Inverse] returns it. An engine returns the relations in
+// the direction a request names.
+//
+// # Nesting
+//
+// [Containers] computes the enclosing declaration of every symbol from its
+// span.
 //
 // # Dependency position
 //
-// Imports the standard library and core/source. Engines produce these
-// values and services pass them on unchanged.
+// Imports the standard library, core/source, and core/internal/wire.
 package sema

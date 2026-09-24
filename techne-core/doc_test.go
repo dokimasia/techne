@@ -4,68 +4,65 @@
 package core_test
 
 import (
+	"bytes"
+	"encoding/json"
+	"os/exec"
+	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/techne/core/engine"
-	"go.dokimi.dev/techne/core/sema"
-	"go.dokimi.dev/techne/core/source"
-	"go.dokimi.dev/techne/core/trust"
 )
 
-// TestDoc covers the claim the package comment makes for the module as a
-// whole: these packages compose into an answer without any of them
-// knowing a language.
+// module is the import path of the core module.
+const module = "go.dokimi.dev/techne/core"
+
 func TestDoc(t *testing.T) {
 	t.Parallel()
 
-	t.Run("the vocabulary composes", func(t *testing.T) {
+	t.Run("Dependency position", func(t *testing.T) {
 		t.Parallel()
+		listed := packages(t)
 
-		t.Run("into an answer that states its own evidence", func(t *testing.T) {
+		t.Run("imports only the standard library and core", func(t *testing.T) {
 			t.Parallel()
-			id := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindType)
-			answered := engine.Answer[sema.Symbol]{
-				Items: []sema.Symbol{{
-					ID:         id,
-					Name:       "Status",
-					Kind:       sema.KindType,
-					Language:   source.Language("go"),
-					Span:       source.Span{Path: "core/trust/status.go"},
-					Visibility: sema.Exported,
-				}},
-				Status: trust.OK,
-				Provenance: trust.Provenance{
-					Engine:       "gotypes",
-					Fidelity:     trust.Resolved,
-					Completeness: trust.ScopeTotal,
-					Caveats:      []trust.Caveat{{Code: trust.CaveatDynamic}},
-				},
+			for _, p := range listed {
+				for _, imported := range p.Imports {
+					first, _, _ := strings.Cut(imported, "/")
+					standard := !strings.Contains(first, ".")
+					assert.True(t, standard || imported == module || strings.HasPrefix(imported, module+"/"),
+						p.ImportPath+" imports "+imported)
+				}
 			}
-
-			assert.True(t, answered.Status.Answered(), "an engine ran and returned what it found")
-			assert.True(t, answered.Provenance.SupportsNegativeClaim(),
-				"a type checker that saw the whole scope proves an empty answer means there are none")
 		})
 
-		t.Run("into an empty answer nobody may read as proof", func(t *testing.T) {
+		t.Run("imports no cgo", func(t *testing.T) {
 			t.Parallel()
-			// The case the two axes exist for: a server that binds
-			// through types and has not finished indexing.
-			warming := engine.Answer[sema.Symbol]{
-				Status: trust.Partial,
-				Provenance: trust.Provenance{
-					Engine:       "lsp",
-					Fidelity:     trust.Resolved,
-					Completeness: trust.ScopePartial,
-					Caveats:      []trust.Caveat{{Code: trust.CaveatIndexWarming}},
-				},
+			for _, p := range listed {
+				assert.Empty(t, p.CgoFiles, "the cgo files of "+p.ImportPath)
 			}
-
-			assert.True(t, warming.Status.Answered(), "a partial answer still ran and is worth reading")
-			assert.False(t, warming.Provenance.SupportsNegativeClaim(),
-				"a server still building its index has not seen everything it would need to prove absence")
-			assert.Empty(t, warming.Items, "this case is about what an empty item list is worth")
 		})
 	})
+}
+
+// listed is one package as go list -json reports it.
+type listed struct {
+	ImportPath string
+	Imports    []string
+	CgoFiles   []string
+}
+
+// packages returns every package of the module as the go command lists it,
+// with the imports of its production files.
+func packages(t *testing.T) []listed {
+	t.Helper()
+	out, err := exec.CommandContext(t.Context(), "go", "list", "-json", "./...").Output()
+	assert.NoError(t, err, "go list of the module")
+	var all []listed
+	for decoder := json.NewDecoder(bytes.NewReader(out)); decoder.More(); {
+		var one listed
+		assert.NoError(t, decoder.Decode(&one), "the output of go list")
+		all = append(all, one)
+	}
+	assert.NotEmpty(t, all, "the packages of the module")
+	return all
 }

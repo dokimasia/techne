@@ -1,25 +1,30 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: MIT
 
-// Package core is what every other module speaks: the vocabulary an
-// answer is written in, and the ports an engine implements. It declares
-// nothing itself; the packages beneath it do.
+// Package core is the root of the techne core module and declares nothing.
+// Its packages define the vocabulary of every answer and the ports every
+// engine implements:
 //
-// # What is not here
+//   - [go.dokimi.dev/techne/core/source] defines languages, paths and byte
+//     positions.
+//   - [go.dokimi.dev/techne/core/sema] defines declarations, kinds and
+//     relations.
+//   - [go.dokimi.dev/techne/core/trust] defines fidelity, coverage, status
+//     and provenance.
+//   - [go.dokimi.dev/techne/core/diag] defines diagnostics and severities.
+//   - [go.dokimi.dev/techne/core/edit] defines operations, plans and the
+//     write policy.
+//   - [go.dokimi.dev/techne/core/engine] defines the engine ports and the
+//     catalogue that selects engines.
 //
-// Nothing that consumes a port. The read and write paths are
-// techne-service and the surface an agent calls is techne-tool, because
-// a module holding both the contract and its consumers is one where the
-// two grow into each other: a tool comes to hold a service, and a
-// service comes to hold a copy of another service's rules.
+// # Scope
 //
-// Nothing language-specific either. Where a doc comment here names Rust
-// or Java it is saying what a shared idea covers, which is what makes
-// agnostic vocabulary legible rather than what makes it leak.
+// Core contains no consumer of a port and no language. The read and write
+// paths are in techne-service, and the tools an agent calls are in
+// techne-tool. Each language module declares its own language value.
 //
 // # Dependency position
 //
-// Imports nothing else in this repository, and every other module may
-// import it. Holding that line is what keeps core free of cgo and of
-// every language ecosystem, so an embedder pays for neither.
+// Imports the standard library and its own packages. It does not use cgo, so
+// it builds with CGO_ENABLED=0. Every other module of techne can import it.
 package core

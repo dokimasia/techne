@@ -10,19 +10,16 @@ import (
 	"go.dokimi.dev/techne/core/source"
 )
 
-// TestDoc covers the contracts the package comment states and no single
-// declaration owns.
 func TestDoc(t *testing.T) {
 	t.Parallel()
 
-	t.Run("coordinates", func(t *testing.T) {
+	t.Run("Position", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("are zero-based, so the first byte is the zero Position", func(t *testing.T) {
+		t.Run("counts the first byte as zero on every axis", func(t *testing.T) {
 			t.Parallel()
 			var first source.Position
-			assert.Equal(t, first, source.Position{},
-				"the start of a file needs no construction")
+			assert.Equal(t, []int{first.Offset, first.Line, first.Column}, []int{0, 0, 0}, "coordinates")
 		})
 	})
 }

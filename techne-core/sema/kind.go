@@ -3,86 +3,73 @@
 
 package sema
 
-import "encoding/json"
+import "go.dokimi.dev/techne/core/internal/wire"
 
-// Kind is what a declaration is.
-//
-// The set is drawn from what the grammars distinguish rather than from
-// what seemed likely: every value is a node kind at least one supported
-// language declares. It is still smaller than any one language's
-// grammar, and a distinction only one language draws is not carried.
-// That language maps both sides onto the nearest value, so a caller
-// reads the same set whichever language answered.
-//
-// The zero value is [KindUnknown].
+// Kind classifies a declaration. The zero value is KindUnknown. Each
+// language module maps the declaration kinds of its grammar onto the closest
+// Kind, so a caller reads the same values for every language.
 type Kind uint8
 
 const (
-	// KindUnknown means the engine could not classify the declaration.
+	// KindUnknown is an unclassified declaration.
 	KindUnknown Kind = iota
-	// KindModule is a named body of code: a Rust mod, a TypeScript
-	// namespace, a Ruby module, a Java module.
+	// KindModule is a named body of code, such as a Rust mod, a TypeScript
+	// namespace, or a Ruby or Java module.
 	KindModule
-	// KindPackage is the package a file belongs to, as Java's and
-	// Scala's package statements declare it.
+	// KindPackage is a Java or Scala package declaration.
 	KindPackage
+	// KindFile is a source file.
 	KindFile
-	// KindType is a named type that is none of the shapes below it: an
-	// alias, a bound, a type-level expression.
+	// KindType is a named type that fits no other kind, such as an alias.
 	KindType
-	// KindStruct is a named aggregate of fields and methods. A class is
-	// one: Java, Python, Ruby and TypeScript spell it class, Go and Rust
-	// spell it struct, and Scala also spells it object. Telling those
-	// apart would mean a caller had to know which language answered
-	// before it could ask a question.
+	// KindStruct is a named aggregate of fields and methods: a struct in Go
+	// and Rust, a class or object in Scala, and a class elsewhere.
 	KindStruct
-	// KindUnion is a type holding one of several shapes at a time. Rust
-	// and C spell it union. A TypeScript union type is a [KindType],
-	// because it is an expression rather than a declared body.
+	// KindUnion is a Rust or C union. A TypeScript union type is KindType.
 	KindUnion
+	// KindEnum is an enumeration.
 	KindEnum
-	// KindEnumMember is a value declared inside an enum. It is not a
-	// constant: it is scoped to its enum and carries that enum's type.
+	// KindEnumMember is a value declared inside an enumeration.
 	KindEnumMember
+	// KindInterface is an interface, trait, or protocol.
 	KindInterface
-	// KindAnnotation is a declared annotation type, as Java's
-	// @interface declares one. Applying an annotation declares nothing
-	// and arrives as an [Annotation] on the thing annotated.
+	// KindAnnotation is an annotation type declaration, such as a Java
+	// @interface. An annotation applied to a declaration is an Annotation.
 	KindAnnotation
+	// KindFunction is a function that is not a method.
 	KindFunction
+	// KindMethod is a function declared on a type.
 	KindMethod
-	// KindConstructor builds an instance. Renaming one follows its
-	// type's name rather than being free, which is why it is not a
-	// method.
+	// KindConstructor constructs instances of its type.
 	KindConstructor
-	// KindProperty is an accessor that reads as a field: a TypeScript
-	// get or set, a C# property, a Python @property.
+	// KindProperty is a field-like accessor: a TypeScript get or set, a C#
+	// property, or a Python @property.
 	KindProperty
-	// KindMacro is expanded before compilation rather than called. Rust
-	// declares one with macro_rules!, C with #define.
+	// KindMacro is a Rust declarative macro or a C #define.
 	KindMacro
-	// KindImplementation is a block attaching behaviour to a type, as
-	// Rust's impl does. It names the type it is for.
+	// KindImplementation is a block that adds behaviour to a type, such as
+	// a Rust impl block.
 	KindImplementation
+	// KindField is a member variable of a type.
 	KindField
+	// KindVariable is a variable.
 	KindVariable
+	// KindConstant is a constant.
 	KindConstant
-	// KindParameter is a binding in a callable's signature.
+	// KindParameter is a parameter of a callable.
 	KindParameter
-	// KindTypeParameter is a generic parameter: a type variable, a Rust
-	// lifetime, a const generic.
+	// KindTypeParameter is a type parameter, a Rust lifetime, or a const
+	// generic.
 	KindTypeParameter
-	// KindImport brings a name into scope. It declares that name
-	// locally, which is why it is a declaration rather than a reference.
+	// KindImport is a name bound by an import.
 	KindImport
-	// KindLabel names a statement so control flow can target it.
+	// KindLabel is a statement label.
 	KindLabel
 )
 
-// kindNames is the single definition point for the wire form of each
-// kind. [NewID] embeds these strings, so an identity an index stored
-// changes meaning if one of them changes.
-var kindNames = map[Kind]string{
+// kindWords are the wire strings of the kinds. IDs embed them, so changing
+// one invalidates every stored ID.
+var kindWords = wire.New(KindUnknown, map[Kind]string{
 	KindUnknown:        "unknown",
 	KindModule:         "module",
 	KindPackage:        "package",
@@ -107,50 +94,20 @@ var kindNames = map[Kind]string{
 	KindTypeParameter:  "type-parameter",
 	KindImport:         "import",
 	KindLabel:          "label",
-}
+})
 
-// String returns the wire form of the kind.
-//
-// A value outside the declared set returns the wire form of
-// [KindUnknown] rather than an empty string, so a malformed identity
-// stays parseable and does not collide with every other malformed one.
-func (k Kind) String() string {
-	if name, ok := kindNames[k]; ok {
-		return name
-	}
-	return kindNames[KindUnknown]
-}
+// String returns the wire string of k, or "unknown" if k is not a declared
+// Kind.
+func (k Kind) String() string { return kindWords.String(k) }
 
-// MarshalJSON writes the wire form rather than the number, so a caller
-// reads a kind without a lookup table.
-func (k Kind) MarshalJSON() ([]byte, error) {
-	return json.Marshal(k.String())
-}
+// MarshalJSON encodes k as its wire string.
+func (k Kind) MarshalJSON() ([]byte, error) { return kindWords.Marshal(k) }
 
-// UnmarshalJSON reads the wire form back.
-//
-// A word this package does not know becomes [KindUnknown] rather than an
-// error. A vocabulary that grows is one where an older reader meets a
-// newer word, and refusing the whole answer over one field it does not
-// recognise loses everything else in it.
-func (k *Kind) UnmarshalJSON(b []byte) error {
-	var name string
-	if err := json.Unmarshal(b, &name); err != nil {
-		return err
-	}
-	*k = KindUnknown
-	for kind, held := range kindNames {
-		if held == name {
-			*k = kind
-			return nil
-		}
-	}
-	return nil
-}
+// UnmarshalJSON decodes a wire string. An unknown string decodes to
+// KindUnknown, so answers that use newer kinds still decode.
+func (k *Kind) UnmarshalJSON(b []byte) error { return kindWords.Unmarshal(b, k) }
 
-// Kinds returns every kind the vocabulary carries, [KindUnknown]
-// excepted, so a caller checks a value against the set rather than
-// against a list of its own.
+// Kinds returns every Kind except KindUnknown, in declaration order.
 func Kinds() []Kind {
 	return []Kind{
 		KindModule, KindPackage, KindFile,
@@ -164,12 +121,9 @@ func Kinds() []Kind {
 	}
 }
 
-// Declares reports whether a kind names something other code can refer
-// to by name.
-//
-// A parameter, a type parameter, a label and an import bind names that
-// do not leave the scope declaring them, so a caller listing what a file
-// offers drops all four in one check rather than naming each.
+// Declares reports whether code outside the declaring scope can refer to a
+// declaration of kind k by name. It returns false for parameters, type
+// parameters, labels, imports, and KindUnknown.
 func (k Kind) Declares() bool {
 	switch k {
 	case KindParameter, KindTypeParameter, KindLabel, KindImport, KindUnknown:

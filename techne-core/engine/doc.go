@@ -1,50 +1,40 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: MIT
 
-// Package engine is the contract an adapter implements to answer
-// questions about code.
+// Package engine defines the ports an engine implements and the catalogue
+// that selects engines for a request.
 //
-// # A role is declined by not having the method
+// # Roles and ports
 //
-// Each role is its own interface. An engine that cannot serve one omits
-// the method rather than returning an error, and a service selects by
-// type assertion. An engine claiming a role it cannot serve would
-// advertise a capability that is not there, which a caller can only find
-// out by calling it.
+// Each [Role] has its own port interface, such as [Outliner] or [Planner].
+// An engine that cannot serve a role does not implement its port, and the
+// catalogue selects engines by type assertion. An engine can also decline a
+// role of a port it implements by declaring [trust.None] for it.
 //
-// # Engines do not build their own provenance
+// # Evidence
 //
-// [Engine.Fidelity] declares a fixed tier per role and an answer carries
-// per-answer caveats. A service stamps the rest of the
-// [trust.Provenance]. An adapter therefore cannot overstate its evidence,
-// and the rule for what counts as degraded cannot drift between one role
-// and another.
+// An engine declares a fixed fidelity and cost per role and returns a
+// [Result] with its items, coverage, and caveats. Services turn the result
+// into an [Answer] with [Publish], which takes the tier from the engine. An
+// engine cannot overstate its evidence.
 //
-// # Fidelity is per role
+// # Selection
 //
-// A language server commonly binds references through a type system
-// while returning a document outline its own parser produced. Those are
-// different claims, so [Engine.Fidelity] takes the [Role] being asked
-// about.
+// [Catalog.For] orders the engines of a language and role by fidelity, then
+// by cost. [Ask] tries them in order. [ErrDecline] moves on to the next
+// engine. Any other error stops the search, because a weaker answer would
+// hide a broken engine.
 //
-// # Cost is independent of fidelity
+// [AskEach] and [AskAny] apply Ask to the languages of a request:
 //
-// [Engine.Cost] says what producing an answer takes. A warm index and
-// the parser that filled it produce the same facts at [CostMemory] and
-// [CostParse]. [CostSession] describes an engine that is expensive once
-// and cheap afterwards, so pricing it at its first call would make a
-// caller avoid the fastest engine it has.
-//
-// # Declining one request is not failing
-//
-// An engine returns [ErrDecline] for a request it cannot serve, and a
-// service moves to the next engine. Any other error stops selection,
-// because answering from a weaker engine when the stronger one is broken
-// hides the breakage for as long as anyone believes the answer.
+//   - AskEach asks every language for the read path. A failed language is
+//     recorded in [Declined], and the other languages still answer.
+//   - AskAny returns the first answer for the write path. Any error stops
+//     it, because the next language can answer about a different
+//     declaration.
 //
 // # Dependency position
 //
-// Imports the standard library, core/diag, core/edit, core/sema,
-// core/source and core/trust. Language modules implement these
-// interfaces; the read and write services consume them.
+// Imports the standard library, core/edit, core/sema, core/source,
+// core/trust, and core/internal/wire.
 package engine

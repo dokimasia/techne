@@ -3,28 +3,23 @@
 
 package source
 
-// Path locates a file, slash-separated and relative to the workspace
-// root on every platform. The zero Path is empty and names no file.
+// Path is a slash-separated file path, relative to the workspace root. The
+// zero value is the empty string, which is not a path.
 type Path string
 
-// Position is one point in a file: a byte offset, and the line and
-// column it falls on. All three are zero-based and counted in bytes.
-//
-// The zero Position is the first byte of a file.
+// Position is one point in a file. The zero value is the first byte.
 type Position struct {
-	// Offset is the authoritative coordinate. Line and Column are
-	// derived from it and are carried so an answer reads without the
-	// file.
+	// Offset is the zero-based byte offset. It is authoritative.
 	Offset int `json:"offset"`
-	Line   int `json:"line"`
+	// Line is the zero-based line of Offset.
+	Line int `json:"line"`
+	// Column is the zero-based byte column of Offset.
 	Column int `json:"column"`
 }
 
-// Span is a half-open range over one file: Start is included, End is
-// not. An empty range has Start equal to End and is how an insertion
-// point is expressed.
-//
-// The zero Span names no file and covers nothing.
+// Span is a half-open range of one file: it includes Start and excludes End.
+// A Span whose Start equals its End is an insertion point. The zero value
+// has an empty Path.
 type Span struct {
 	Path  Path     `json:"path"`
 	Start Position `json:"start"`

@@ -4,6 +4,7 @@
 package edit_test
 
 import (
+	"slices"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -13,26 +14,20 @@ import (
 func TestTarget(t *testing.T) {
 	t.Parallel()
 
-	t.Run("zero value", func(t *testing.T) {
+	t.Run("TargetUnset", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("points at nothing", func(t *testing.T) {
+		t.Run("is the kind of the zero Target", func(t *testing.T) {
 			t.Parallel()
-			var unset edit.Target
-			assert.Equal(t, unset.Kind, edit.TargetUnset,
-				"a request naming no target is refused rather than served against zero fields")
-			assert.Empty(t, string(unset.Symbol), "an unset target names no symbol")
-			assert.Empty(t, string(unset.Path), "an unset target names no file")
+			var zero edit.Target
+			assert.Equal(t, zero.Kind, edit.TargetUnset, "kind")
 		})
 
-		t.Run("is not a kind any operation accepts", func(t *testing.T) {
+		t.Run("is accepted by no operation", func(t *testing.T) {
 			t.Parallel()
 			for _, op := range edit.Operations() {
 				spec, _ := edit.SpecFor(op)
-				for _, k := range spec.Accepts {
-					assert.NotEqual(t, k, edit.TargetUnset,
-						"an operation accepting the unset kind would admit a request that named nothing")
-				}
+				assert.False(t, slices.Contains(spec.Accepts, edit.TargetUnset), string(op))
 			}
 		})
 	})

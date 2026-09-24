@@ -14,86 +14,115 @@ import (
 func TestID(t *testing.T) {
 	t.Parallel()
 
+	status := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindType)
+
 	t.Run("NewID", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("is language, unit, qualified name and kind", func(t *testing.T) {
+		t.Run("formats the ID as language:unit#name:kind", func(t *testing.T) {
 			t.Parallel()
-			// The language is an example value. A language module owns
-			// its own, and core declares none.
 			got := sema.NewID(source.Language("go"), "./internal/fsx", "Digest", sema.KindFunction)
-			assert.Equal(t, got, sema.ID("go:./internal/fsx#Digest:function"),
-				"an identity states which language, which unit, which name and which kind")
+			assert.Equal(t, got, sema.ID("go:./internal/fsx#Digest:function"), "ID")
 		})
 
-		t.Run("does not change when the declaration moves", func(t *testing.T) {
-			t.Parallel()
-			first := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindType)
-			second := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindType)
-			assert.Equal(t, first, second,
-				"an index stores an identity, so editing a line above a declaration must not invalidate it")
-		})
-
-		t.Run("separates a type from a function of the same name", func(t *testing.T) {
-			t.Parallel()
-			asType := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindType)
-			asFunc := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindFunction)
-			assert.NotEqual(t, asType, asFunc, "two declarations are two symbols, however alike their names")
-		})
-
-		t.Run("separates one name in two units", func(t *testing.T) {
-			t.Parallel()
-			inTrust := sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindType)
-			inGate := sema.NewID(source.Language("go"), "./core/gate", "Status", sema.KindType)
-			assert.NotEqual(t, inTrust, inGate, "a name is only unique inside its unit")
-		})
-
-		t.Run("separates one name in two languages", func(t *testing.T) {
-			t.Parallel()
-			inGo := sema.NewID(source.Language("go"), "./app", "Handler", sema.KindType)
-			inRust := sema.NewID(source.Language("rust"), "./app", "Handler", sema.KindType)
-			assert.NotEqual(t, inGo, inRust, "two languages in one tree declare two symbols")
-		})
+		tests := []struct {
+			name string
+			give sema.ID
+		}{
+			{
+				name: "distinguishes two kinds of one name",
+				give: sema.NewID(source.Language("go"), "./core/trust", "Status", sema.KindFunction),
+			},
+			{
+				name: "distinguishes two units of one name",
+				give: sema.NewID(source.Language("go"), "./core/gate", "Status", sema.KindType),
+			},
+			{
+				name: "distinguishes two languages of one name",
+				give: sema.NewID(source.Language("rust"), "./core/trust", "Status", sema.KindType),
+			},
+			{
+				name: "distinguishes a renamed declaration",
+				give: sema.NewID(source.Language("go"), "./core/trust", "State", sema.KindType),
+			},
+			{
+				name: "distinguishes a member of the same name in a container",
+				give: sema.NewID(source.Language("go"), "./core/trust", "Evidence.Status", sema.KindType),
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.NotEqual(t, tt.give, status, "ID")
+			})
+		}
 	})
 
-	t.Run("zero value", func(t *testing.T) {
+	t.Run("Qualify", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("names nothing", func(t *testing.T) {
+		t.Run("joins a container and a name with a dot", func(t *testing.T) {
 			t.Parallel()
-			var unset sema.ID
-			assert.Empty(t, string(unset), "an unset identity names no declaration")
+			assert.Equal(t, sema.Qualify("Store", "Get"), "Store.Get", "Qualify")
+		})
+
+		t.Run("joins a qualified container and a name", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, sema.Qualify("Store.Get", "key"), "Store.Get.key", "Qualify")
+		})
+
+		t.Run("returns a name without a container unchanged", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, sema.Qualify("", "Get"), "Get", "Qualify")
 		})
 	})
-}
 
-func TestIDName(t *testing.T) {
-	t.Parallel()
+	t.Run("Base", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			give sema.ID
+			want string
+		}{
+			{
+				name: "returns the name after the last dot",
+				give: sema.NewID(source.Language("go"), ".", "Store.Get", sema.KindMethod),
+				want: "Get",
+			},
+			{name: "returns a name without a dot whole", give: status, want: "Status"},
+			{name: "returns an empty string for the zero ID", give: sema.ID("")},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, tt.give.Base(), tt.want, "Base")
+			})
+		}
+	})
 
 	t.Run("Name", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("is the qualified name inside an identity", func(t *testing.T) {
-			t.Parallel()
-			// Two engines answering about one declaration need not agree
-			// on its kind, and an identity differing in that field alone
-			// still names the same declaration. Matching on the name is
-			// what settles it, and this is how the name is reached.
-			held := sema.NewID("go", "internal/fsx", "Digest", sema.KindFunction)
-			assert.Equal(t, held.Name(), "Digest", "the name the identity was built from")
-		})
-
-		t.Run("keeps a name a language qualified", func(t *testing.T) {
-			t.Parallel()
-			held := sema.NewID("java", ".", "Store.read", sema.KindMethod)
-			assert.Equal(t, held.Name(), "Store.read",
-				"the qualifier is part of the name rather than a separator")
-		})
-
-		t.Run("is empty for a value that is not an identity", func(t *testing.T) {
-			t.Parallel()
-			assert.Empty(t, sema.ID("").Name(), "the zero value names nothing")
-			assert.Empty(t, sema.ID("not an identity").Name(), "and neither does a stray string")
-		})
+		tests := []struct {
+			name string
+			give sema.ID
+			want string
+		}{
+			{name: "returns the qualified name", give: status, want: "Status"},
+			{
+				name: "keeps the qualifier of a qualified name",
+				give: sema.NewID(source.Language("java"), ".", "Store.read", sema.KindMethod),
+				want: "Store.read",
+			},
+			{name: "returns an empty string for a value without a name", give: sema.ID("not an identity")},
+			{name: "returns an empty string for the zero ID", give: sema.ID("")},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, tt.give.Name(), tt.want, "Name")
+			})
+		}
 	})
 }
