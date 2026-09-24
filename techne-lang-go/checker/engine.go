@@ -5,6 +5,7 @@ package checker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,113 +18,75 @@ import (
 	"go.dokimi.dev/techne/lang"
 )
 
-// Engine answers about Go by type-checking the workspace in this
-// process.
+// Engine type-checks a Go workspace in this process, with the loader of
+// golang.org/x/tools/go/packages, and serves the roles that need types: resolve, relate, verify
+// and check. It needs the go command, which builds the workspace, and no language server.
 //
-// # Why it exists beside a language server
-//
-// gopls answers the same questions and answers them faster once it is
-// warm. It is also a program that has to be installed, and a machine
-// without it drops Go from every question that needs a type: what
-// implements this, what calls this, does this still compile. This engine
-// needs nothing but the Go toolchain the workspace is already built
-// with, so the answer is there whether or not anything was installed.
-//
-// The catalogue prefers the server where both can answer. Both claim the
-// same tier, so the order between them is the order they were
-// registered, and the language module registers the server first.
-//
-// # What it does not answer
-//
-// Outlining and searching are a parser's, which does them at a
-// thousandth of the cost. Planning a change is not here either: the
-// operations techne serves are the ones a server computes, and a rename
-// worked out from a type graph by hand would be a second implementation
-// of the one thing the write path must not get wrong.
+// An Engine is safe for concurrent use. It keeps one view of the workspace until the stamp of a
+// walk of the workspace changes.
 type Engine struct {
 	declared lang.Declaration
-	root     string
+	// root is the absolute path of the workspace. The go command runs in root and reports the
+	// files under it in the form of root, also when root contains a symbolic link, because it
+	// takes the working directory from PWD.
+	root string
 
-	// loading guards the one cached view. Two questions arriving
-	// together would otherwise type-check the workspace twice.
+	// loading guards view, so two questions that arrive together load the workspace once.
 	loading sync.Mutex
 	view    *view
 }
 
-// New returns an engine over a workspace on disk.
-//
-// The root is a path rather than an [io/fs.FS] because the loader runs
-// the Go toolchain against a directory, and a tree that is nowhere has
-// no packages to load.
+// New returns an engine over the workspace at root, a directory on disk, for the language that
+// d declares. The go command runs in the directory, so the workspace must be on disk.
 func New(root string, d lang.Declaration) (*Engine, error) {
 	if d.Language == "" {
-		return nil, fmt.Errorf("checker: declaration names no language")
+		return nil, errors.New("checker: the declaration names no language")
 	}
 	if root == "" {
-		return nil, fmt.Errorf("checker: %q has no workspace root", d.Language)
+		return nil, fmt.Errorf("checker: %s has no workspace root", d.Language)
 	}
-
 	held, err := filepath.Abs(root)
 	if err != nil {
-		return nil, fmt.Errorf("checker: %q workspace root: %w", d.Language, err)
+		return nil, fmt.Errorf("checker: %s workspace root: %w", d.Language, err)
 	}
 	if info, err := os.Stat(held); err != nil || !info.IsDir() {
-		return nil, fmt.Errorf("checker: %q workspace root %q is not a directory", d.Language, held)
+		return nil, fmt.Errorf("checker: %s workspace root %s is not a directory", d.Language, held)
 	}
 	return &Engine{declared: d, root: held}, nil
 }
 
-// Name identifies this engine in a provenance and a capability report.
-//
-// The toolchain rather than the package, because that is what a caller
-// can act on: told the Go type checker answered, it knows the answer is
-// as good as the build is and that no server was involved.
+// Name returns go/types, the name of the type checker of the Go toolchain.
 func (*Engine) Name() string { return "go/types" }
 
-// Language is the one language this engine answers about.
+// Language returns the language of the declaration that the engine was built with.
 func (e *Engine) Language() source.Language { return e.declared.Language }
 
-// Fidelity is [trust.Resolved] for the roles it serves.
-//
-// It binds names through the same type checker the compiler runs, which
-// is the strongest evidence there is about a Go program.
+// Fidelity returns the tier of role from [Binding], and [trust.None] for a role that the
+// engine does not serve.
 func (*Engine) Fidelity(role engine.Role) trust.Fidelity { return Binding()[role] }
 
-// Cost is [engine.CostSession]: dear once and cheap after.
-//
-// Type-checking a module is seconds and the result is kept, so a caller
-// asking who calls a function and then who calls its caller pays once.
-// Priced at what the first call costs, a catalogue would route around
-// the only engine that can answer at all on a machine with no server.
+// Cost returns [engine.CostSession] for every role: the first question loads the workspace,
+// and a later question reads the cached view.
 func (*Engine) Cost(engine.Role) engine.Cost { return engine.CostSession }
 
-// Available reports whether the Go toolchain can be run.
-//
-// The loader shells out to go list, so a workspace whose toolchain is
-// missing is a question this cannot answer — and saying so before a call
-// is what lets a caller install something rather than read a failure.
+// Available returns an error when the go command is not on PATH.
 func (*Engine) Available(context.Context) error {
 	if _, err := exec.LookPath("go"); err != nil {
-		return fmt.Errorf("checker: go is not on PATH")
+		return errors.New("checker: go is not on PATH")
 	}
 	return nil
 }
 
-// Close drops what was type-checked.
-//
-// A composition root calls it. This holds no process and no handle, so
-// closing it frees memory and nothing else.
+// Close drops the cached view, which is the only state that the engine keeps between
+// questions.
 func (e *Engine) Close(context.Context) error {
 	e.forget()
 	return nil
 }
 
-// Binding is what this engine reaches, per role.
-//
-// Declared here rather than guessed at each call, and per role because
-// they are not the same: it binds names as well as anything can and
-// outlines a file no better than a parser does at a thousandth of the
-// cost, so it claims nothing for the roles a parser owns.
+// Binding returns the tier of each role that the engine serves: [trust.Resolved] for resolve,
+// relate, verify and check. It returns no tier for outline, search, plan, format and index,
+// which the parser and the language server serve.
 func Binding() map[engine.Role]trust.Fidelity {
 	return map[engine.Role]trust.Fidelity{
 		engine.RoleResolve: trust.Resolved,
@@ -133,8 +96,8 @@ func Binding() map[engine.Role]trust.Fidelity {
 	}
 }
 
-// assert the engine claims what its package comment says it does, and
-// serves every role it has an answer behind.
+// Engine implements the port of each role of [Binding], and reports whether the go command is
+// available.
 var (
 	_ engine.Engine    = (*Engine)(nil)
 	_ engine.Available = (*Engine)(nil)

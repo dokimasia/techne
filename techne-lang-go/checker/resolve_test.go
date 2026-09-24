@@ -19,90 +19,69 @@ func TestResolve(t *testing.T) {
 	t.Run("Resolve", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("answers what the name at a position was bound to", func(t *testing.T) {
+		t.Run("returns the declaration of a use", func(t *testing.T) {
 			t.Parallel()
-			// A use denotes what it was declared as. What makes the
-			// answer a binding rather than a name match is that two
-			// packages each declaring Store have two objects, and the
-			// use resolves to exactly one of them.
-			got, err := serving(t, whole()).Resolve(t.Context(),
-				engine.Request{Scope: "use.go"}, at(t, use, "held := Store"))
-
-			assert.NoError(t, err, "resolving a use succeeds")
-			assert.Equal(t, names(got.Items), []string{"Store"}, "the declaration it denotes")
-			assert.Equal(t, got.Items[0].Kind, sema.KindStruct, "read from what it is underneath")
-			assert.Equal(t, string(got.Items[0].Span.Path), "store.go",
-				"and the file the declaration is in, not the file the use is in")
+			got, err := serving(t, whole()).Resolve(t.Context(), engine.Request{Scope: "use.go"},
+				at(t, use, "held := Store"))
+			assert.NoError(t, err, "Resolve of a use of Store")
+			assert.Equal(t, names(got.Items), []string{"Store"}, "the declaration of the use")
+			assert.Equal(t, got.Items[0].Kind, sema.KindStruct, "the kind of Store")
+			assert.Equal(t, got.Items[0].Span.Path, source.Path("store.go"), "the file of Store")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the answer")
 		})
 
-		t.Run("takes a line and a column where a caller has no offset", func(t *testing.T) {
+		t.Run("returns the source line of the declaration as its snippet", func(t *testing.T) {
 			t.Parallel()
-			// Whoever asked is looking at an editor rather than at a byte
-			// count, and only something holding the file can turn the two
-			// into one.
-			offset := at(t, use, "held := Store")
-			byLine := source.Position{Line: 3, Column: 10}
-
-			e := serving(t, whole())
-			one, err := e.Resolve(t.Context(), engine.Request{Scope: "use.go"}, offset)
-			assert.NoError(t, err, "resolving by offset succeeds")
-			two, err := e.Resolve(t.Context(), engine.Request{Scope: "use.go"}, byLine)
-			assert.NoError(t, err, "resolving by line and column succeeds")
-
-			assert.Equal(t, names(two.Items), names(one.Items),
-				"the same position named two ways is the same answer")
+			got, err := serving(t, whole()).Resolve(t.Context(), engine.Request{Scope: "use.go"},
+				at(t, use, "held := Store"))
+			assert.NoError(t, err, "Resolve of a use of Store")
+			assert.Equal(t, got.Items[0].Snippet, "type Store struct {", "the snippet of Store")
 		})
 
-		t.Run("answers about the declaration itself as readily", func(t *testing.T) {
+		t.Run("returns the declaration at a line and a column", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, whole()).Resolve(t.Context(),
-				engine.Request{Scope: "store.go"}, at(t, store, "func helper"))
-
-			assert.NoError(t, err, "resolving a declaration succeeds")
-			assert.Equal(t, names(got.Items), []string{"helper"}, "which denotes itself")
+			got, err := serving(t, whole()).Resolve(t.Context(), engine.Request{Scope: "use.go"},
+				source.Position{Line: 3, Column: 10})
+			assert.NoError(t, err, "Resolve at line 3, column 10")
+			assert.Equal(t, names(got.Items), []string{"Store"}, "the declaration at the line and the column")
 		})
 
-		t.Run("finds nothing where the position is not on a name", func(t *testing.T) {
+		t.Run("returns a declaration at its own name", func(t *testing.T) {
 			t.Parallel()
-			// A caller pointing at whitespace has asked a question with
-			// no answer, which is not the same as a broken engine.
-			got, err := serving(t, whole()).Resolve(t.Context(),
-				engine.Request{Scope: "use.go"}, source.Position{Offset: 0})
-
-			assert.NoError(t, err, "pointing at a keyword is not a fault")
-			assert.Empty(t, got.Items, "and nothing is denoted there")
+			got, err := serving(t, whole()).Resolve(t.Context(), engine.Request{Scope: "store.go"},
+				at(t, store, "func helper"))
+			assert.NoError(t, err, "Resolve of the name of helper")
+			assert.Equal(t, names(got.Items), []string{"helper"}, "the declaration at its name")
 		})
 
-		t.Run("declines a file this language does not read", func(t *testing.T) {
+		t.Run("returns no declaration at a keyword", func(t *testing.T) {
 			t.Parallel()
-			_, err := serving(t, whole()).Resolve(t.Context(),
-				engine.Request{Scope: "go.mod"}, source.Position{Offset: 0})
-
-			assert.ErrorIs(t, err, engine.ErrDecline, "so another engine gets a turn")
+			got, err := serving(t, whole()).Resolve(t.Context(), engine.Request{Scope: "use.go"}, source.Position{})
+			assert.NoError(t, err, "Resolve at the keyword package")
+			assert.Empty(t, got.Items, "the declarations at the keyword")
 		})
 
-		t.Run("says it read nothing about a file no package holds", func(t *testing.T) {
+		t.Run("returns a skipped result for a scope without a Go file", func(t *testing.T) {
 			t.Parallel()
-			// A file the build excludes is one the toolchain does not
-			// compile, so nothing bound the names in it. An empty answer
-			// would be a claim about code that was never read.
-			held := whole()
-			held["excluded.go"] = "//go:build ignore\n\npackage p\n\nvar Held = Store{}\n"
-			got, err := serving(t, held).Resolve(t.Context(),
-				engine.Request{Scope: "excluded.go"}, source.Position{Offset: 40})
-
-			assert.NoError(t, err, "asking about a file no package holds is not a fault")
-			assert.True(t, got.Skipped, "and the engine says it read nothing")
+			got, err := serving(t, whole()).Resolve(t.Context(), engine.Request{Scope: "go.mod"}, source.Position{})
+			assert.NoError(t, err, "Resolve in go.mod")
+			assert.True(t, got.Skipped, "the answer is skipped")
 		})
 
-		t.Run("carries the caveat every bound answer carries", func(t *testing.T) {
+		t.Run("declines a directory with Go files", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, whole()).Resolve(t.Context(),
-				engine.Request{Scope: "use.go"}, at(t, use, "held := Store"))
+			_, err := serving(t, whole()).Resolve(t.Context(), engine.Request{Scope: "."}, source.Position{})
+			assert.ErrorIs(t, err, engine.ErrDecline, "Resolve in the root directory")
+		})
 
-			assert.NoError(t, err, "resolving succeeds")
-			assert.True(t, carries(got.Caveats, trust.CaveatDynamic),
-				"reflection and string-keyed dispatch are invisible to every engine")
+		t.Run("declines a file that no package compiles", func(t *testing.T) {
+			t.Parallel()
+			files := whole()
+			files["excluded.go"] = "//go:build ignore\n\npackage p\n\nvar Held = Store{}\n"
+			_, err := serving(t, files).Resolve(t.Context(), engine.Request{Scope: "excluded.go"},
+				source.Position{Offset: 40})
+			assert.ErrorIs(t, err, engine.ErrDecline, "Resolve in a file that the build excludes")
+			assert.Contains(t, err.Error(), "excluded.go", "the file in the reason")
 		})
 	})
 }

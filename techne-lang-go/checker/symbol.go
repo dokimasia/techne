@@ -4,76 +4,206 @@
 package checker
 
 import (
+	"bytes"
 	"go/ast"
 	"go/token"
 	"go/types"
 	"os"
+	"slices"
 	"strings"
 
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
+	"go.dokimi.dev/techne/lang"
 	"golang.org/x/tools/go/packages"
 )
 
-// symbolFor turns a type checker's object into one declaration.
+// symbolFor returns the declaration of an object of the type checker, and reports whether the
+// object is a declaration that an answer can contain. A builtin, the untyped nil and an object
+// without a position are not.
 //
-// The identity is built the same way every other engine here builds
-// one — the language, the unit, the bare name and the kind — because a
-// caller that resolved a declaration with one engine and asked about it
-// with another has to be talking about the same thing. A method keeps
-// its bare name for the same reason: gopls reports (*Store).Get and the
-// parser reports Get, and the identity that has to match both is the
-// one without the receiver.
+// The ID has the language, the unit, the qualified name that [Engine.qualified] returns and the
+// kind, as the parser and the lsp engine build it. An object with types from export data gets
+// the span and the ID of its declaration from source, by [view.sourced]. An object of the
+// standard library gets the span of its name in its file, which [view.expanded] names.
 func (e *Engine) symbolFor(v *view, of types.Object) (sema.Symbol, bool) {
 	if of == nil || !of.Pos().IsValid() {
 		return sema.Symbol{}, false
 	}
+	of = v.sourced(of)
 	kind, classified := kindOf(of)
 	if !classified {
-		// A builtin, a label, the untyped nil. [sema.Kinds] leaves the
-		// kind for a declaration nobody classified out of the set an
-		// answer may carry, so an item holding it does not validate
-		// against the shape a tool declares. Dropped rather than emitted
-		// under a kind that is not one.
 		return sema.Symbol{}, false
 	}
+
 	at := v.fset.Position(of.Pos())
-	p := e.pathOf(at.Filename)
+	file := v.expanded(at.Filename)
+	start := source.Position{Offset: at.Offset, Line: at.Line - 1, Column: at.Column - 1}
+	if v.file(of.Pos()) == nil {
+		start = located(file, at.Line-1, of.Name())
+	}
+	p := e.pathOf(file)
 	unit := source.Path(e.declared.Namespace(string(p)))
-
-	span := source.Span{
-		Path:  p,
-		Start: source.Position{Offset: at.Offset, Line: at.Line - 1, Column: at.Column - 1},
-	}
-	span.End = source.Position{
-		Offset: at.Offset + len(of.Name()),
-		Line:   at.Line - 1,
-		Column: at.Column - 1 + len(of.Name()),
-	}
-
+	width := len(of.Name())
 	return sema.Symbol{
-		ID:         sema.NewID(e.declared.Language, unit, of.Name(), kind),
-		Name:       of.Name(),
-		Kind:       kind,
-		Language:   e.declared.Language,
-		Span:       span,
+		ID:       sema.NewID(e.declared.Language, unit, e.qualified(v, of), kind),
+		Name:     of.Name(),
+		Kind:     kind,
+		Language: e.declared.Language,
+		Span: source.Span{
+			Path:  p,
+			Start: start,
+			End:   source.Position{Offset: start.Offset + width, Line: start.Line, Column: start.Column + width},
+		},
 		Visibility: e.declared.Visibility(of.Name()),
 		Signature:  signature(of),
 	}, true
 }
 
-// kindOf is what a type checker's object is, in this vocabulary, and
-// reports whether it is one at all.
+// located returns the position of name on the zero-based line of the file at full, for an
+// object with types from export data, whose position has a line and no column. It returns the
+// start of the line when the line does not contain name as a word, and a position with the line
+// alone when the file cannot be read.
+func located(full string, line int, name string) source.Position {
+	content, err := os.ReadFile(full)
+	if err != nil {
+		return source.Position{Line: line}
+	}
+	start := byteAt(content, line, 0)
+	end := len(content)
+	if at := bytes.IndexByte(content[start:], '\n'); at >= 0 {
+		end = start + at
+	}
+	column := max(lang.Worded(string(content[start:end]), name), 0)
+	return source.Position{Offset: start + column, Line: line, Column: column}
+}
+
+// same reports whether one and other are one declaration.
 //
-// The mapping is over what the object is rather than how it is written:
-// a function with a receiver is a method, a constant is not a variable,
-// and a named type is whatever it names underneath — a struct, an
-// interface, or a type of its own.
+// In one program they share the position of their name. That covers a declaration and its
+// counterpart in the test variant of its package, and a generic declaration and its instances.
+// An object with types from export data, such as a declaration of a module that another
+// program type-checks, has a position with a file and a line and no column. It is the
+// declaration of that name on that line of that file.
+func (v *view) same(one, other types.Object) bool {
+	switch {
+	case one == nil || other == nil || one.Name() != other.Name():
+		return false
+	case one.Pos() == other.Pos():
+		return one.Pos().IsValid()
+	case v.file(one.Pos()) != nil && v.file(other.Pos()) != nil:
+		return false
+	}
+	a, b := v.fset.Position(one.Pos()), v.fset.Position(other.Pos())
+	return a.IsValid() && a.Filename == b.Filename && a.Line == b.Line
+}
+
+// sourced returns the declaration from source that of names, for an object with types from
+// export data: the declaration of that name on the line of its position, in a package whose
+// syntax the view has. It returns of for an object with syntax, and for a file that no package
+// of the view type-checks, such as a file of the standard library.
+func (v *view) sourced(of types.Object) types.Object {
+	at := v.fset.Position(of.Pos())
+	if v.file(of.Pos()) != nil || !v.compiles(at.Filename) {
+		return of
+	}
+	for _, pkg := range v.held() {
+		if !slices.Contains(pkg.CompiledGoFiles, at.Filename) {
+			continue
+		}
+		for ident, declared := range pkg.TypesInfo.Defs {
+			if declared == nil || ident.Name != of.Name() {
+				continue
+			}
+			if there := v.fset.Position(ident.Pos()); there.Filename == at.Filename && there.Line == at.Line {
+				return declared
+			}
+		}
+	}
+	return of
+}
+
+// qualified returns the name of an object qualified by the declarations that contain it, as
+// the parser qualifies it:
 //
-// A builtin and the untyped nil are neither. They are objects the
-// checker hands back and are not declarations anything navigates to, so
-// they are reported as not classified rather than under a kind an answer
-// may not carry.
+//   - a method by the type of its receiver
+//   - a field, or a method of an interface, by the type that declares it
+//   - a parameter or a local by its function
+//
+// An object of a file of which the view has no syntax, such as a field of the standard
+// library, keeps its name. A method keeps the qualifier of its receiver there too.
+func (*Engine) qualified(v *view, of types.Object) string {
+	if fn, is := of.(*types.Func); is {
+		if recv := fn.Signature().Recv(); recv != nil {
+			if named := typeName(recv.Type()); named != "" {
+				return sema.Qualify(named, of.Name())
+			}
+		}
+	}
+	file := v.file(of.Pos())
+	if file == nil {
+		return of.Name()
+	}
+	container := ""
+	ast.Inspect(file, func(n ast.Node) bool {
+		if n == nil || n.Pos() > of.Pos() || n.End() < of.Pos() {
+			return false
+		}
+		switch held := n.(type) {
+		case *ast.FuncDecl:
+			if held.Name.Pos() != of.Pos() {
+				container = funcName(held)
+			}
+		case *ast.TypeSpec:
+			if held.Name.Pos() != of.Pos() {
+				container = sema.Qualify(container, held.Name.Name)
+			}
+		}
+		return true
+	})
+	return sema.Qualify(container, of.Name())
+}
+
+// typeName returns the name of the named type that t is or points to, or the empty string for
+// another type.
+func typeName(t types.Type) string {
+	if pointer, is := t.(*types.Pointer); is {
+		t = pointer.Elem()
+	}
+	if named, is := t.(*types.Named); is {
+		return named.Obj().Name()
+	}
+	return ""
+}
+
+// funcName returns the qualified name of a function declaration: the name of a method
+// qualified by the type of its receiver, and the name of a function.
+func funcName(decl *ast.FuncDecl) string {
+	if decl.Recv == nil || len(decl.Recv.List) == 0 {
+		return decl.Name.Name
+	}
+	return sema.Qualify(receiverName(decl.Recv.List[0].Type), decl.Name.Name)
+}
+
+// receiverName returns the name of the type of a receiver, through a pointer and through type
+// arguments.
+func receiverName(expr ast.Expr) string {
+	switch held := expr.(type) {
+	case *ast.StarExpr:
+		return receiverName(held.X)
+	case *ast.IndexExpr:
+		return receiverName(held.X)
+	case *ast.IndexListExpr:
+		return receiverName(held.X)
+	case *ast.Ident:
+		return held.Name
+	}
+	return ""
+}
+
+// kindOf returns the kind of an object of the type checker, and reports whether the object has
+// one. A function with a receiver is a method, and a type name has the kind of the type it
+// names, by [underlying]. A builtin and the untyped nil have no kind.
 func kindOf(of types.Object) (sema.Kind, bool) {
 	switch held := of.(type) {
 	case *types.Func:
@@ -98,8 +228,8 @@ func kindOf(of types.Object) (sema.Kind, bool) {
 	return sema.KindUnknown, false
 }
 
-// underlying is what a type declaration declares, read from what it is
-// underneath.
+// underlying returns the kind of a type declaration by the type it names: a struct, an
+// interface, or another type.
 func underlying(of *types.TypeName) sema.Kind {
 	if of.Type() == nil {
 		return sema.KindType
@@ -113,17 +243,9 @@ func underlying(of *types.TypeName) sema.Kind {
 	return sema.KindType
 }
 
-// signature is the declaration without its body, as the type checker
-// writes it.
-//
-// A caller reading an answer wants what it takes and returns. The type
-// checker's own rendering is the one that agrees with what the compiler
-// bound, which a rendering built from the syntax would not for a type
-// written in another package.
-//
-// Written relative to the declaring package, so a declaration reads as
-// it was written rather than qualified with the name of the package it
-// is already in.
+// signature returns the declaration of an object without its body, as the type checker writes
+// it, relative to the package that declares it. It returns the first line of a declaration
+// that spans lines, such as a struct type.
 func signature(of types.Object) string {
 	held := types.ObjectString(of, types.RelativeTo(of.Pkg()))
 	if at := strings.IndexByte(held, '\n'); at >= 0 {
@@ -132,19 +254,29 @@ func signature(of types.Object) string {
 	return held
 }
 
-// sited is where an edge was written, and the source line it was
-// written on.
-//
-// The line comes back with it because a caller asking who calls this
-// wants to read the call, and fetching each one costs a turn per site.
-func (e *Engine) sited(v *view, files map[string][]byte, at token.Pos, width int) (source.Span, string) {
+// sources are the contents of the files that one answer cites, by absolute path.
+type sources map[string][]byte
+
+// read returns the content of the file at full. It reads the file from disk the first time,
+// and returns no content for a file that cannot be read.
+func (s sources) read(full string) []byte {
+	content, read := s[full]
+	if !read {
+		content, _ = os.ReadFile(full)
+		s[full] = content
+	}
+	return content
+}
+
+// sited returns the span of width bytes at a position, and the source line that the position
+// is on, without the white space around it.
+func (e *Engine) sited(v *view, files sources, at token.Pos, width int) (source.Span, string) {
 	if !at.IsValid() {
 		return source.Span{}, ""
 	}
 	held := v.fset.Position(at)
-	p := e.pathOf(held.Filename)
 	span := source.Span{
-		Path:  p,
+		Path:  e.pathOf(held.Filename),
 		Start: source.Position{Offset: held.Offset, Line: held.Line - 1, Column: held.Column - 1},
 		End: source.Position{
 			Offset: held.Offset + width,
@@ -152,38 +284,13 @@ func (e *Engine) sited(v *view, files map[string][]byte, at token.Pos, width int
 			Column: held.Column - 1 + width,
 		},
 	}
-	return span, line(files[held.Filename], held.Offset)
+	return span, strings.TrimSpace(lang.LineAt(files.read(held.Filename), held.Offset))
 }
 
-// line is the source line an offset sits on, trimmed.
-func line(content []byte, at int) string {
-	if at < 0 || at > len(content) {
-		return ""
-	}
-	from := at
-	for from > 0 && content[from-1] != '\n' {
-		from--
-	}
-	to := at
-	for to < len(content) && content[to] != '\n' {
-		to++
-	}
-	return strings.TrimSpace(string(content[from:to]))
-}
-
-// enclosing is the declaration a position was written inside, which is
-// what a caller reading who-uses-this wants beside each site.
-//
-// The innermost one. A use in a struct's field belongs to the field
-// rather than to the struct: told only the type, a caller reading
-// twenty-six uses of a type sees six of them collapse onto the same
-// name and cannot tell which member each was. Compared against gopls
-// over one module, that was the only thing the two answers disagreed
-// about.
-//
-// A function's own insides are not one of them. A use written in a
-// signature or a body belongs to the function, and a local variable is
-// not somewhere a caller navigates to.
+// enclosing returns the innermost declaration that contains a position of pkg, and reports
+// whether one does. A use in a field of a struct belongs to the field. A use in the signature
+// or the body of a function belongs to the function, because a local is not a declaration that
+// an answer names.
 func (e *Engine) enclosing(v *view, pkg *packages.Package, at token.Pos) (sema.Symbol, bool) {
 	var found *ast.Ident
 	for _, file := range pkg.Syntax {
@@ -195,10 +302,6 @@ func (e *Engine) enclosing(v *view, pkg *packages.Package, at token.Pos) (sema.S
 				return false
 			}
 			if held, is := n.(*ast.FuncDecl); is {
-				// Nothing inside a body is a declaration a caller
-				// navigates to. A use written in one belongs to the
-				// function, which is how anyone reading the file would
-				// describe it.
 				found = held.Name
 				return false
 			}
@@ -214,14 +317,10 @@ func (e *Engine) enclosing(v *view, pkg *packages.Package, at token.Pos) (sema.S
 	return e.symbolFor(v, pkg.TypesInfo.Defs[found])
 }
 
-// declares is the name a node declares, and nil for a node that
-// declares nothing.
-//
-// A field list is the one shape that is two things: a struct's members
-// and an interface's methods are declarations, and a function's
-// parameters and results are not. They are told apart by where the
-// position sits — inside the type's own braces or inside the
-// signature's brackets — which is what [Engine.enclosing] walks into.
+// declares returns the name that a node declares at the position at, or nil for a node that
+// declares nothing there. A field list of a struct or an interface declares its members. The
+// parameters and the results of a function declare nothing, because [Engine.enclosing] stops at
+// the function.
 func declares(n ast.Node, at token.Pos) *ast.Ident {
 	switch held := n.(type) {
 	case *ast.TypeSpec:
@@ -236,7 +335,8 @@ func declares(n ast.Node, at token.Pos) *ast.Ident {
 	return nil
 }
 
-// member is the field or method a position falls in.
+// member returns the name of the field or the method of fields that contains at, or nil for
+// none.
 func member(fields *ast.FieldList, at token.Pos) *ast.Ident {
 	if fields == nil {
 		return nil
@@ -249,27 +349,10 @@ func member(fields *ast.FieldList, at token.Pos) *ast.Ident {
 	return nil
 }
 
-// first is the first name a declaration writes, and nil where it writes
-// none: an anonymous field declares a name the language derives rather
-// than one it writes.
+// first returns the first of names, or nil for an embedded field, which does not write a name.
 func first(names []*ast.Ident) *ast.Ident {
 	if len(names) == 0 {
 		return nil
 	}
 	return names[0]
-}
-
-// read returns the files a package was compiled from, so a site can
-// carry the line it was written on.
-//
-// Read once per answer rather than once per site: a declaration used
-// thirty times in one file is one file.
-func read(pkg *packages.Package) map[string][]byte {
-	out := map[string][]byte{}
-	for _, name := range pkg.CompiledGoFiles {
-		if content, err := os.ReadFile(name); err == nil {
-			out[name] = content
-		}
-	}
-	return out
 }

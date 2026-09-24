@@ -4,16 +4,172 @@
 package checker_test
 
 import (
+	"context"
+	"fmt"
+	"maps"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
+	"go.dokimi.dev/techne/core/sema"
+	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/lang"
 	golang "go.dokimi.dev/techne/lang/go"
 	"go.dokimi.dev/techne/lang/go/checker"
 )
+
+// The tests load real modules with the go command, because the files of a package and its
+// build constraints are the go command's.
+
+// store declares a type with two methods, an interface that the type satisfies, a function and
+// a type that embeds the type.
+const store = `package p
+
+// Store holds a size.
+type Store struct {
+	size  int
+	Named string
+}
+
+// Total returns the size and one.
+func (s *Store) Total() int { return s.size + helper() }
+
+func helper() int { return 1 }
+
+type Reader interface{ Sum() int }
+
+// Sum returns the total.
+func (s *Store) Sum() int { return s.Total() }
+
+type Wrapped struct {
+	Store
+	extra int
+}
+`
+
+// use declares a function that uses Store and calls Total.
+const use = `package p
+
+func Use() int {
+	held := Store{size: 3}
+	return held.Total()
+}
+`
+
+// broken declares a function that reads a field that Store does not have, on a line that does
+// not write Store.
+const broken = `package p
+
+func Broken() int {
+	held := Store{}
+	return held.missing
+}
+`
+
+// module is the go.mod file of the fixtures of one module.
+const module = "module example.com/p\n\ngo 1.24\n"
+
+// written writes files to a new directory and returns it.
+func written(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, body := range files {
+		full := filepath.Join(dir, filepath.FromSlash(name))
+		assert.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755), "MkdirAll "+name)
+		assert.NoError(t, os.WriteFile(full, []byte(body), 0o644), "WriteFile "+name)
+	}
+	return dir
+}
+
+// workspace writes a module of files, with the go.mod file of module, and returns its
+// directory.
+func workspace(t *testing.T, files map[string]string) string {
+	t.Helper()
+	held := map[string]string{"go.mod": module}
+	maps.Copy(held, files)
+	return written(t, held)
+}
+
+// over returns an engine over the workspace at root, which the test closes when it ends.
+func over(t *testing.T, root string) *checker.Engine {
+	t.Helper()
+	e, err := checker.New(root, golang.Declaration())
+	assert.NoError(t, err, "New over "+root)
+	t.Cleanup(func() {
+		ctx, stop := context.WithTimeout(context.WithoutCancel(t.Context()), 5*time.Second)
+		defer stop()
+		assert.NoError(t, e.Close(ctx), "Close")
+	})
+	return e
+}
+
+// serving returns an engine over a module of files.
+func serving(t *testing.T, files map[string]string) *checker.Engine {
+	t.Helper()
+	return over(t, workspace(t, files))
+}
+
+// whole returns the files of the module that compiles.
+func whole() map[string]string {
+	return map[string]string{"store.go": store, "use.go": use}
+}
+
+// edges returns the name of the far end of each relation, in order.
+func edges(held []sema.Relation) []string {
+	out := make([]string, 0, len(held))
+	for _, one := range held {
+		out = append(out, one.To.Name)
+	}
+	return out
+}
+
+// places returns the path and the zero-based line of the site of each relation, in order.
+func places(held []sema.Relation) []string {
+	out := make([]string, 0, len(held))
+	for _, one := range held {
+		out = append(out, fmt.Sprintf("%s:%d", one.At.Path, one.At.Start.Line))
+	}
+	return out
+}
+
+// names returns the name of each declaration, in order.
+func names(held []sema.Symbol) []string {
+	out := make([]string, 0, len(held))
+	for _, one := range held {
+		out = append(out, one.Name)
+	}
+	return out
+}
+
+// carries reports whether caveats contain a caveat of code.
+func carries(caveats []trust.Caveat, code trust.CaveatCode) bool {
+	for _, one := range caveats {
+		if one.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+// at returns the position of the last word of anchor in body. An anchor locates a use or a
+// declaration apart from the same name in a comment.
+func at(t *testing.T, body, anchor string) source.Position {
+	t.Helper()
+	held := strings.Index(body, anchor)
+	assert.True(t, held >= 0, "the index of "+anchor)
+	name := anchor[strings.LastIndexAny(anchor, " \t*(.")+1:]
+	return source.Position{Offset: held + len(anchor) - len(name)}
+}
+
+// subject returns the ID of the declaration name of kind in the package at the root.
+func subject(name string, kind sema.Kind) sema.ID {
+	return sema.NewID(golang.Language, ".", name, kind)
+}
 
 func TestEngine(t *testing.T) {
 	t.Parallel()
@@ -21,103 +177,83 @@ func TestEngine(t *testing.T) {
 	t.Run("New", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("refuses a declaration that names no language", func(t *testing.T) {
+		t.Run("returns an error for a declaration without a language", func(t *testing.T) {
 			t.Parallel()
 			_, err := checker.New(t.TempDir(), lang.Declaration{})
-			assert.HasError(t, err, "an engine answers about one language and must know which")
+			assert.HasError(t, err, "New without a language")
 		})
 
-		t.Run("refuses a root that is not a directory", func(t *testing.T) {
+		t.Run("returns an error for a root that is a file", func(t *testing.T) {
 			t.Parallel()
-			// The loader runs the go command against a directory, so a
-			// tree that is nowhere has no packages to load. Refused here
-			// rather than on the first call.
-			held := filepath.Join(workspace(t, whole()), "store.go")
+			root := filepath.Join(workspace(t, whole()), "store.go")
+			_, err := checker.New(root, golang.Declaration())
+			assert.HasError(t, err, "New over a file")
+		})
 
-			_, err := checker.New(held, golang.Declaration())
-			assert.HasError(t, err, "a file is not a workspace")
+		t.Run("returns an error for a root that does not exist", func(t *testing.T) {
+			t.Parallel()
+			_, err := checker.New(filepath.Join(t.TempDir(), "absent"), golang.Declaration())
+			assert.HasError(t, err, "New over a missing directory")
 		})
 	})
 
 	t.Run("Name", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("is the toolchain rather than the package", func(t *testing.T) {
+		t.Run("returns go/types", func(t *testing.T) {
 			t.Parallel()
-			// Told the Go type checker answered, a caller knows the
-			// answer is as good as the build is and that no server was
-			// involved.
-			assert.Equal(t, serving(t, whole()).Name(), "go/types", "the mechanism, named")
+			assert.Equal(t, serving(t, whole()).Name(), "go/types", "Name")
 		})
 	})
 
 	t.Run("Fidelity", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("is resolved for what it binds", func(t *testing.T) {
+		t.Run("returns resolved for relate", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, whole())
-			assert.Equal(t, e.Fidelity(engine.RoleRelate), trust.Resolved,
-				"it binds names through the same checker the compiler runs")
+			assert.Equal(t, serving(t, whole()).Fidelity(engine.RoleRelate), trust.Resolved, "Fidelity of relate")
 		})
 
-		t.Run("is nothing for a role a parser owns", func(t *testing.T) {
+		t.Run("returns none for outline", func(t *testing.T) {
 			t.Parallel()
-			// Claiming a tier for outlining would win the catalogue's
-			// sort and type-check a module to do what a parser does in a
-			// millisecond.
-			e := serving(t, whole())
-			assert.Equal(t, e.Fidelity(engine.RoleOutline), trust.None,
-				"an undeclared role reaches nothing")
+			assert.Equal(t, serving(t, whole()).Fidelity(engine.RoleOutline), trust.None, "Fidelity of outline")
 		})
 	})
 
 	t.Run("Cost", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("is a session rather than what the first call costs", func(t *testing.T) {
+		t.Run("returns a session for relate", func(t *testing.T) {
 			t.Parallel()
-			// Type-checking a module is seconds and the result is kept.
-			// Priced at the first call, a catalogue would route around
-			// the only engine that can answer at all where no server is
-			// installed.
-			assert.Equal(t, serving(t, whole()).Cost(engine.RoleRelate), engine.CostSession,
-				"dear once and cheap after")
+			assert.Equal(t, serving(t, whole()).Cost(engine.RoleRelate), engine.CostSession, "Cost of relate")
 		})
 	})
 
-	t.Run("the roles it serves", func(t *testing.T) {
+	t.Run("Available", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("are the ones a type checker answers better", func(t *testing.T) {
+		t.Run("returns nil with the go command on PATH", func(t *testing.T) {
+			t.Parallel()
+			assert.NoError(t, serving(t, whole()).Available(t.Context()), "Available")
+		})
+	})
+
+	t.Run("Binding", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("implements the port of each role that it serves", func(t *testing.T) {
 			t.Parallel()
 			var held any = serving(t, whole())
-
-			for _, one := range []struct {
-				role   engine.Role
-				serves bool
-			}{
-				{engine.RoleResolve, true},
-				{engine.RoleRelate, true},
-				{engine.RoleVerify, true},
-				{engine.RoleCheck, true},
-				{engine.RoleOutline, false},
-				{engine.RoleSearch, false},
-				{engine.RolePlan, false},
-				{engine.RoleFormat, false},
-				{engine.RoleIndex, false},
-			} {
-				_, serves := satisfies(held, one.role)
-				assert.Equal(t, serves, one.serves,
-					"the port is present exactly where a type checker beats a parser: "+
-						one.role.String())
+			for _, role := range engine.Roles() {
+				_, serves := ported(held, role)
+				assert.Equal(t, serves, checker.Binding()[role] != trust.None, "the port of "+role.String())
 			}
 		})
 	})
 }
 
-// satisfies reports whether an engine implements the port for a role.
-func satisfies(held any, role engine.Role) (any, bool) {
+// ported returns the port of role that held implements, and reports whether it does.
+func ported(held any, role engine.Role) (any, bool) {
 	switch role {
 	case engine.RoleOutline:
 		one, ok := held.(engine.Outliner)

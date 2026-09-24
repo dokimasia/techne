@@ -11,35 +11,26 @@ import (
 	"go.dokimi.dev/techne/core/sema"
 )
 
-// Two engines answering about one declaration have to be talking about
-// the same thing, so an identity built here has to match one built by a
-// parser or a language server over the same code.
+// holder declares a struct with two fields of type Store.
+const holder = "package p\n\ntype Holder struct {\n\tone Store\n\ttwo Store\n}\n"
+
 func TestSymbol(t *testing.T) {
 	t.Parallel()
 
-	t.Run("a declaration", func(t *testing.T) {
+	t.Run("Resolve", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("keeps the bare name a method is called by", func(t *testing.T) {
+		t.Run("qualifies a method by the type of its receiver", func(t *testing.T) {
 			t.Parallel()
-			// gopls reports (*Store).Total and a parser reports Total.
-			// The identity that has to match both is the one without the
-			// receiver.
-			got, err := serving(t, whole()).Resolve(t.Context(),
-				engine.Request{Scope: "use.go"}, at(t, use, "held.Total"))
-
-			assert.NoError(t, err, "resolving a method succeeds")
-			assert.Equal(t, got.Items[0].Name, "Total", "the name it is called by")
-			assert.Equal(t, got.Items[0].ID, sema.NewID("go", ".", "Total", sema.KindMethod),
-				"and an identity a parser would build the same way")
+			got, err := serving(t, whole()).Resolve(t.Context(), engine.Request{Scope: "use.go"},
+				at(t, use, "held.Total"))
+			assert.NoError(t, err, "Resolve of held.Total")
+			assert.Equal(t, got.Items[0].Name, "Total", "the name of the method")
+			assert.Equal(t, got.Items[0].ID, subject("Store.Total", sema.KindMethod), "the ID of the method")
 		})
 
-		t.Run("is the kind it is underneath rather than how it is written", func(t *testing.T) {
+		t.Run("returns the kind of the type that a declaration names", func(t *testing.T) {
 			t.Parallel()
-			// A named type is whatever it names: a struct, an interface,
-			// or a type of its own. Reported as "type" they would all
-			// collapse onto one kind and a caller narrowing by it would
-			// get every one of them.
 			e := serving(t, whole())
 			for anchor, kind := range map[string]sema.Kind{
 				"type Store":            sema.KindStruct,
@@ -47,78 +38,63 @@ func TestSymbol(t *testing.T) {
 				"func helper":           sema.KindFunction,
 				"func (s *Store) Total": sema.KindMethod,
 			} {
-				got, err := e.Resolve(t.Context(),
-					engine.Request{Scope: "store.go"}, at(t, store, anchor))
-				assert.NoError(t, err, "resolving "+anchor+" succeeds")
-				assert.Length(t, got.Items, 1, "one declaration is denoted at "+anchor)
-				assert.Equal(t, got.Items[0].Kind, kind, "the kind "+anchor+" is underneath")
+				got, err := e.Resolve(t.Context(), engine.Request{Scope: "store.go"}, at(t, store, anchor))
+				assert.NoError(t, err, "Resolve of "+anchor)
+				assert.Length(t, got.Items, 1, "the declarations at "+anchor)
+				assert.Equal(t, got.Items[0].Kind, kind, "the kind at "+anchor)
 			}
 		})
 
-		t.Run("carries the signature the type checker bound", func(t *testing.T) {
+		t.Run("returns the signature that the type checker writes", func(t *testing.T) {
 			t.Parallel()
-			// The rendering that agrees with what the compiler bound,
-			// which one built from the syntax would not for a type
-			// written in another package.
-			got, err := serving(t, whole()).Resolve(t.Context(),
-				engine.Request{Scope: "store.go"}, at(t, store, "func helper"))
-
-			assert.NoError(t, err, "resolving succeeds")
-			assert.Contains(t, got.Items[0].Signature, "func helper() int",
-				"what it takes and what it returns")
+			got, err := serving(t, whole()).Resolve(t.Context(), engine.Request{Scope: "store.go"},
+				at(t, store, "func helper"))
+			assert.NoError(t, err, "Resolve of helper")
+			assert.Equal(t, got.Items[0].Signature, "func helper() int", "the signature of helper")
 		})
 
-		t.Run("is visible or not as the language decides", func(t *testing.T) {
+		t.Run("returns exported for a name with a capital", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, whole())
-			exported, err := e.Resolve(t.Context(),
-				engine.Request{Scope: "store.go"}, at(t, store, "type Store"))
-			assert.NoError(t, err, "resolving succeeds")
-			unexported, err := e.Resolve(t.Context(),
-				engine.Request{Scope: "store.go"}, at(t, store, "func helper"))
-			assert.NoError(t, err, "resolving succeeds")
+			got, err := serving(t, whole()).Resolve(t.Context(), engine.Request{Scope: "store.go"},
+				at(t, store, "type Store"))
+			assert.NoError(t, err, "Resolve of Store")
+			assert.Equal(t, got.Items[0].Visibility, sema.Exported, "the visibility of Store")
+		})
 
-			assert.Equal(t, exported.Items[0].Visibility, sema.Exported,
-				"a leading capital is what Go spells exported")
-			assert.Equal(t, unexported.Items[0].Visibility, sema.Unexported,
-				"and the absence of one is what it spells unexported")
+		t.Run("returns unexported for a name without a capital", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, whole()).Resolve(t.Context(), engine.Request{Scope: "store.go"},
+				at(t, store, "func helper"))
+			assert.NoError(t, err, "Resolve of helper")
+			assert.Equal(t, got.Items[0].Visibility, sema.Unexported, "the visibility of helper")
 		})
 	})
 
-	t.Run("the declaration a use is written inside", func(t *testing.T) {
+	t.Run("Relate", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("is the field where the use is in one", func(t *testing.T) {
+		t.Run("qualifies a field by the type that declares it", func(t *testing.T) {
 			t.Parallel()
-			// Told only the type, a caller reading twenty uses of it sees
-			// several collapse onto the same name and cannot tell which
-			// member each was. Compared against gopls over one module,
-			// this was the only thing the two answers disagreed about.
-			held := whole()
-			held["fields.go"] = "package p\n\ntype Holder struct {\n\tone Store\n\ttwo Store\n}\n"
-			got, err := serving(t, held).Relate(t.Context(),
-				engine.Request{Scope: "fields.go"},
-				sema.NewID("go", ".", "Holder", sema.KindStruct), sema.ReferencedBy)
-
-			assert.NoError(t, err, "relating succeeds")
-			assert.Empty(t, got.Items, "nothing uses Holder")
-
-			uses, err := serving(t, held).Relate(t.Context(), engine.Request{Scope: "."},
-				sema.NewID("go", ".", "Store", sema.KindStruct), sema.ReferencedBy)
-			assert.NoError(t, err, "relating succeeds")
-			assert.Contains(t, edges(uses.Items), "one", "the field the use is written in")
-			assert.Contains(t, edges(uses.Items), "two", "and the other one, told apart")
+			files := whole()
+			files["fields.go"] = holder
+			got, err := serving(t, files).Relate(t.Context(), engine.Request{Scope: "."},
+				subject("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of the uses of Store")
+			var fields []string
+			for _, edge := range got.Items {
+				if edge.To.Kind == sema.KindField {
+					fields = append(fields, edge.To.ID.Name())
+				}
+			}
+			assert.Equal(t, fields, []string{"Holder.one", "Holder.two"}, "the qualified names of the fields")
 		})
 
-		t.Run("is the function where the use is in its body", func(t *testing.T) {
+		t.Run("returns the function that contains a use in its body", func(t *testing.T) {
 			t.Parallel()
-			// A local variable is not somewhere a caller navigates to.
 			got, err := serving(t, whole()).Relate(t.Context(), engine.Request{Scope: "."},
-				sema.NewID("go", ".", "Store", sema.KindStruct), sema.ReferencedBy)
-
-			assert.NoError(t, err, "relating succeeds")
-			assert.Contains(t, edges(got.Items), "Use",
-				"the function holding the local, rather than the local")
+				subject("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of the uses of Store")
+			assert.Contains(t, edges(got.Items), "Use", "the function of the use in use.go")
 		})
 	})
 }

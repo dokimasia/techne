@@ -4,6 +4,9 @@
 package checker_test
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -13,138 +16,210 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
+// importing are the files of a package p with Target and a package q that calls it.
+func importing() map[string]string {
+	return map[string]string{
+		"p/p.go": "package p\n\nfunc Target() int { return 1 }\n",
+		"q/q.go": "package q\n\nimport \"example.com/p/p\"\n\nvar V = p.Target()\n",
+	}
+}
+
 func TestVerify(t *testing.T) {
 	t.Parallel()
 
 	t.Run("Verify", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("reports what the compiler objected to", func(t *testing.T) {
+		t.Run("returns the errors of the type checker", func(t *testing.T) {
 			t.Parallel()
-			held := whole()
-			held["broken.go"] = broken
-			got, err := serving(t, held).Verify(t.Context(), engine.Request{Scope: "."}, nil)
-
-			assert.NoError(t, err, "a workspace that does not compile is an answer, not a fault")
-			assert.NotEmpty(t, got.Items, "the type checker objected")
-			assert.Equal(t, got.Items[0].Diagnostic.Severity, diag.SeverityError,
-				"everything it reports stops the build")
-			assert.Equal(t, string(got.Items[0].Diagnostic.Span.Path), "broken.go",
-				"and names the file it is in")
+			files := whole()
+			files["broken.go"] = broken
+			got, err := serving(t, files).Verify(t.Context(), engine.Request{Scope: "."}, nil)
+			assert.NoError(t, err, "Verify of a module with an error")
+			assert.Length(t, got.Items, 1, "the errors of the module")
+			assert.Equal(t, got.Items[0].Diagnostic.Severity, diag.SeverityError, "the severity of the error")
+			assert.Equal(t, got.Items[0].Diagnostic.Span.Path, source.Path("broken.go"), "the file of the error")
 		})
 
-		t.Run("finds nothing wrong with a workspace that builds", func(t *testing.T) {
+		t.Run("returns the offset and the source line of an error", func(t *testing.T) {
+			t.Parallel()
+			files := whole()
+			files["broken.go"] = broken
+			got, err := serving(t, files).Verify(t.Context(), engine.Request{Scope: "."}, nil)
+			assert.NoError(t, err, "Verify of a module with an error")
+			found := got.Items[0].Diagnostic
+			line := strings.Index(broken, "\treturn held.missing")
+			assert.Equal(t, found.Span.Start.Line, 4, "the line of the error")
+			assert.Equal(t, found.Span.Start.Offset, line+found.Span.Start.Column, "the offset of the error")
+			assert.Equal(t, found.Snippet, "return held.missing", "the source line of the error")
+		})
+
+		t.Run("returns the file of an error in a directory whose name contains a colon", func(t *testing.T) {
+			t.Parallel()
+			root := filepath.Join(t.TempDir(), "with:colon")
+			assert.NoError(t, os.Mkdir(root, 0o755), "Mkdir with:colon")
+			for name, body := range map[string]string{"go.mod": module, "store.go": store, "broken.go": broken} {
+				assert.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(body), 0o644), "WriteFile "+name)
+			}
+			got, err := over(t, root).Verify(t.Context(), engine.Request{Scope: "."}, nil)
+			assert.NoError(t, err, "Verify under with:colon")
+			assert.Length(t, got.Items, 1, "the errors under with:colon")
+			assert.Equal(t, got.Items[0].Diagnostic.Span.Path, source.Path("broken.go"), "the file of the error")
+			assert.Equal(t, got.Items[0].Diagnostic.Span.Start.Line, 4, "the line of the error")
+		})
+
+		t.Run("returns no error for a module that compiles", func(t *testing.T) {
 			t.Parallel()
 			got, err := serving(t, whole()).Verify(t.Context(), engine.Request{Scope: "."}, nil)
-
-			assert.NoError(t, err, "verifying succeeds")
-			assert.Empty(t, got.Items, "nothing is wrong with it")
-			assert.Equal(t, got.Completeness, trust.ScopeTotal, "over the whole module")
+			assert.NoError(t, err, "Verify of a module that compiles")
+			assert.Empty(t, got.Items, "the errors of the module")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the answer")
 		})
 
-		t.Run("narrows to the scope the request named", func(t *testing.T) {
+		t.Run("returns the errors of the scope of the request", func(t *testing.T) {
 			t.Parallel()
-			// A fault somewhere else is a true report of a question
-			// nobody asked.
-			held := whole()
-			held["broken.go"] = broken
-			got, err := serving(t, held).Verify(t.Context(),
-				engine.Request{Scope: "store.go"}, nil)
-
-			assert.NoError(t, err, "verifying one file succeeds")
-			assert.Empty(t, got.Items, "and the fault is not in it")
+			files := whole()
+			files["broken.go"] = broken
+			got, err := serving(t, files).Verify(t.Context(), engine.Request{Scope: "store.go"}, nil)
+			assert.NoError(t, err, "Verify of store.go")
+			assert.Empty(t, got.Items, "the errors of store.go")
 		})
 
-		t.Run("says it read nothing where the scope holds no Go", func(t *testing.T) {
+		t.Run("leaves out the errors of a test file without tests", func(t *testing.T) {
 			t.Parallel()
-			held := whole()
-			held["docs/notes.md"] = "# notes\n"
-			got, err := serving(t, held).Verify(t.Context(), engine.Request{Scope: "docs"}, nil)
-
-			assert.NoError(t, err, "a scope with nothing to read is not a fault")
-			assert.True(t, got.Skipped, "and the engine says it read nothing")
+			files := whole()
+			files["bad_test.go"] = "package p\n\nvar T int = \"t\"\n"
+			got, err := serving(t, files).Verify(t.Context(), engine.Request{Scope: "."}, nil)
+			assert.NoError(t, err, "Verify without tests")
+			assert.Empty(t, got.Items, "the errors without tests")
 		})
 
-		t.Run("says a suite it was named was answered from the one analysis", func(t *testing.T) {
+		t.Run("returns the errors of a test file with tests", func(t *testing.T) {
 			t.Parallel()
-			// A type checker has one analysis and no linters to choose
-			// between. Answering silently would read as having run them.
-			got, err := serving(t, whole()).Verify(t.Context(),
-				engine.Request{Scope: "."}, []string{"vet"})
+			files := whole()
+			files["bad_test.go"] = "package p\n\nvar T int = \"t\"\n"
+			got, err := serving(t, files).Verify(t.Context(), engine.Request{Scope: ".", Tests: true}, nil)
+			assert.NoError(t, err, "Verify with tests")
+			assert.Length(t, got.Items, 1, "the errors with tests")
+			assert.Equal(t, got.Items[0].Diagnostic.Span.Path, source.Path("bad_test.go"), "the file of the error")
+		})
 
-			assert.NoError(t, err, "naming a suite is not a fault")
-			assert.True(t, carries(got.Caveats, trust.CaveatUnsupported), "and the caveat says so")
+		t.Run("returns a skipped result for a scope without a Go file", func(t *testing.T) {
+			t.Parallel()
+			files := whole()
+			files["docs/notes.md"] = "# notes\n"
+			got, err := serving(t, files).Verify(t.Context(), engine.Request{Scope: "docs"}, nil)
+			assert.NoError(t, err, "Verify of a scope without Go files")
+			assert.True(t, got.Skipped, "the answer is skipped")
+		})
+
+		t.Run("returns a caveat that names the suites that it does not run", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, whole()).Verify(t.Context(), engine.Request{Scope: "."}, []string{"vet"})
+			assert.NoError(t, err, "Verify with the suite vet")
+			assert.Equal(t, got.Caveats, []trust.Caveat{{
+				Code: trust.CaveatUnsupported,
+				Note: "the type checker runs its own analysis and none of these suites: vet",
+			}}, "the caveats of the answer")
 		})
 	})
-}
-
-func TestCheck(t *testing.T) {
-	t.Parallel()
 
 	t.Run("Check", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("judges content the workspace does not hold", func(t *testing.T) {
+		t.Run("returns the errors of content that is not on disk", func(t *testing.T) {
 			t.Parallel()
-			// A gate runs before anything is written, so what it judges
-			// exists only in memory. The loader reads the named paths
-			// from there and everything else from disk, which is the
-			// workspace as the change would leave it.
-			got, err := serving(t, whole()).Check(t.Context(),
-				map[source.Path][]byte{"use.go": []byte(broken)})
-
-			assert.NoError(t, err, "checking content that is not on disk succeeds")
-			assert.NotEmpty(t, got.Items, "the type checker objected to what it was shown")
+			got, err := serving(t, whole()).Check(t.Context(), map[source.Path][]byte{"use.go": []byte(broken)})
+			assert.NoError(t, err, "Check of broken content")
+			assert.NotEmpty(t, got.Items, "the errors of the content")
 		})
 
-		t.Run("finds nothing wrong with content that compiles", func(t *testing.T) {
+		t.Run("returns no error for content that compiles", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, whole()).Check(t.Context(),
-				map[source.Path][]byte{"use.go": []byte(use)})
-
-			assert.NoError(t, err, "checking succeeds")
-			assert.Empty(t, got.Items, "nothing is wrong with it")
+			got, err := serving(t, whole()).Check(t.Context(), map[source.Path][]byte{"use.go": []byte(use + "\n")})
+			assert.NoError(t, err, "Check of content that compiles")
+			assert.Empty(t, got.Items, "the errors of the content")
 		})
 
-		t.Run("catches a change that breaks a file it does not name", func(t *testing.T) {
+		t.Run("returns an error in a file of the package that the change leaves out", func(t *testing.T) {
 			t.Parallel()
-			// The failure a gate exists for. A rename that leaves one
-			// caller behind breaks the caller's file rather than the one
-			// that was edited, so every package is judged and not only
-			// what was handed over.
 			renamed := "package p\n\ntype Vault struct{ size int }\n\nfunc helper() int { return 1 }\n"
-			got, err := serving(t, whole()).Check(t.Context(),
-				map[source.Path][]byte{"store.go": []byte(renamed)})
-
-			assert.NoError(t, err, "checking succeeds")
-			assert.NotEmpty(t, got.Items, "use.go no longer compiles, and use.go was not named")
-			assert.Equal(t, string(got.Items[0].Diagnostic.Span.Path), "use.go",
-				"which is where the fault is")
+			got, err := serving(t, whole()).Check(t.Context(), map[source.Path][]byte{"store.go": []byte(renamed)})
+			assert.NoError(t, err, "Check of a rename of Store")
+			assert.NotEmpty(t, got.Items, "the errors of the rename")
+			assert.Equal(t, got.Items[0].Diagnostic.Span.Path, source.Path("use.go"), "the file of the first error")
 		})
 
-		t.Run("leaves alone what this language does not claim", func(t *testing.T) {
+		t.Run("returns an error in a package that imports a changed package", func(t *testing.T) {
 			t.Parallel()
-			// One change can touch several languages and each engine
-			// judges its own.
-			_, err := serving(t, whole()).Check(t.Context(),
-				map[source.Path][]byte{"notes.md": []byte("# notes\n")})
-
-			assert.ErrorIs(t, err, engine.ErrDecline, "so another engine gets a turn")
+			changed := "package p\n\nfunc Target(n int) int { return n }\n"
+			got, err := serving(t, importing()).Check(t.Context(), map[source.Path][]byte{"p/p.go": []byte(changed)})
+			assert.NoError(t, err, "Check of a new parameter of Target")
+			assert.Length(t, got.Items, 1, "the errors of the change")
+			assert.Equal(t, got.Items[0].Diagnostic.Span.Path, source.Path("q/q.go"), "the file of the error")
 		})
 
-		t.Run("keeps nothing it type-checked", func(t *testing.T) {
+		t.Run("returns no error for a deleted file that nothing uses", func(t *testing.T) {
 			t.Parallel()
-			// The view a gate builds describes a workspace that does not
-			// exist. Cached, the next question would answer about a
-			// change nobody applied.
+			files := whole()
+			files["extra.go"] = "package p\n\nfunc Extra() int { return 1 }\n"
+			got, err := serving(t, files).Check(t.Context(), map[source.Path][]byte{"extra.go": nil})
+			assert.NoError(t, err, "Check of the deletion of extra.go")
+			assert.Empty(t, got.Items, "the errors of the deletion")
+		})
+
+		t.Run("returns an error for a deleted file that another file uses", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, whole()).Check(t.Context(), map[source.Path][]byte{"store.go": nil})
+			assert.NoError(t, err, "Check of the deletion of store.go")
+			assert.NotEmpty(t, got.Items, "the errors of the deletion")
+			assert.Equal(t, got.Items[0].Diagnostic.Span.Path, source.Path("use.go"), "the file of the first error")
+		})
+
+		t.Run("returns the errors of the cached view for content equal to the disk", func(t *testing.T) {
+			t.Parallel()
+			root := workspace(t, whole())
+			e := over(t, root)
+			_, err := e.Verify(t.Context(), engine.Request{Scope: "."}, nil)
+			assert.NoError(t, err, "Verify before the rewrite")
+
+			full := filepath.Join(root, "use.go")
+			info, err := os.Stat(full)
+			assert.NoError(t, err, "Stat use.go")
+			stale := strings.Replace(use, "Total", "Tota1", 1)
+			assert.NoError(t, os.WriteFile(full, []byte(stale), 0o644), "WriteFile use.go")
+			assert.NoError(t, os.Chtimes(full, info.ModTime(), info.ModTime()), "Chtimes use.go")
+
+			got, err := e.Check(t.Context(), map[source.Path][]byte{"use.go": []byte(stale)})
+			assert.NoError(t, err, "Check of the content on disk")
+			assert.Empty(t, got.Items, "the errors of the cached view")
+			fresh, err := over(t, root).Check(t.Context(), map[source.Path][]byte{"use.go": []byte(stale)})
+			assert.NoError(t, err, "Check of a new engine")
+			assert.NotEmpty(t, fresh.Items, "the errors of the content on disk")
+		})
+
+		t.Run("keeps the view of the disk after a check", func(t *testing.T) {
+			t.Parallel()
 			e := serving(t, whole())
-			_, err := e.Check(t.Context(),
-				map[source.Path][]byte{"use.go": []byte(broken)})
-			assert.NoError(t, err, "checking succeeds")
-
+			_, err := e.Check(t.Context(), map[source.Path][]byte{"use.go": []byte(broken)})
+			assert.NoError(t, err, "Check of broken content")
 			got, err := e.Verify(t.Context(), engine.Request{Scope: "."}, nil)
-			assert.NoError(t, err, "verifying the workspace succeeds")
-			assert.Empty(t, got.Items, "and the workspace on disk still compiles")
+			assert.NoError(t, err, "Verify after the check")
+			assert.Empty(t, got.Items, "the errors of the disk")
+		})
+
+		t.Run("declines a change without a Go file", func(t *testing.T) {
+			t.Parallel()
+			_, err := serving(t, whole()).Check(t.Context(), map[source.Path][]byte{"notes.md": []byte("# notes\n")})
+			assert.ErrorIs(t, err, engine.ErrDecline, "Check of a Markdown file")
+		})
+
+		t.Run("declines a file that no package compiles", func(t *testing.T) {
+			t.Parallel()
+			excluded := "//go:build ignore\n\npackage p\n\nvar X int = \"x\"\n"
+			_, err := serving(t, whole()).Check(t.Context(), map[source.Path][]byte{"excluded.go": []byte(excluded)})
+			assert.ErrorIs(t, err, engine.ErrDecline, "Check of a file that the build excludes")
+			assert.Contains(t, err.Error(), "excluded.go", "the file in the reason")
 		})
 	})
 }
