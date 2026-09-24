@@ -4,315 +4,209 @@
 package lsp_test
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
+	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
-	"go.dokimi.dev/techne/lang/lsp"
+	"go.dokimi.dev/techne/lang"
+	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
-
-// subject is the identity of one declaration in [content], read out of
-// an outline rather than built here: an identity is a language, a unit,
-// a name and a kind, and writing one down by hand tests this package
-// against the same memory that wrote it.
-func subject(t *testing.T, e *lsp.Engine, name string) sema.ID {
-	t.Helper()
-	got, err := e.Outline(t.Context(), engine.Request{Scope: "a.fake"})
-	assert.NoError(t, err, "the case can find what it asks about")
-	one, found := named(got.Items, name)
-	assert.True(t, found, "the declaration the case is about is there")
-	return one.ID
-}
 
 func TestRelate(t *testing.T) {
 	t.Parallel()
 
+	request := engine.Request{Scope: "a.fake"}
+
 	t.Run("Relate", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("names the declaration each use is written inside", func(t *testing.T) {
+		t.Run("relates each use to the declaration that contains it", func(t *testing.T) {
 			t.Parallel()
-			// A location is a file and a range. What a caller reading
-			// who-uses-this wants is which declaration holds the use, and
-			// working that out is this engine's job rather than the
-			// caller's.
-			e := serving(t, modeDefault, map[string]string{"a.fake": content})
-			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.ReferencedBy)
-
-			assert.NoError(t, err, "asking who refers to a declaration succeeds")
-			assert.Equal(t, edges(got.Items), []string{"Get", "After"},
-				"one edge per use, each naming what holds it, in file order")
+			got, err := serving(t, lsptest.Default, sample()).Relate(t.Context(), request,
+				declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of the uses of Store")
+			assert.Equal(t, edges(got.Items), []string{"Get", "After"}, "the declarations that use Store")
 		})
 
-		t.Run("carries the line each use was written on", func(t *testing.T) {
+		t.Run("returns the source line of each use", func(t *testing.T) {
 			t.Parallel()
-			// A caller asking who uses this wants to read the use.
-			// Fetching each one costs a turn per site.
-			e := serving(t, modeDefault, map[string]string{"a.fake": content})
-			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.ReferencedBy)
-
-			assert.NoError(t, err, "relating succeeds")
-			assert.HasPrefix(t, got.Items[0].Via, "func (s *Store) Get()",
-				"the source line, not just its coordinates")
+			got, err := serving(t, lsptest.Default, sample()).Relate(t.Context(), request,
+				declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of the uses of Store")
+			assert.Equal(t, got.Items[0].Via, "func (s *Store) Get() int { return s.size }",
+				"the line of the first use")
 		})
 
-		t.Run("answers calls from the hierarchy rather than from uses", func(t *testing.T) {
+		t.Run("cuts the source line of a use on a long line", func(t *testing.T) {
 			t.Parallel()
-			// A name written in a type is a reference and not a call, so
-			// answering calls out of the reference list overstates them.
-			e := serving(t, modeDefault, map[string]string{"a.fake": content})
-			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Get"), sema.CalledBy)
-
-			assert.NoError(t, err, "asking who calls a method succeeds")
-			assert.Equal(t, edges(got.Items), []string{"After"}, "the caller the hierarchy named")
+			got, err := serving(t, lsptest.Minified, map[string]string{"a.fake": lsptest.Bundle(100)}).
+				Relate(t.Context(), request, declared("F0", sema.KindFunction), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of the uses of F0 in a bundle")
+			assert.Equal(t, edges(got.Items), []string{"After"}, "the declarations that use F0")
+			via := got.Items[0].Via
+			assert.True(t, strings.HasPrefix(via, "…") && strings.HasSuffix(via, "return F0() }"),
+				"the line of the use of F0 ends at the use: "+via)
+			assert.True(t, len(via) <= lang.LineLimit+len("…"),
+				"the line of the use of F0 is at most lang.LineLimit bytes and an ellipsis: "+via)
 		})
 
-		t.Run("answers what a declaration calls", func(t *testing.T) {
+		t.Run("returns the relations up to the limit of the request", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, modeDefault, map[string]string{"a.fake": content})
-			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Get"), sema.Calls)
-
-			assert.NoError(t, err, "asking what a method calls succeeds")
-			assert.Equal(t, edges(got.Items), []string{"Store"}, "what the hierarchy named")
-			assert.Empty(t, string(got.Items[0].At.Path),
-				"and no site, because the outgoing ranges are inside the caller "+
-					"rather than at the declaration named")
+			got, err := serving(t, lsptest.Default, sample()).Relate(t.Context(),
+				engine.Request{Scope: "a.fake", Limit: 1}, declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of the uses of Store with a limit of 1")
+			assert.Equal(t, edges(got.Items), []string{"Get"}, "the declarations that use Store")
 		})
 
-		t.Run("answers what satisfies a type", func(t *testing.T) {
+		t.Run("counts the relations past the limit in a caveat", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, modeDefault, map[string]string{"a.fake": content})
-			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.ImplementedBy)
-
-			assert.NoError(t, err, "asking what implements a type succeeds")
-			assert.Equal(t, edges(got.Items), []string{"Store"},
-				"what the one implementation request named")
+			got, err := serving(t, lsptest.Default, sample()).Relate(t.Context(),
+				engine.Request{Scope: "a.fake", Limit: 1}, declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of the uses of Store with a limit of 1")
+			var notes []string
+			for _, one := range got.Caveats {
+				if one.Code == trust.CaveatTruncated {
+					notes = append(notes, one.Note)
+				}
+			}
+			assert.Equal(t, notes, []string{"1 of 2 relations returned"}, "the notes of the truncation caveats")
 		})
 
-		t.Run("answers what a type incorporates", func(t *testing.T) {
+		t.Run("reads no file of a relation past the limit", func(t *testing.T) {
 			t.Parallel()
-			// Every language spells it differently — an anonymous field
-			// in Go, extends in Java, with in Scala, include in Ruby —
-			// and the type hierarchy is the one request that answers all
-			// of them.
-			e := serving(t, modeDefault, map[string]string{"a.fake": content})
-			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.Embeds)
-
-			assert.NoError(t, err, "asking what a type takes from succeeds")
-			assert.Equal(t, edges(got.Items), []string{"Store"},
-				"the supertype the hierarchy named")
+			log := filepath.Join(t.TempDir(), "requests")
+			e := serving(t, lsptest.Minified, map[string]string{
+				"a.fake": lsptest.Bundle(3), "b.fake": "package a\nfunc Caller() int { return F0() }\n",
+			}, lsptest.RecordRequests(log))
+			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake", Limit: 1},
+				declared("F0", sema.KindFunction), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of the uses of F0 with a limit of 1")
+			assert.Equal(t, edges(got.Items), []string{"After"}, "the declarations that use F0")
+			requests, err := os.ReadFile(log)
+			assert.NoError(t, err, "the log of the requests")
+			assert.Equal(t, strings.Count(string(requests), "textDocument/documentSymbol\n"), 1,
+				"the requests for symbols, of a.fake only")
 		})
 
-		t.Run("answers what incorporates a type", func(t *testing.T) {
+		t.Run("returns the callers from the call hierarchy", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, modeDefault, map[string]string{"a.fake": content})
-			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.EmbeddedBy)
-
-			assert.NoError(t, err, "asking what takes from a type succeeds")
-			assert.Equal(t, edges(got.Items), []string{"After"},
-				"the subtype the hierarchy named")
+			got, err := serving(t, lsptest.Default, sample()).Relate(t.Context(), request,
+				declared("Store.Get", sema.KindMethod), sema.CalledBy)
+			assert.NoError(t, err, "Relate of the callers of Get")
+			assert.Equal(t, edges(got.Items), []string{"After"}, "the callers of Get")
 		})
 
-		t.Run("names a site no declaration encloses by its file", func(t *testing.T) {
+		t.Run("returns the call site of an outgoing call", func(t *testing.T) {
 			t.Parallel()
-			// An import, a package-level initialiser and an impl block a
-			// server does not report as a symbol all land outside every
-			// declaration an outline names. The kind for a declaration
-			// nobody classified is not one an answer may carry, and an
-			// item holding it does not validate against the shape the
-			// tool declares — a fuzzing run over a real workspace found
-			// exactly that.
-			e := serving(t, modeUnenclosed, map[string]string{"a.fake": content})
-			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.ReferencedBy)
-
-			assert.NoError(t, err, "a site outside every declaration is still a site")
-			assert.Equal(t, got.Items[0].To.Kind, sema.KindFile, "named by the file that holds it")
-			assert.True(t, slices.Contains(sema.Kinds(), got.Items[0].To.Kind),
-				"which is a kind an answer may carry")
+			got, err := serving(t, lsptest.Default, sample()).Relate(t.Context(), request,
+				declared("After", sema.KindFunction), sema.Calls)
+			assert.NoError(t, err, "Relate of the calls of After")
+			assert.Equal(t, edges(got.Items), []string{"Get"}, "the declarations that After calls")
+			assert.Equal(t, got.Items[0].At.Path, source.Path("a.fake"), "the file of the call site")
+			assert.Equal(t, got.Items[0].At.Start.Line, 8, "the line of the call site")
+			assert.Equal(t, got.Items[0].At.Start.Column, 37, "the column of the call site")
+			assert.Equal(t, got.Items[0].Via, "func After() int { return (&Store{}).Get() }",
+				"the line of the call site")
 		})
 
-		t.Run("declines the hierarchy where the server has none", func(t *testing.T) {
+		t.Run("returns the call site in the file of the caller", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, modeThin, map[string]string{"a.fake": content})
-			_, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.Embeds)
-
-			assert.ErrorIs(t, err, engine.ErrDecline,
-				"a request the server did not offer is passed on, not failed")
+			far := filepath.Join(lsptest.Workspace(t, map[string]string{"far.fake": lsptest.Content}), "far.fake")
+			got, err := serving(t, lsptest.Default, sample(), lsptest.Outside(far)).Relate(t.Context(), request,
+				declared("After", sema.KindFunction), sema.Calls)
+			assert.NoError(t, err, "Relate of the calls of After into "+far)
+			assert.Equal(t, got.Items[0].At.Path, source.Path("a.fake"), "the file of the call site")
+			assert.Equal(t, got.Items[0].At.Start.Line, 8, "the line of the call site")
 		})
 
-		t.Run("declines a direction no request answers", func(t *testing.T) {
+		t.Run("returns the implementations of a type", func(t *testing.T) {
 			t.Parallel()
-			// Answering none would be a claim that there are none, and a
-			// language that has imports would be reported as having no
-			// imports rather than as not having been asked.
-			// Imports are written in the source rather than resolved
-			// from it, so the parser reads them and this declines. A
-			// caller asking gets the parser's answer rather than none.
-			e := serving(t, modeDefault, map[string]string{"a.fake": content})
-			_, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.Imports)
-
-			assert.ErrorIs(t, err, engine.ErrDecline,
-				"a direction with nothing behind it declines, so another engine gets a turn")
+			got, err := serving(t, lsptest.Default, sample()).Relate(t.Context(), request,
+				declared("Store", sema.KindStruct), sema.ImplementedBy)
+			assert.NoError(t, err, "Relate of the implementations of Store")
+			assert.Equal(t, edges(got.Items), []string{"Store"}, "the implementations of Store")
 		})
 
-		t.Run("reads a use in a file outside the workspace", func(t *testing.T) {
+		t.Run("returns the supertypes of a type", func(t *testing.T) {
 			t.Parallel()
-			// A server indexes what its own configuration covers, which
-			// for a workspace of several modules is wider than the root
-			// techne was pointed at. Such a file is named absolutely, and
-			// joining that onto the root builds a name carrying the root
-			// twice: an existing file reported as missing.
-			e := reaching(t, map[string]string{"a.fake": content})
-			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.ReferencedBy)
-
-			assert.NoError(t, err, "a use outside the workspace is still read")
-			assert.Equal(t, edges(got.Items), []string{"Get", "After"},
-				"and named to the declaration holding it, as any other use is")
+			got, err := serving(t, lsptest.Default, sample()).Relate(t.Context(), request,
+				declared("Store", sema.KindStruct), sema.Embeds)
+			assert.NoError(t, err, "Relate of the supertypes of Store")
+			assert.Equal(t, edges(got.Items), []string{"Store"}, "the supertypes of Store")
 		})
 
-		t.Run("declines where the server says the question does not apply", func(t *testing.T) {
+		t.Run("returns the subtypes of a type", func(t *testing.T) {
 			t.Parallel()
-			// A server refuses the call hierarchy for a declaration
-			// nothing can call. Answering none would claim nothing calls
-			// it; failing would lose the answers another engine may have.
-			e := serving(t, modeUncallable, map[string]string{"a.fake": content})
-			_, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.CalledBy)
-
-			assert.ErrorIs(t, err, engine.ErrDecline, "the question is passed on, not answered")
-			assert.Contains(t, err.Error(), "not a function", "carrying the server's own reason")
+			got, err := serving(t, lsptest.Default, sample()).Relate(t.Context(), request,
+				declared("Store", sema.KindStruct), sema.EmbeddedBy)
+			assert.NoError(t, err, "Relate of the subtypes of Store")
+			assert.Equal(t, edges(got.Items), []string{"After"}, "the subtypes of Store")
 		})
 
-		t.Run("says it read nothing where the scope holds none of its files", func(t *testing.T) {
+		t.Run("relates a use outside every declaration to its file", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, modeDefault, map[string]string{"notes.md": "# notes\n"}).
-				Relate(t.Context(), engine.Request{Scope: "."}, sema.ID("fake::Store"),
-					sema.ReferencedBy)
-
-			assert.NoError(t, err, "a scope with nothing to read is not a fault")
-			assert.True(t, got.Skipped, "and the engine says it read nothing")
-		})
-	})
-}
-
-// edges is what an answer pointed at, in order.
-func edges(held []sema.Relation) []string {
-	out := make([]string, 0, len(held))
-	for _, one := range held {
-		out = append(out, one.To.Name)
-	}
-	return out
-}
-
-// A server that has not analysed a file resolves a definition inside it
-// from a syntactic index and answers every other question with nothing.
-// metals before it has imported a build does exactly that, reporting no
-// implementation of a trait a class two lines below extends — over
-// resolved binding and total coverage, which is the claim a caller acts
-// on by deleting the trait.
-//
-// What tells the two apart is whether the server produced a view of the
-// file at all, which is what producing diagnostics means.
-// A type checker over a program with a fault in it binds the names it
-// can and guesses at the rest. Every answer it gives is worth what a
-// half-bound program is worth, which is a property of the answer rather
-// than of the engine.
-func TestRelateOverABrokenBuild(t *testing.T) {
-	t.Parallel()
-
-	t.Run("an answer from a server that reported the workspace does not compile", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("is worth less than the engine usually is", func(t *testing.T) {
-			t.Parallel()
-			e := serving(t, modePushes, map[string]string{"a.fake": content})
-			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.ReferencedBy)
-
-			assert.NoError(t, err, "a broken workspace is still answered about")
-			assert.Equal(t, got.Lowered, trust.Indexed,
-				"names are bound where it could bind them and matched where it could not")
-			assert.True(t, carries(got.Caveats, trust.CaveatBuildBroken),
-				"and the caveat says why")
+			got, err := serving(t, lsptest.Unenclosed, sample()).Relate(t.Context(), request,
+				declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of a use on line 0")
+			assert.Equal(t, got.Items[0].To.Kind, sema.KindFile, "the kind of the far end")
+			assert.True(t, slices.Contains(sema.Kinds(), got.Items[0].To.Kind), "sema.Kinds contains the kind")
 		})
 
-		t.Run("is worth the engine's own tier where it compiles", func(t *testing.T) {
+		t.Run("relates a use in a file outside the workspace", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, modeDefault, map[string]string{"a.fake": content})
-			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.ReferencedBy)
-
-			assert.NoError(t, err, "relating succeeds")
-			assert.Equal(t, got.Lowered, trust.None, "nothing lowers a whole workspace's answer")
-			assert.False(t, carries(got.Caveats, trust.CaveatBuildBroken),
-				"and nothing says the build is broken")
-		})
-	})
-}
-
-func TestRelateEvidence(t *testing.T) {
-	t.Parallel()
-
-	t.Run("an empty answer from a server with no view of the file", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("supports no claim that there are none", func(t *testing.T) {
-			t.Parallel()
-			e := serving(t, modeUngated, map[string]string{"a.fake": content})
-			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.Implements)
-
-			assert.NoError(t, err, "a server with no view is not a fault")
-			assert.Empty(t, got.Items, "and it had nothing to say")
-			assert.Equal(t, got.Completeness, trust.ScopePartial,
-				"which is not the same as there being nothing to find")
-			assert.False(t, trust.SupportsNegativeClaim(trust.Resolved, got.Completeness),
-				"so nothing may be read out of its silence")
+			far := filepath.Join(lsptest.Workspace(t, map[string]string{"far.fake": lsptest.Content}), "far.fake")
+			got, err := serving(t, lsptest.Default, sample(), lsptest.Outside(far)).Relate(t.Context(), request,
+				declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of uses in "+far)
+			assert.Equal(t, edges(got.Items), []string{"Get", "After"}, "the declarations that use Store")
 		})
 
-		t.Run("says the server was answering about nothing", func(t *testing.T) {
+		t.Run("declines imports", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, modeUngated, map[string]string{"a.fake": content})
-			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.Implements)
-
-			assert.NoError(t, err, "relating succeeds")
-			assert.True(t, carries(got.Caveats, trust.CaveatIndexWarming),
-				"the caveat names why the answer is worth nothing")
+			_, err := serving(t, lsptest.Default, sample()).Relate(t.Context(), request,
+				declared("Store", sema.KindStruct), sema.Imports)
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Relate")
 		})
-	})
 
-	t.Run("an empty answer from a server that did analyse the file", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("means there are none", func(t *testing.T) {
+		t.Run("declines a declaration the server cannot call", func(t *testing.T) {
 			t.Parallel()
-			// The other half. A gate that doubted every empty answer
-			// would never let a caller conclude anything, which is the
-			// same uselessness from the other end. A server that
-			// publishes a moment after being asked counts as having
-			// analysed the file, because that is what publishing is.
-			e := serving(t, modePushes, map[string]string{"a.fake": content})
-			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.Implements)
+			_, err := serving(t, lsptest.Uncallable, sample()).Relate(t.Context(), request,
+				declared("Store", sema.KindStruct), sema.CalledBy)
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Relate")
+			assert.Contains(t, err.Error(), "not a function", "the error of Relate")
+		})
 
-			assert.NoError(t, err, "relating succeeds")
-			assert.Equal(t, got.Completeness, trust.ScopeTotal,
-				"a server that analysed the file and found none has found none")
+		t.Run("declines a question that the server does not answer in time", func(t *testing.T) {
+			t.Parallel()
+			server := lsptest.Server(lsptest.Hangs)
+			server.Answering = 300 * time.Millisecond
+			e := lsptest.Engine(t, lsptest.Workspace(t, sample()), server)
+			_, err := e.Relate(t.Context(), request, declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Relate")
+			assert.Contains(t, err.Error(), "did not answer within 300ms", "the error of Relate")
+		})
+
+		t.Run("declines a declaration that no file declares", func(t *testing.T) {
+			t.Parallel()
+			_, err := serving(t, lsptest.Default, sample()).Relate(t.Context(), request,
+				declared("Missing", sema.KindStruct), sema.ReferencedBy)
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Relate")
+		})
+
+		t.Run("skips a scope without a file of the language", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.Default, map[string]string{"notes.md": "# notes\n"}).
+				Relate(t.Context(), engine.Request{Scope: "."}, declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate in a scope without a file of the language")
+			assert.True(t, got.Skipped, "Skipped of the answer")
 		})
 	})
 }

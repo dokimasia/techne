@@ -7,97 +7,55 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"sync"
 
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 )
 
-// nothing is the protocol's way of saying a setting is not set.
-//
-// Different from an empty object, which says the setting exists and is
-// blank. For an option that defaults to on, the two configure different
-// servers.
+// nothing is the JSON null that the client returns for a configuration section without
+// settings. An empty object declares the section with no settings, which a server reads as
+// every option off.
 const nothing = "null"
 
-// Why a server is told its edit was not applied. Both are true and they
-// are not the same: one is an offer nobody asked for, and the other is
-// the answer to a question techne asked, which it will gate and apply
-// itself.
+// The reasons that ApplyEdit returns with applied set to false.
 const (
 	declined  = "techne applies edits through its own gate"
 	collected = "techne took the edit and applies it through its own gate"
 )
 
-// answers is what techne says when a server asks it something.
+// answers implements [protocol.Client]: the requests and notifications that a server sends to
+// techne.
 //
-// A language server is not only asked questions. It registers
-// capabilities, asks what it is configured with, asks which folders are
-// open, and offers to apply edits — and every one of those is a request
-// whose sender waits for a reply. A server left waiting stops serving,
-// which in a tool whose job includes reporting that it found nothing is
-// the hardest failure to notice.
-//
-// [protocol.UnimplementedClient] refuses every request it was not given
-// an answer for. That is the right default and the wrong answer for the
-// few a server will not finish starting without, which are answered
-// here.
+// A server waits for the reply to each of its requests, and some servers do not finish
+// starting without one. [protocol.UnimplementedClient] refuses every request with an error.
+// answers replies to the requests that a server sends during startup and during the roles of
+// this package.
 type answers struct {
 	protocol.UnimplementedClient
 
 	root     string
 	settings map[string]any
 
-	// pushed is where diagnostics a server sends unasked are kept. A
-	// server that has no pull request is not a server with no
-	// diagnostics, and dropping what it sends would report every such
-	// language as clean.
-	pushed *published
-
-	// working is what the server has said it is still doing. A server
-	// mid-load answers every question with nothing, and nothing reported
-	// as a complete answer is a claim that there is nothing there.
-	working *working
-
-	// offering is where an edit techne asked a server to compute is
-	// kept. Some servers expose a refactoring only as a command, and
-	// answer it by offering the client the result to apply.
+	reports  *reports
+	working  *working
 	offering *asking
 }
 
-// PublishDiagnostics keeps what a server reported about a file.
-//
-// It replaces rather than accumulates, because a publish is the whole of
-// what the server currently says about that file: a file that was fixed
-// is republished with an empty list, and appending would report the
-// problem forever.
-func (a answers) PublishDiagnostics(
-	_ context.Context,
-	params *protocol.PublishDiagnosticsParams,
-) error {
-	a.pushed.keep(params.URI, params.Diagnostics)
-	return nil
-}
-
-// RegisterCapability accepts what a server registers, and stores none of
-// it.
-//
-// A server registers to be told about things a client watches: files
-// changing on disk, configuration changing. techne re-reads what it
-// needs when it asks, so there is nothing to hold — but refusing the
-// registration is an error response, and a server that treats one as
-// fatal never finishes starting.
+// RegisterCapability accepts a registration and does not store it, because the roles read the
+// capabilities of initialize. A refusal would be an error response, which some servers treat
+// as a failed start.
 func (answers) RegisterCapability(context.Context, *protocol.RegistrationParams) error { return nil }
 
-// UnregisterCapability accepts the withdrawal of what was never stored.
+// UnregisterCapability accepts the removal of a registration.
 func (answers) UnregisterCapability(context.Context, *protocol.UnregistrationParams) error {
 	return nil
 }
 
-// Configuration answers with what the language module declared.
-//
-// One answer per item and in the item's own position, because a server
-// matches them by index rather than by section. A section nothing was
-// declared for is answered null.
+// Configuration returns one value per item, in the order of the items, because a server
+// matches the values to its items by position. The value of an item is the settings under its
+// section, all settings for an item without a section, and null for a section without
+// settings.
 func (a answers) Configuration(
 	_ context.Context,
 	params *protocol.ConfigurationParams,
@@ -109,74 +67,36 @@ func (a answers) Configuration(
 	return out, nil
 }
 
-// setting is the declared settings under one section.
-//
-// A server asking for no section is handed the whole declaration, which
-// is the same thing it was given at initialise.
+// setting returns the settings under section as JSON, or null.
 func (a answers) setting(section *string) protocol.LSPAny {
-	held := any(a.settings)
+	var value any = a.settings
 	if section != nil && *section != "" {
 		under, declared := a.settings[*section]
 		if !declared {
 			return protocol.LSPAny(nothing)
 		}
-		held = under
+		value = under
 	}
-	if held == nil {
+	if value == nil {
 		return protocol.LSPAny(nothing)
 	}
-
-	raw, err := json.Marshal(held)
+	raw, err := json.Marshal(value)
 	if err != nil {
 		return protocol.LSPAny(nothing)
 	}
 	return protocol.LSPAny(raw)
 }
 
-// WorkspaceFolders is the one root this engine was built over.
-//
-// One folder, not none. A server told there are no folders open indexes
-// nothing and answers every workspace-wide question with an empty list,
-// which reads exactly like a correct answer.
+// WorkspaceFolders returns the workspace root as the only folder, because a server that is
+// told that no folder is open indexes nothing.
 func (a answers) WorkspaceFolders(context.Context) ([]protocol.WorkspaceFolder, error) {
-	return []protocol.WorkspaceFolder{{
-		URI:  uri.File(a.root),
-		Name: filepath.Base(a.root),
-	}}, nil
+	return []protocol.WorkspaceFolder{{URI: uri.File(a.root), Name: filepath.Base(a.root)}}, nil
 }
 
-// WorkDoneProgressCreate accepts a progress token, and counts the job it
-// stands for as started.
-//
-// It arrives before the notification that begins the job, which is what
-// makes it the useful signal: a question asked between the two would
-// otherwise find the server idle and believe an answer it was still
-// working on. Ending the job clears the token either way.
-func (a answers) WorkDoneProgressCreate(
-	_ context.Context,
-	params *protocol.WorkDoneProgressCreateParams,
-) error {
-	a.working.began(tokened(params.Token))
-	return nil
-}
-
-// ApplyEdit never applies anything, and keeps what was offered when
-// techne asked for it.
-//
-// A server offering to write unprompted is offering to write behind
-// techne, which plans a change, gates it and applies it atomically. An
-// edit that arrives that way is subject to none of it: nothing
-// previewed it, nothing checked it, and a caller told a change was
-// refused would find it on disk anyway.
-//
-// One case is not that. A refactoring some servers expose only as a
-// command is performed rather than described: the server computes the
-// result and sends it here to be applied. techne asked for exactly that
-// edit, so it is kept and becomes the plan — and still goes through the
-// gate rather than onto disk.
-//
-// Either way the answer is that nothing was applied, which is true. The
-// server asked a legitimate question and is entitled to know.
+// ApplyEdit returns applied false for every edit, because techne writes a change only through
+// its write path, which previews, gates and applies it atomically. An edit that a server offers
+// while techne performs a command for it becomes the result of the command, see [asking], and
+// its reply gives the reason collected. Every other reply gives the reason declined.
 func (a answers) ApplyEdit(
 	_ context.Context,
 	params *protocol.ApplyWorkspaceEditParams,
@@ -188,8 +108,7 @@ func (a answers) ApplyEdit(
 	return &protocol.ApplyWorkspaceEditResult{Applied: false, FailureReason: &reason}, nil
 }
 
-// ShowDocument reports that nothing was shown. There is no editor here
-// and no window to open one in.
+// ShowDocument returns success false, because techne has no editor to show a document in.
 func (answers) ShowDocument(
 	context.Context,
 	*protocol.ShowDocumentParams,
@@ -197,22 +116,16 @@ func (answers) ShowDocument(
 	return &protocol.ShowDocumentResult{Success: false}, nil
 }
 
-// ShowMessageRequest chooses none of the actions offered.
-//
-// Nothing is reading the message and nobody is deciding. Null is the
-// protocol's answer for a dismissed prompt, and is what a server
-// blocking on one needs to carry on.
+// ShowMessageRequest returns null, the protocol's reply for a prompt that nobody chose an
+// action for.
 func (answers) ShowMessageRequest(
 	context.Context,
 	*protocol.ShowMessageRequestParams,
 ) (*protocol.MessageActionItem, error) {
-	return nil, nil //nolint:nilnil // null is the protocol's "no action chosen"
+	return nil, nil //nolint:nilnil // null is the reply for no action chosen
 }
 
-// The refresh requests below ask a client to throw away what it cached
-// of an answer. This one caches none: every question re-asks. Accepted
-// rather than refused, because a server that refreshes on every edit
-// would otherwise collect an error per edit.
+// Each refresh request returns nil, because techne does not cache the results of a server.
 func (answers) CodeLensRefresh(context.Context) error       { return nil }
 func (answers) FoldingRangeRefresh(context.Context) error   { return nil }
 func (answers) SemanticTokensRefresh(context.Context) error { return nil }
@@ -220,6 +133,7 @@ func (answers) InlineValueRefresh(context.Context) error    { return nil }
 func (answers) InlayHintRefresh(context.Context) error      { return nil }
 func (answers) DiagnosticRefresh(context.Context) error     { return nil }
 
+// TextDocumentContentRefresh returns nil, because techne does not cache document content.
 func (answers) TextDocumentContentRefresh(
 	context.Context,
 	*protocol.TextDocumentContentRefreshParams,
@@ -227,5 +141,49 @@ func (answers) TextDocumentContentRefresh(
 	return nil
 }
 
-// assert this answers everything a server may ask.
+// asking keeps the edits that a server offers through workspace/applyEdit while techne
+// performs a command for it. typescript-language-server performs every refactoring this way.
+//
+// The window is open for one command at a time, so two commands in flight cannot take each
+// other's edits. An edit offered while the window is closed is refused. asking is safe for
+// concurrent use.
+type asking struct {
+	// one is locked during one command.
+	one sync.Mutex
+	// mu guards open and kept, which the goroutine that reads the connection writes.
+	mu   sync.Mutex
+	open bool
+	kept []*protocol.WorkspaceEdit
+}
+
+// arm opens the window and returns the function that closes it and returns the edits offered
+// while it was open. arm blocks while the window is open for another command.
+func (a *asking) arm() func() []*protocol.WorkspaceEdit {
+	a.one.Lock()
+	a.mu.Lock()
+	a.open, a.kept = true, nil
+	a.mu.Unlock()
+
+	return func() []*protocol.WorkspaceEdit {
+		a.mu.Lock()
+		kept := a.kept
+		a.open, a.kept = false, nil
+		a.mu.Unlock()
+		a.one.Unlock()
+		return kept
+	}
+}
+
+// offered keeps edit and reports true while the window is open, and reports false otherwise.
+func (a *asking) offered(edit *protocol.WorkspaceEdit) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.open {
+		return false
+	}
+	a.kept = append(a.kept, edit)
+	return true
+}
+
+// The client callbacks that techne implements.
 var _ protocol.Client = answers{}

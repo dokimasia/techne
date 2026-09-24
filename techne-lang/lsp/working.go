@@ -4,134 +4,128 @@
 package lsp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
-	"os"
+	"errors"
+	"fmt"
 	"strconv"
 	"sync"
 	"time"
 
-	"go.dokimi.dev/techne/core/source"
-	"go.dokimi.dev/techne/core/trust"
-	"go.dokimi.dev/techne/lang"
+	"go.dokimi.dev/techne/core/engine"
 	"go.lsp.dev/protocol"
 )
 
-// The kinds of progress a server reports. The first and the last are
-// what matter here: a job begins, and later it ends.
+// The kinds of work-done progress value that begin and end a job.
 const (
 	progressBegin = "begin"
 	progressEnd   = "end"
 )
 
-// settling is how long a question waits for a server that declared no
-// figure of its own.
-//
-// Long enough for a small project to load, short enough that a caller
-// asking about a workspace that will take minutes gets a partial answer
-// rather than a stall. A server that needs longer says so through
+// settling is how long a question waits for a server whose declaration sets no
 // [Server.Loading].
 const settling = 10 * time.Second
 
-// announcing is how long a freshly started server is given to say that
-// it is busy before it is believed to be idle.
-//
-// A server that loads a workspace says so within a few milliseconds of
-// the handshake. One that never reports progress pays this once per
-// session and nothing after.
+// answering is how long a question waits for the answers of a server whose declaration sets
+// no [Server.Answering].
+const answering = time.Minute
+
+// answered returns ctx with the deadline of one question, and the function that releases it.
+// A question takes the deadline after the server runs, so the start of a server that imports a
+// build for minutes is not cut short.
+func (e *Engine) answered(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, cmp.Or(e.server.Answering, answering))
+}
+
+// unanswered returns err as [engine.ErrDecline] when the deadline of a question ended it and
+// parent did not end, so the next engine answers the question, and err otherwise.
+func (e *Engine) unanswered(parent context.Context, err error) error {
+	if err == nil || parent.Err() != nil || !errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+	return fmt.Errorf("%w: %s did not answer within %s: %w",
+		engine.ErrDecline, e.server.Name, cmp.Or(e.server.Answering, answering), err)
+}
+
+// announcing is how long the handshake waits for a started server to report its first job.
 const announcing = 500 * time.Millisecond
 
-// working tracks the jobs a server has told the client it is doing.
+// quiet is how long a server must go without a job, and the client without sending a buffer,
+// before a question takes the server as settled. A server that loads a workspace runs a series
+// of jobs with gaps of a few milliseconds between them.
+const quiet = 300 * time.Millisecond
+
+// working tracks the LSP 3.17 work-done progress jobs that a server reports, and the time of
+// the last activity: a job that begins or ends, or a buffer the client sends.
 //
-// # Why this exists
-//
-// A server that has not finished loading a project answers every
-// question with nothing. Not "I do not know" — nothing, in the same
-// shape as a real answer. Reported as it stands, that is resolved
-// binding over total coverage saying a declaration has no references,
-// which is exactly the claim a caller acts on by deleting it.
-//
-// The protocol's own signal for this is work-done progress: a job begins
-// and later ends, and while one is outstanding the server is changing
-// what it would answer. Nothing in the specification says which jobs
-// matter, so all of them count. The cost of counting one that did not is
-// an answer marked partial; the cost of missing one is a false claim
-// that something is unused.
+// A server that has not finished loading returns empty answers in the same form as complete
+// ones. Every job counts as loading, because the protocol does not say which jobs change
+// answers. working is safe for concurrent use.
 type working struct {
 	mu   sync.Mutex
 	open map[string]bool
-	// idle is closed when the last job ends, and replaced when the next
-	// begins, so a waiter blocks on the state as it was when it asked.
+	// idle is closed while no job is open, and replaced when the first job of a run begins.
 	idle chan struct{}
-	// started counts the jobs ever begun. Loading a workspace is a run
-	// of short jobs with gaps between them, so "nothing running" is not
-	// "finished": a question asked in a gap is asked of a server that is
-	// about to start again. Comparing this across a quiet period is what
-	// tells the two apart.
-	started int
+	last time.Time
 }
 
+// newWorking returns an idle tracker without recorded activity.
 func newWorking() *working {
-	held := &working{open: map[string]bool{}, idle: make(chan struct{})}
-	close(held.idle)
-	return held
+	idle := make(chan struct{})
+	close(idle)
+	return &working{open: map[string]bool{}, idle: idle}
 }
 
-// quiet is how long nothing may happen before a server is taken to have
-// finished loading.
-//
-// Loading is a run of jobs a few milliseconds apart. Shorter than the
-// gaps and every gap reads as finished; much longer and a server that
-// genuinely finished is waited on for no reason.
-const quiet = 300 * time.Millisecond
-
-// began records a job the server started.
+// began records that the job token began.
 func (w *working) began(token string) {
-	if w == nil {
-		return
-	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-
 	if len(w.open) == 0 {
 		w.idle = make(chan struct{})
 	}
 	w.open[token] = true
-	w.started++
+	w.last = time.Now()
 }
 
-// ended records a job the server finished, and wakes whoever waited for
-// the last of them.
+// ended records that the job token ended. An end of a job that never began is ignored.
 func (w *working) ended(token string) {
-	if w == nil {
-		return
-	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-
 	if !w.open[token] {
 		return
 	}
 	delete(w.open, token)
+	w.last = time.Now()
 	if len(w.open) == 0 {
 		close(w.idle)
 	}
 }
 
-// announce waits a bounded time for a server to report its first job.
-//
-// Called once, after the handshake. Until a server has said anything at
-// all there is no way to tell one that is idle from one that has not
-// started, and the difference is whether an empty answer means empty.
+// touched records that the client sent the server a buffer, which starts analysis in the
+// server.
+func (w *working) touched() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.last = time.Now()
+}
+
+// busy reports whether a job is open.
+func (w *working) busy() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.open) > 0
+}
+
+// announce waits until the server reports a job, for at most within or until ctx ends. A
+// server that loads a workspace reports its first job a few milliseconds after the handshake.
 func (w *working) announce(ctx context.Context, within time.Duration) {
-	if w == nil || w.busy() {
+	if w.busy() {
 		return
 	}
 	deadline := time.NewTimer(within)
 	defer deadline.Stop()
-
-	// Polled rather than signalled: nothing has begun yet, so there is
-	// no channel to wait on that a begin would close.
+	// Polled, because no job has begun and so no channel exists that a job would close.
 	tick := time.NewTicker(within / 10)
 	defer tick.Stop()
 	for {
@@ -148,50 +142,33 @@ func (w *working) announce(ctx context.Context, within time.Duration) {
 	}
 }
 
-// busy reports whether the server is in the middle of something.
-func (w *working) busy() bool {
-	if w == nil {
-		return false
-	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	return len(w.open) > 0
-}
-
-// settle waits a bounded time for the server to finish what it is doing,
-// and reports whether it did.
-//
-// Bounded because a server loading a large workspace takes as long as it
-// takes, and a caller waiting on it has no way to tell a slow start from
-// a hang. A question that outwaits this is still answered; what it must
-// not do is claim the answer is complete.
+// settle waits until no job is open and [quiet] has passed since the last activity, and
+// reports whether that happened within the deadline and before ctx ended. It returns true at
+// once for a server that has been quiet for that long.
 func (w *working) settle(ctx context.Context, within time.Duration) bool {
-	if w == nil {
-		return true
-	}
 	deadline := time.NewTimer(within)
 	defer deadline.Stop()
 
 	for {
 		w.mu.Lock()
-		idle, running, began := w.idle, len(w.open) > 0, w.started
+		idle, running, last := w.idle, len(w.open) > 0, w.last
 		w.mu.Unlock()
 
 		if running {
 			select {
 			case <-idle:
+				continue
 			case <-deadline.C:
 				return false
 			case <-ctx.Done():
 				return false
 			}
-			continue
 		}
-
-		// Idle, but loading is a run of jobs with gaps: wait out a quiet
-		// period and see whether another one starts. Nothing new means
-		// the server has finished rather than paused.
-		pause := time.NewTimer(quiet)
+		left := quiet - time.Since(last)
+		if left <= 0 {
+			return true
+		}
+		pause := time.NewTimer(left)
 		select {
 		case <-pause.C:
 		case <-deadline.C:
@@ -201,123 +178,28 @@ func (w *working) settle(ctx context.Context, within time.Duration) bool {
 			pause.Stop()
 			return false
 		}
-		pause.Stop()
-
-		w.mu.Lock()
-		still := w.started == began && len(w.open) == 0
-		w.mu.Unlock()
-		if still {
-			return true
-		}
 	}
 }
 
-// warming is the caveat on an answer a server gave while it was still
-// loading, and the empty caveat otherwise.
-//
-// It carries [trust.ScopePartial] with it at every call site, because
-// the two say one thing: what came back is not everything there is, and
-// no absence can be read out of it.
-var warming = trust.Caveat{
-	Code: trust.CaveatIndexWarming,
-	Note: "the server was still loading the workspace, so what it did not " +
-		"return may not be absent",
-}
-
-// settled waits for a server to finish loading, and reports the
-// completeness and caveats an answer given now is entitled to.
-//
-// Every read calls it. A server mid-load answers with nothing, and
-// nothing over total coverage is a claim that there is nothing — the one
-// claim this package exists to be trusted about.
-func (e *Engine) settled(ctx context.Context) (trust.Completeness, []trust.Caveat) {
-	if e.working.settle(ctx, e.settling()) {
-		return trust.ScopeTotal, []trust.Caveat{dynamic}
+// settle waits for the server of held to settle, for at most [Server.Loading] or [settling],
+// and reports whether it settled.
+func (e *Engine) settle(ctx context.Context, held *session) bool {
+	within := e.server.Loading
+	if within <= 0 {
+		within = settling
 	}
-	return trust.ScopePartial, []trust.Caveat{dynamic, warming}
+	return held.working.settle(ctx, within)
 }
 
-// unread is the caveat naming files a walk reached and did not read.
-//
-// Nil for a walk that read everything, so the common answer carries no
-// caveat about a limit it did not hit.
-func unread(paths []source.Path) []trust.Caveat {
-	if len(paths) == 0 {
-		return nil
-	}
-	return []trust.Caveat{{
-		Code:  trust.CaveatUnread,
-		Note:  "past the size an engine reads, so the server was never given them",
-		Paths: paths,
-	}}
-}
-
-// bound is what an answer that rests on binding is worth: how much of
-// the scope was covered, the tier the answer reaches, and the limits on
-// it.
-//
-// Every role that resolves a name uses it. Verifying does not: reporting
-// what is wrong with a workspace is the one answer a workspace being
-// wrong does not weaken.
-func (e *Engine) bound(
-	ctx context.Context,
-	scope source.Path,
-) (trust.Completeness, trust.Fidelity, []trust.Caveat) {
-	covered, caveats := e.settled(ctx)
-	held, why := e.lowered(e.project(scope))
-	return covered, held, append(caveats, why...)
-}
-
-// project is the compilation unit a scope belongs to, by the manifests
-// this language declares.
-func (e *Engine) project(scope source.Path) source.Path {
-	return lang.ProjectOf(os.DirFS(e.root), scope, e.declared.Manifests)
-}
-
-// lowered is the tier an answer is worth while the project it is about
-// does not compile, and nothing while it does.
-//
-// A type checker over a program with a fault in it binds the names it
-// can and guesses at the rest: a reference list is what the last good
-// build had plus whatever survives, which is an index rather than a
-// binding. Every answer says so rather than claiming the tier the engine
-// reaches when the code is whole.
-//
-// The project rather than the workspace, because they are not the same
-// thing and only one of them compiles. See [published.broken].
-func (e *Engine) lowered(within source.Path) (trust.Fidelity, []trust.Caveat) {
-	if !e.pushed.broken(within, e.pathOf) {
-		return trust.None, nil
-	}
-	return trust.Indexed, []trust.Caveat{{
-		Code: trust.CaveatBuildBroken,
-		Note: "the server reports " + string(within) + " does not compile, so names are bound " +
-			"where it could bind them and matched where it could not",
-	}}
-}
-
-// settling is how long this engine's questions wait for its server.
-func (e *Engine) settling() time.Duration {
-	if e.server.Loading > 0 {
-		return e.server.Loading
-	}
-	return settling
-}
-
-// Progress records a job beginning or ending.
-//
-// The token is whatever the server chose to call it. Only its identity
-// matters, so it is read as text rather than decoded into the two shapes
-// the protocol allows it to take.
+// Progress records a job that begins or ends. The token is compared as text, whichever of
+// the two token types of the protocol it arrives as. A value that is not an object with a
+// kind is ignored.
 func (a answers) Progress(_ context.Context, params *protocol.ProgressParams) error {
-	var held struct {
+	var value struct {
 		Kind string `json:"kind"`
 	}
-	// A progress value this cannot read is a job neither begun nor
-	// ended, which is what it already is. Reporting it would tear the
-	// connection down over a notification nobody asked for.
-	if err := json.Unmarshal(params.Value, &held); err == nil {
-		switch held.Kind {
+	if err := json.Unmarshal(params.Value, &value); err == nil {
+		switch value.Kind {
 		case progressBegin:
 			a.working.began(tokened(params.Token))
 		case progressEnd:
@@ -327,14 +209,25 @@ func (a answers) Progress(_ context.Context, params *protocol.ProgressParams) er
 	return nil
 }
 
-// tokened is a progress token as text, whichever of the two shapes the
-// protocol allows it arrived in.
-func tokened(held protocol.ProgressToken) string {
-	switch token := held.(type) {
+// WorkDoneProgressCreate records the job of a token as begun when the request arrives, before
+// the begin notification, so a question asked between the two waits for the job. The end of
+// the job closes it.
+func (a answers) WorkDoneProgressCreate(
+	_ context.Context,
+	params *protocol.WorkDoneProgressCreateParams,
+) error {
+	a.working.began(tokened(params.Token))
+	return nil
+}
+
+// tokened returns a progress token as text: a string token as it is, and an integer token as
+// "#" and its decimal digits.
+func tokened(token protocol.ProgressToken) string {
+	switch held := token.(type) {
 	case protocol.String:
-		return string(token)
+		return string(held)
 	case protocol.Integer:
-		return "#" + strconv.Itoa(int(token))
+		return "#" + strconv.Itoa(int(held))
 	}
 	return ""
 }

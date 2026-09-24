@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,80 +19,60 @@ import (
 	"go.lsp.dev/protocol"
 )
 
-// session is one running language server and the connection to it.
+// starting is how long a server has to answer initialize. [Server.Loading] bounds the load of
+// the workspace that follows. A server that misses this deadline fails to start, and the
+// engine keeps the failure until [Engine.Close].
+const starting = 10 * time.Second
+
+// leaving is how long a server has to answer shutdown and exit before [session.stop] kills it.
+const leaving = 5 * time.Second
+
+// stderrSize is how many bytes of a server's stderr a session keeps.
+const stderrSize = 8 << 10
+
+// session is one server process, the connection to it, and the state of the server for the
+// connection: its buffers, its diagnostics, its progress jobs and the edits it offered. A new
+// session starts with none of that state.
 //
-// The process, the framing and the dispatcher share a lifetime. A
-// connection outliving its process answers nothing and a process
-// outliving its connection is leaked, so they are started together in
-// [start] and stopped together in [session.stop].
+// The process and the connection start together in [start] and stop together in
+// [session.stop]. Every field that changes after start has its own lock, so a question and a
+// stop can run concurrently.
 type session struct {
 	cmd  *exec.Cmd
 	conn jsonrpc2.Conn
-
-	// asks is the server as something to call: one method per request
-	// the specification defines, each decoding into the union that
-	// specification names for it.
+	// asks is the server as a [protocol.Server], with one method per request of LSP 3.17.
 	asks protocol.Server
-
-	// capable is what the server said it can do, at initialise. A role
-	// reads it rather than trying a request to find out: a server
-	// answering "method not found" is indistinguishable from one
-	// answering that there is nothing to report.
+	// capable is the capabilities that the server returned from initialize.
 	capable protocol.ServerCapabilities
+	// stderr keeps the last [stderrSize] bytes that the server wrote to stderr.
+	stderr *tail
 
-	// ends is what makes stopping twice do nothing. A close racing the
-	// composition root's own would otherwise wait on a process already
-	// reaped, which never returns.
+	// opening guards opened, the buffer of the server for each absolute path.
+	opening sync.Mutex
+	opened  map[string]sent
+
+	reports  *reports
+	working  *working
+	offering *asking
+
+	// ends makes stop run once.
 	ends sync.Once
 }
 
-// starting is how long a server is given to answer the handshake.
-//
-// Separate from [Server.Loading], which is how long it may take to read
-// the workspace after answering. This is the answer itself, and a server
-// that does not give one is not going to: the connection came up, so the
-// program is there and it is not talking.
-//
-// Bounded because the alternative is unbounded. A server that accepts
-// the connection and never answers initialise held a question for as
-// long as its caller allowed — measured against
-// typescript-language-server over a repository whose TypeScript version
-// it refuses, fourteen seconds of an agent's turn, spent on a server
-// that was never going to answer. The failure is remembered, so it is
-// paid once per session either way; what this decides is how much.
-const starting = 10 * time.Second
-
-// leaving is how long the protocol's own shutdown is given before the
-// process is killed instead.
-//
-// Bounded for the same reason [starting] is, and against the same
-// failure: shutdown is a request, and a server that does not answer
-// requests does not answer this one either. Unbounded it held a caller
-// for as long as it allowed, which is what [session.stop] exists to
-// prevent for the process and had not been doing for the conversation.
-//
-// Long enough for a server that is working to write out what it was
-// holding, which is why the whole sequence is attempted rather than
-// killing outright.
-const leaving = 5 * time.Second
-
-// start runs a server and brings up the connection to it.
-//
-// The command is run rather than looked for. Whether it exists is
-// settled before this is reached, so a language whose server is not
-// installed is reported as unavailable rather than as a call that
-// failed.
-func start(ctx context.Context, declared Server, root string, answers protocol.Client) (*session, error) {
-	if len(declared.Command) == 0 {
-		return nil, fmt.Errorf("lsp: %s: no command to run", declared.Name)
+// start runs the server that declared names in root and connects to it over stdin and stdout.
+// The process does not end with ctx, because it serves every later question. The caller
+// checks with [Server.Installed] first, so a missing command is reported as unavailable and
+// not as a failed call.
+func start(ctx context.Context, declared Server, root string) (*session, error) {
+	held := &session{
+		stderr:   &tail{},
+		opened:   map[string]sent{},
+		reports:  newReports(),
+		working:  newWorking(),
+		offering: &asking{},
 	}
 
-	// The server outlives the call that happened to be first. Tied to
-	// that call's context it would be killed when an outline was
-	// cancelled, and the next question would pay the start again.
-	live := context.WithoutCancel(ctx)
-
-	cmd := exec.CommandContext(live, declared.Command[0], declared.Command[1:]...)
+	cmd := exec.Command(declared.Command[0], declared.Command[1:]...)
 	cmd.Dir = root
 	if len(declared.Env) > 0 {
 		cmd.Env = os.Environ()
@@ -98,46 +80,43 @@ func start(ctx context.Context, declared Server, root string, answers protocol.C
 			cmd.Env = append(cmd.Env, name+"="+value)
 		}
 	}
-	// A server's own logging is not this process's to print, and one
-	// writing a great deal into a pipe nobody reads blocks on it. Given
-	// to os/exec rather than drained here, so the copy is finished
-	// before the process is reaped rather than racing it.
-	cmd.Stderr = io.Discard
+	// os/exec copies stderr into the tail and finishes the copy before Wait returns.
+	cmd.Stderr = held.stderr
 
 	out, err := cmd.StdoutPipe()
 	if err != nil {
-		return nil, fmt.Errorf("lsp: %s stdout: %w", declared.Name, err)
+		return nil, fmt.Errorf("lsp: %s: stdout: %w", declared.Name, err)
 	}
 	in, err := cmd.StdinPipe()
 	if err != nil {
-		return nil, fmt.Errorf("lsp: %s stdin: %w", declared.Name, err)
+		return nil, fmt.Errorf("lsp: %s: stdin: %w", declared.Name, err)
 	}
 	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("lsp: start %s: %w", declared.Name, err)
+		return nil, fmt.Errorf("lsp: %s: start: %w", declared.Name, err)
 	}
+	held.cmd = cmd
 
-	_, conn, asks := protocol.NewClient(live, answers, jsonrpc2.NewStream(pipes{out: out, in: in}))
-	return &session{cmd: cmd, conn: conn, asks: asks}, nil
+	client := answers{
+		root:     root,
+		settings: declared.Settings,
+		reports:  held.reports,
+		working:  held.working,
+		offering: held.offering,
+	}
+	_, held.conn, held.asks = protocol.NewClient(
+		context.WithoutCancel(ctx), client, jsonrpc2.NewStream(pipes{out: out, in: in}))
+	return held, nil
 }
 
-// stop ends the server, and kills it if it will not end.
+// stop ends the server and returns the error of its shutdown.
 //
-// In the order the pieces depend on each other. The protocol's own
-// sequence first, because a server told to shut down writes out what it
-// was holding. Then the connection, which is what unblocks a read parked
-// mid-frame and does not return until the read has stopped. The process
-// last: waiting on it while its output is still being read closes the
-// pipe under the reader.
-//
-// A server still running when the context is done is killed. One that
-// will not exit is leaked for the life of the parent, and a tool that
-// leaks one per language per run is unusable.
+// It sends shutdown and exit, closes the connection, and waits for the process. A server that
+// has not exited [leaving] after the call, or when ctx is done, is killed. Only the first call
+// stops the session, and every later call returns nil. A shutdown refused because ctx ended is
+// not an error.
 func (s *session) stop(ctx context.Context) error {
 	var refused error
 	s.ends.Do(func() {
-		// Bounded rather than the caller's own, so a server that stopped
-		// answering cannot hold the caller here. A context already done
-		// keeps its own deadline, so cancelling still kills at once.
 		saying, done := context.WithTimeout(ctx, leaving)
 		defer done()
 
@@ -147,7 +126,6 @@ func (s *session) stop(ctx context.Context) error {
 
 		gone := make(chan error, 1)
 		go func() { gone <- s.cmd.Wait() }()
-
 		select {
 		case <-gone:
 		case <-saying.Done():
@@ -156,8 +134,6 @@ func (s *session) stop(ctx context.Context) error {
 		}
 	})
 
-	// A server that would not shut down was killed, which is this
-	// package's business and not the caller's.
 	if refused != nil &&
 		!errors.Is(refused, context.Canceled) &&
 		!errors.Is(refused, context.DeadlineExceeded) {
@@ -166,12 +142,48 @@ func (s *session) stop(ctx context.Context) error {
 	return nil
 }
 
-// pipes is a process's stdin and stdout as the one stream the protocol
-// is framed over.
-//
-// The conversation is duplex and a subprocess offers two half-open
-// pipes, so they are joined here rather than in whatever reads or
-// writes.
+// buffers returns a copy of the buffers of the server, by absolute path.
+func (s *session) buffers() map[string]sent {
+	s.opening.Lock()
+	defer s.opening.Unlock()
+	return maps.Clone(s.opened)
+}
+
+// withStderr returns err with the end of the server's stderr appended, or err when the server
+// wrote nothing.
+func (s *session) withStderr(err error) error {
+	if written := s.stderr.String(); written != "" {
+		return fmt.Errorf("%w: stderr: %s", err, written)
+	}
+	return err
+}
+
+// tail keeps the last [stderrSize] bytes written to it. It is safe for concurrent use.
+type tail struct {
+	mu   sync.Mutex
+	kept []byte
+}
+
+// Write keeps the end of what has been written, and never returns an error.
+func (t *tail) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.kept = append(t.kept, p...)
+	if over := len(t.kept) - stderrSize; over > 0 {
+		t.kept = append(t.kept[:0], t.kept[over:]...)
+	}
+	return len(p), nil
+}
+
+// String returns the kept bytes as valid UTF-8, without leading and trailing white space.
+func (t *tail) String() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return strings.TrimSpace(strings.ToValidUTF8(string(t.kept), "�"))
+}
+
+// pipes joins the stdout and the stdin of a process into the one stream that the protocol is
+// framed over.
 type pipes struct {
 	out io.ReadCloser
 	in  io.WriteCloser
@@ -180,9 +192,6 @@ type pipes struct {
 func (p pipes) Read(into []byte) (int, error)  { return p.out.Read(into) }
 func (p pipes) Write(from []byte) (int, error) { return p.in.Write(from) }
 
-// Close shuts both halves and reports whatever went wrong with either.
-//
-// Closing the write half is what tells a server reading its stdin that
-// there is nothing more coming, so both are closed even when the first
-// fails.
+// Close closes stdin and then stdout, and returns both errors joined. A server that reads
+// stdin ends its input when stdin closes.
 func (p pipes) Close() error { return errors.Join(p.in.Close(), p.out.Close()) }

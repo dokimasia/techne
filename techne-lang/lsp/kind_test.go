@@ -12,10 +12,8 @@ import (
 	"go.lsp.dev/protocol"
 )
 
-// valueKinds are the kinds the protocol carries because the same request
-// outlines a JSON document. They are the whole of what this package
-// drops on purpose, so the completeness case below can tell a deliberate
-// omission from a forgotten one.
+// valueKinds are the kinds of LSP 3.17 that declare nothing: the kinds of a value in a JSON
+// document, and an event.
 var valueKinds = map[protocol.SymbolKind]bool{
 	protocol.SymbolKindString:  true,
 	protocol.SymbolKindNumber:  true,
@@ -24,20 +22,18 @@ var valueKinds = map[protocol.SymbolKind]bool{
 	protocol.SymbolKindObject:  true,
 	protocol.SymbolKindKey:     true,
 	protocol.SymbolKindNull:    true,
-	// An event is something a declaration raises rather than something
-	// declared, and this vocabulary has no member for it.
-	protocol.SymbolKindEvent: true,
+	protocol.SymbolKindEvent:   true,
 }
 
 func TestKindOf(t *testing.T) {
 	t.Parallel()
 
-	t.Run("a kind that declares something", func(t *testing.T) {
+	t.Run("KindOf", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("maps onto what this vocabulary calls it", func(t *testing.T) {
+		t.Run("maps a kind that declares something", func(t *testing.T) {
 			t.Parallel()
-			for held, want := range map[protocol.SymbolKind]sema.Kind{
+			for kind, want := range map[protocol.SymbolKind]sema.Kind{
 				protocol.SymbolKindStruct:     sema.KindStruct,
 				protocol.SymbolKindClass:      sema.KindStruct,
 				protocol.SymbolKindInterface:  sema.KindInterface,
@@ -47,63 +43,33 @@ func TestKindOf(t *testing.T) {
 				protocol.SymbolKindConstant:   sema.KindConstant,
 				protocol.SymbolKindEnumMember: sema.KindEnumMember,
 			} {
-				got, declares := lsp.KindOf(held)
-				assert.True(t, declares, "the protocol and this vocabulary both carry it")
-				assert.Equal(t, got, want, "under the name this one uses")
+				got, declares := lsp.KindOf(kind)
+				assert.True(t, declares, "KindOf reports that the kind declares something")
+				assert.Equal(t, got, want, "the sema.Kind of the protocol kind")
 			}
 		})
 
-		t.Run("is never reported as unknown", func(t *testing.T) {
+		t.Run("maps no kind to KindUnknown", func(t *testing.T) {
 			t.Parallel()
-			// Answering with the unknown member would put an entry in an
-			// outline that names a declaration a caller cannot filter on
-			// or act on, which is worse than leaving it out.
-			for held := protocol.SymbolKindFile; held <= protocol.SymbolKindTypeParameter; held++ {
-				got, declares := lsp.KindOf(held)
-				if !declares {
-					continue
+			for kind := protocol.SymbolKindFile; kind <= protocol.SymbolKindTypeParameter; kind++ {
+				if got, declares := lsp.KindOf(kind); declares {
+					assert.NotEqual(t, got, sema.KindUnknown, "the sema.Kind of a mapped protocol kind")
 				}
-				assert.NotEqual(t, got, sema.KindUnknown,
-					"a kind that maps at all maps onto a member this vocabulary carries")
 			}
 		})
-	})
 
-	t.Run("a kind that declares nothing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("is dropped rather than reported as unknown", func(t *testing.T) {
+		t.Run("maps every kind of the protocol except the value kinds", func(t *testing.T) {
 			t.Parallel()
-			for held := range valueKinds {
-				_, declares := lsp.KindOf(held)
-				assert.False(t, declares, "a value in a document is not a declaration")
+			for kind := protocol.SymbolKindFile; kind <= protocol.SymbolKindTypeParameter; kind++ {
+				_, declares := lsp.KindOf(kind)
+				assert.Equal(t, declares, !valueKinds[kind], "KindOf reports the protocol kind as a declaration")
 			}
 		})
 
-		t.Run("includes one the protocol adds later", func(t *testing.T) {
+		t.Run("reports false for a kind the protocol does not define", func(t *testing.T) {
 			t.Parallel()
 			_, declares := lsp.KindOf(protocol.SymbolKind(999))
-			assert.False(t, declares,
-				"a kind this vocabulary has never heard of is left out rather than guessed at")
-		})
-	})
-
-	t.Run("the kinds the specification defines", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("are every one classified", func(t *testing.T) {
-			t.Parallel()
-			// Walked between the protocol's own first and last constants
-			// rather than between numbers written here, so a kind added
-			// inside that range arrives as a failure rather than as a
-			// declaration silently missing from every outline. A kind
-			// added past the last one is invisible to this, and is what
-			// [valueKinds] would have to grow for.
-			for held := protocol.SymbolKindFile; held <= protocol.SymbolKindTypeParameter; held++ {
-				_, declares := lsp.KindOf(held)
-				assert.Equal(t, declares, !valueKinds[held],
-					"a kind is mapped or dropped on purpose, never by omission")
-			}
+			assert.False(t, declares, "KindOf of kind 999 reports a declaration")
 		})
 	})
 }

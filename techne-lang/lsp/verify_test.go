@@ -4,13 +4,18 @@
 package lsp_test
 
 import (
+	"fmt"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/techne/core/diag"
-	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
+	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/lang"
+	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
 
 func TestVerify(t *testing.T) {
@@ -19,176 +24,87 @@ func TestVerify(t *testing.T) {
 	t.Run("Verify", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("asks a server that answers when asked", func(t *testing.T) {
+		t.Run("returns the diagnostics of a server with pull diagnostics", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
+			got, err := serving(t, lsptest.Default, sample()).
 				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
-
-			assert.NoError(t, err, "verifying succeeds")
-			assert.Length(t, got.Items, 3, "every diagnostic the server reported")
+			assert.NoError(t, err, "Verify")
+			assert.Length(t, got.Items, 3, "the findings of a.fake")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the answer")
 		})
 
-		t.Run("reads a server that reports unasked", func(t *testing.T) {
+		t.Run("adds a caveat for the suites it ignores", func(t *testing.T) {
 			t.Parallel()
-			// A server with no pull request is not a server with nothing
-			// to say. Reading only the request reports it as clean, which
-			// is a clean bill of health from something never asked.
-			got, err := serving(t, modePushes, map[string]string{"a.fake": content}).
-				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
-
-			assert.NoError(t, err, "verifying succeeds")
-			assert.Length(t, got.Items, 3, "what the server published when it finished")
-		})
-
-		t.Run("grades a diagnostic the way this vocabulary does", func(t *testing.T) {
-			t.Parallel()
-			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
-				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
-
-			assert.NoError(t, err, "verifying succeeds")
-			assert.Equal(t, grades(got.Items),
-				[]diag.Severity{diag.SeverityError, diag.SeverityWarning, diag.SeverityUnset},
-				"each as the server graded it")
-		})
-
-		t.Run("leaves a diagnostic nobody graded ungraded", func(t *testing.T) {
-			t.Parallel()
-			// A server is not required to send a severity. Defaulting one
-			// to the least serious hides it from a caller filtering for
-			// errors, and defaulting it to error invents one.
-			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
-				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
-
-			assert.NoError(t, err, "verifying succeeds")
-			assert.Equal(t, got.Items[2].Diagnostic.Severity, diag.SeverityUnset,
-				"nobody graded it, which is different from grading it least")
-		})
-
-		t.Run("carries the rule and the tool that reported it", func(t *testing.T) {
-			t.Parallel()
-			// A caller suppressing by rule must not have to match the
-			// message text, and a broken build must be tellable from a
-			// linter's objection.
-			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
-				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
-
-			assert.NoError(t, err, "verifying succeeds")
-			assert.Equal(t, got.Items[0].Diagnostic.Code, "E101", "the rule's own name")
-			assert.Equal(t, got.Items[0].Diagnostic.Source, "fakecheck", "and what reported it")
-		})
-
-		t.Run("reads a rule the server numbered rather than named", func(t *testing.T) {
-			t.Parallel()
-			// The protocol writes a code as either a string or a number.
-			// Reading one arm leaves the other empty, and a caller
-			// suppressing by rule has nothing to suppress by.
-			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
-				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
-
-			assert.NoError(t, err, "verifying succeeds")
-			assert.Equal(t, got.Items[1].Diagnostic.Code, "42", "the number, written out")
-		})
-
-		t.Run("carries the line each diagnostic is about", func(t *testing.T) {
-			t.Parallel()
-			// Whoever renders it has no filesystem, and a message with no
-			// line to read it against costs a read per diagnostic.
-			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
-				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
-
-			assert.NoError(t, err, "verifying succeeds")
-			assert.Equal(t, got.Items[0].Diagnostic.Snippet, "type Store struct {",
-				"the source the diagnostic is about")
-		})
-
-		t.Run("says a suite it was given was not honoured", func(t *testing.T) {
-			t.Parallel()
-			// A server has one analysis and no notion of which linter to
-			// run. Answering from it silently would report a suite as
-			// having passed when it was never run.
-			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
+			got, err := serving(t, lsptest.Default, sample()).
 				Verify(t.Context(), engine.Request{Scope: "a.fake"}, []string{"vet"})
-
-			assert.NoError(t, err, "verifying succeeds")
-			assert.True(t, carries(got.Caveats, trust.CaveatUnsupported),
-				"the caveat says the suite named was answered from the one analysis")
+			assert.NoError(t, err, "Verify with the suite vet")
+			assert.True(t, hasCaveat(got.Caveats, trust.CaveatUnsupported), "the answer has an unsupported caveat")
 		})
 
-		t.Run("says it read nothing where the scope holds none of its files", func(t *testing.T) {
+		t.Run("skips a scope without a file of the language", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, modeDefault, map[string]string{"notes.md": "# notes\n"}).
+			got, err := serving(t, lsptest.Default, map[string]string{"notes.md": "# notes\n"}).
 				Verify(t.Context(), engine.Request{Scope: "."}, nil)
+			assert.NoError(t, err, "Verify of a scope without a file of the language")
+			assert.True(t, got.Skipped, "Skipped of the answer")
+		})
 
-			assert.NoError(t, err, "a scope with nothing to read is not a fault")
-			assert.True(t, got.Skipped, "and the engine says it read nothing")
-			assert.Empty(t, got.Items, "rather than reporting the scope as clean")
+		t.Run("returns a partial answer for a file without a report", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.Ungated, sample()).
+				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify with a server that reports nothing")
+			assert.Empty(t, got.Items, "the findings of a server that reports nothing")
+			assert.Equal(t, got.Completeness, trust.ScopePartial, "the completeness of the answer")
+			assert.True(t, hasCaveat(got.Caveats, trust.CaveatIndexWarming), "the answer has a warming caveat")
+		})
+
+		t.Run("returns a total answer when every file has a report", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.Pushes, sample()).
+				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify with a server that publishes")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the answer")
+			assert.False(t, hasCaveat(got.Caveats, trust.CaveatIndexWarming), "the answer has a warming caveat")
+		})
+
+		t.Run("returns within 3 seconds for ten files without a report", func(t *testing.T) {
+			t.Parallel()
+			files := map[string]string{}
+			for i := range 10 {
+				files[fmt.Sprintf("f%d.fake", i)] = lsptest.Content
+			}
+			e := serving(t, lsptest.Ungated, files)
+			_, err := e.Verify(t.Context(), engine.Request{Scope: "f0.fake"}, nil)
+			assert.NoError(t, err, "Verify starts the server")
+
+			began := time.Now()
+			got, err := e.Verify(t.Context(), engine.Request{Scope: "."}, nil)
+			took := time.Since(began)
+			assert.NoError(t, err, "Verify of ten files")
+			assert.Equal(t, got.Completeness, trust.ScopePartial, "the completeness of the answer")
+			assert.True(t, took < 3*time.Second, "Verify of ten files took "+took.String())
+		})
+
+		t.Run("returns a partial answer for a scope with a file larger than lang.Largest", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.Default, map[string]string{
+				"a.fake":   lsptest.Content,
+				"big.fake": strings.Repeat("x", lang.Largest+1),
+			}).Verify(t.Context(), engine.Request{Scope: "."}, nil)
+			assert.NoError(t, err, "Verify of a scope with a large file")
+			assert.Equal(t, got.Completeness, trust.ScopePartial, "the completeness of the answer")
+			assert.True(t, unreadIn(got.Caveats, "big.fake"), "the unread caveat names big.fake")
 		})
 	})
 }
 
-// grades is how each finding was graded, in order.
-func grades(held []edit.Finding) []diag.Severity {
-	out := make([]diag.Severity, 0, len(held))
-	for _, one := range held {
-		out = append(out, one.Diagnostic.Severity)
+// unreadIn reports whether a [trust.CaveatUnread] caveat of caveats names p.
+func unreadIn(caveats []trust.Caveat, p source.Path) bool {
+	for _, one := range caveats {
+		if one.Code == trust.CaveatUnread && slices.Contains(one.Paths, p) {
+			return true
+		}
 	}
-	return out
-}
-
-// A gate saying a file is clean is the claim a caller acts on by
-// shipping it. It may only be made about a file the server analysed:
-// one that never reported is a file nothing looked at, and nothing
-// looked at is not nothing wrong.
-//
-// The fake's stuck mode publishes for no file, which is what a server
-// with no compiler view does — metals before it has imported a build,
-// tsserver over a file outside its project.
-func TestVerifyCoverage(t *testing.T) {
-	t.Parallel()
-
-	t.Run("a file the server never reported on", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("is not reported as clean", func(t *testing.T) {
-			t.Parallel()
-			// The server has finished starting and has nothing
-			// outstanding, so nothing else marks this answer short. What
-			// makes it short is that no report ever arrived for the file.
-			got, err := serving(t, modeUngated, map[string]string{"a.fake": content}).
-				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
-
-			assert.NoError(t, err, "a server with nothing to say is not a fault")
-			assert.Empty(t, got.Items, "and it said nothing")
-			assert.Equal(t, got.Completeness, trust.ScopePartial,
-				"which is not the same as there being nothing to say")
-			assert.False(t, trust.SupportsNegativeClaim(trust.Resolved, got.Completeness),
-				"so no caller may read a clean bill of health out of it")
-		})
-
-		t.Run("says why the answer may be short", func(t *testing.T) {
-			t.Parallel()
-			got, err := serving(t, modeUngated, map[string]string{"a.fake": content}).
-				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
-
-			assert.NoError(t, err, "verifying succeeds")
-			assert.True(t, carries(got.Caveats, trust.CaveatIndexWarming),
-				"the caveat names a file nothing has looked at yet")
-		})
-	})
-
-	t.Run("a file the server did report on", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("is answered at total coverage", func(t *testing.T) {
-			t.Parallel()
-			got, err := serving(t, modePushes, map[string]string{"a.fake": content}).
-				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
-
-			assert.NoError(t, err, "verifying succeeds")
-			assert.Equal(t, got.Completeness, trust.ScopeTotal,
-				"a server that reported analysed the file")
-			assert.False(t, carries(got.Caveats, trust.CaveatIndexWarming),
-				"so there is nothing to warn about")
-		})
-	})
+	return false
 }

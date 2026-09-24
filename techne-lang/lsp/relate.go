@@ -4,132 +4,145 @@
 package lsp
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"path"
 	"slices"
 	"strings"
-	"unicode"
 
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/lang"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 )
 
-// Relate reports how a declaration connects to the rest.
+// Relate returns the relations of one kind from a declaration, sorted by the path and offset
+// of their sites.
 //
-// # Which request answers which direction
+// Each kind has one request of LSP 3.17:
 //
-// The protocol has one request per question rather than one per
-// direction, and the questions do not line up with this vocabulary one
-// for one:
+//   - [sema.ReferencedBy] and [sema.References]: textDocument/references, every use of the
+//     declaration, the declaration itself excluded.
+//   - [sema.CalledBy] and [sema.Calls]: the incoming and outgoing calls of the call hierarchy.
+//     A use in a type is a reference and not a call.
+//   - [sema.Implements] and [sema.ImplementedBy]: textDocument/implementation, whose direction
+//     depends on the declaration it is asked about.
+//   - [sema.Embeds] and [sema.EmbeddedBy]: the supertypes and subtypes of the type hierarchy.
 //
-//   - Referenced-by is textDocument/references, which is every use of
-//     the declaration, call or not.
-//   - Called-by and calls are the call hierarchy, which is narrower than
-//     references and is the right answer for a caller asking about
-//     calls: a name written in a type is a reference and not a call.
-//   - Implements and implemented-by are both textDocument/implementation.
-//     The protocol has one request and the direction follows what it is
-//     pointed at: asked about an interface it names implementors, asked
-//     about a type it names what that type satisfies.
-//   - Embeds and embedded-by are the type hierarchy, which is what a
-//     type incorporates and what incorporates it. The languages spell it
-//     differently — an anonymous field, extends, with, include — and the
-//     hierarchy is the one request that answers all of them.
+// Imports and their inverse have no request. Relate returns [engine.ErrDecline] for them, so
+// the tree-sitter engine reads them from the source.
 //
-// # What it will not answer
+// Relate finds the declaration in the files of the scope. For a scope without a file of the
+// language the result is skipped. A declaration that no file of the scope declares returns
+// [engine.ErrDecline]. A server that does not answer within [Server.Answering] returns
+// [engine.ErrDecline].
 //
-// Imports and their inverse, which are written in the source rather than
-// resolved from it and are the parser's to read. Declined rather than
-// answered with none, because none is a claim that there are none.
+// Relate reads the declarations of the files of the first [engine.Request.Limit] sites that
+// the server names, by path and position, and returns their relations. A caveat of
+// [trust.CaveatTruncated] counts the sites that the answer leaves out. An error lowers the
+// answer when it is on a line that writes the name of the declaration outside every site that
+// the server named.
 func (e *Engine) Relate(
 	ctx context.Context,
 	req engine.Request,
 	of sema.ID,
 	kind sema.RelationKind,
 ) (engine.Result[sema.Relation], error) {
-	// Read before the server is started, and the same paths are what
-	// declaring works through: the scope is walked once either way, and
-	// a scope holding none of this language never costs a process.
-	paths, err := e.files(req)
+	out, err := e.relating(ctx, req, of, kind)
+	return out, e.unanswered(ctx, err)
+}
+
+// relating is [Engine.Relate] before a missed deadline becomes a decline.
+func (e *Engine) relating(
+	ctx context.Context,
+	req engine.Request,
+	of sema.ID,
+	kind sema.RelationKind,
+) (engine.Result[sema.Relation], error) {
+	files, err := e.walk(req)
 	if err != nil {
 		return engine.Result[sema.Relation]{}, err
 	}
-	if len(paths) == 0 {
-		// The scope holds no file this engine reads, so it says nothing
-		// about the declaration rather than that it has no edges.
+	if len(files.Read) == 0 && len(files.Unread) == 0 {
 		return engine.Result[sema.Relation]{Skipped: true, Completeness: trust.ScopeTotal}, nil
+	}
+	if !related(kind) {
+		return engine.Result[sema.Relation]{}, fmt.Errorf(
+			"%w: %s: no request returns %s", engine.ErrDecline, e.server.Name, kind)
 	}
 
 	held, err := e.running(ctx)
 	if err != nil {
 		return engine.Result[sema.Relation]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
-	if !serves(kind) {
-		return engine.Result[sema.Relation]{}, fmt.Errorf(
-			"%w: %s: no request behind %s", engine.ErrDecline, e.server.Name, kind)
-	}
-
-	subject, doc, known, read, err := e.declaring(ctx, held, req, of, paths)
+	ctx, done := e.answered(ctx)
+	defer done()
+	found := newFinder(e, held)
+	subject, doc, known, err := e.declaring(ctx, found, req, of, files.Read)
 	switch {
 	case err != nil:
 		return engine.Result[sema.Relation]{}, err
-	case !read:
-		// The scope holds no file this engine reads, so it says nothing
-		// about the declaration rather than that it has no edges.
-		return engine.Result[sema.Relation]{Skipped: true, Completeness: trust.ScopeTotal}, nil
 	case !known:
-		// Read the files and found no such declaration. Declined rather
-		// than answered with none: an engine that cannot find what it
-		// was asked about has no view of its edges either, and none of
-		// them over total coverage is a claim that it has none.
-		return engine.Result[sema.Relation]{}, fmt.Errorf(
-			"%w: %s: no declaration in %q matches %s",
-			engine.ErrDecline, e.server.Name, req.Scope, of)
+		return engine.Result[sema.Relation]{}, fmt.Errorf("%w: %s: no declaration in %s matches %s%s",
+			engine.ErrDecline, e.server.Name, req.Scope, of, skipping(files.Unread))
 	}
+	// The files are open, and opening a file starts its analysis in the server.
+	ready := e.settle(ctx, held)
 
-	// Waited on here rather than before the files were opened. Opening a
-	// document is what starts a server compiling it, so a wait that ran
-	// first waited on an idle server and the question that followed
-	// raced the work it had just asked for.
-	e.working.settle(ctx, e.settling())
-
-	at := naming(doc, subject)
 	pick := protocol.TextDocumentPositionParams{
 		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(doc.path))},
-		Position:     at,
+		Position:     naming(doc, subject),
 	}
-
-	found := newFinder(e, held)
-	var out []sema.Relation
-	// saw reports whether the server resolved the declaration at all.
-	// An empty answer from a server that did not is not a claim that
-	// there are no edges; it is a server with nothing loaded to answer
-	// from, and the two are indistinguishable in the answer itself.
+	var named []site
+	// saw reports whether the server returned any handle on the declaration. An empty reply
+	// from a server without one is no evidence that the declaration has no relation.
 	saw := true
 	switch kind {
 	case sema.ReferencedBy, sema.References:
-		out, saw, err = e.referring(ctx, held, found, pick, kind)
+		named, saw, err = e.referring(ctx, held, pick)
 	case sema.CalledBy, sema.Calls:
-		out, saw, err = e.calling(ctx, held, found, pick, kind)
+		named, saw, err = e.calling(ctx, held, pick, kind)
 	case sema.Implements, sema.ImplementedBy:
-		out, saw, err = e.implementing(ctx, held, found, pick, kind)
+		named, saw, err = e.implementing(ctx, held, pick)
 	case sema.Embeds, sema.EmbeddedBy:
-		out, saw, err = e.incorporating(ctx, held, found, pick, kind)
+		named, saw, err = e.incorporating(ctx, held, pick, kind)
 	}
 	if err != nil {
 		return engine.Result[sema.Relation]{}, err
 	}
 
+	kept, left := limited(named, req.Limit)
+	out := make([]sema.Relation, 0, len(kept))
+	for _, one := range kept {
+		edge, err := e.relation(ctx, found, kind, one)
+		if err != nil {
+			return engine.Result[sema.Relation]{}, err
+		}
+		out = append(out, edge)
+	}
 	slices.SortFunc(out, order)
-	covered, reaches, caveats := e.bound(ctx, req.Scope)
+
+	sites := []source.Span{subject.Span}
+	for _, one := range out {
+		sites = append(sites, one.At)
+	}
+	for _, one := range left {
+		sites = append(sites, one.lines())
+	}
+	covered, reaches, caveats := e.bound(held, req.Scope, ready, lang.Writing(subject.Name, lang.Spanned(sites...)))
 	if !saw {
 		covered = trust.ScopePartial
 		caveats = append(caveats, unresolved)
+	}
+	if len(left) > 0 {
+		caveats = append(caveats, trust.Caveat{
+			Code: trust.CaveatTruncated,
+			Note: fmt.Sprintf("%d of %d relations returned", len(out), len(named)),
+		})
 	}
 	return engine.Result[sema.Relation]{
 		Items:        out,
@@ -139,28 +152,8 @@ func (e *Engine) Relate(
 	}, nil
 }
 
-// unresolved is the caveat on an empty answer nothing stands behind.
-//
-// What it says and does not say matters. It does not say the server is
-// broken or that the declaration is unknown to it: metals answers
-// references for a trait whose implementations it reports as none. It
-// says only that nothing established the server had analysed the file,
-// so an empty answer may be one it has not looked at rather than one
-// with nothing in it — and those are the two an empty list cannot tell
-// apart.
-//
-// The caution is deliberate and it costs something: a server that
-// analysed a file, found nothing, and published nothing to say so is
-// reported as short when it was complete. That is the wrong way round to
-// be wrong, which is the only reason to prefer it.
-var unresolved = trust.Caveat{
-	Code: trust.CaveatIndexWarming,
-	Note: "nothing established that the server had analysed this file, so an " +
-		"empty answer may be one it has not looked at",
-}
-
-// serves reports whether a direction has a request behind it.
-func serves(kind sema.RelationKind) bool {
+// related reports whether a request of LSP 3.17 returns the relations of kind.
+func related(kind sema.RelationKind) bool {
 	switch kind {
 	case sema.ReferencedBy, sema.References,
 		sema.CalledBy, sema.Calls,
@@ -171,163 +164,132 @@ func serves(kind sema.RelationKind) bool {
 	return false
 }
 
-// incorporating walks the type hierarchy, which is what one type takes
-// from another.
-//
-// Every language spells it differently and the protocol has one request
-// for all of them: an anonymous field in Go, extends in Java and
-// TypeScript, with in Scala, include in Ruby, a base class in Python.
-// Supertypes are what a type incorporates and subtypes are what
-// incorporates it.
-func (e *Engine) incorporating(
-	ctx context.Context,
-	held *session,
-	found *finder,
-	pick protocol.TextDocumentPositionParams,
-	kind sema.RelationKind,
-) ([]sema.Relation, bool, error) {
-	if !provides(held.capable.TypeHierarchyProvider) {
-		return nil, false, e.unsupported("the type hierarchy")
+// skipping returns the clause of a decline that counts the files larger than [lang.Largest]
+// that the search for a declaration skipped, or the empty string for none.
+func skipping(unread []source.Path) string {
+	if len(unread) == 0 {
+		return ""
 	}
-	items, err := held.asks.PrepareTypeHierarchy(ctx, &protocol.TypeHierarchyPrepareParams{
-		TextDocumentPositionParams: pick,
+	return fmt.Sprintf(", and %d files larger than an engine reads were not searched", len(unread))
+}
+
+// site is one relation that a server named, before the engine reads the declaration at its
+// far end.
+type site struct {
+	// path is the file of at, the range of the call or the reference.
+	path source.Path
+	at   protocol.Range
+	// placed reports whether the server returned a range for the site. The call hierarchy can
+	// return a far end without one.
+	placed bool
+	// far is the item that the server named as the far end, or nil when the far end is the
+	// innermost declaration that contains the site.
+	far *protocol.CallHierarchyItem
+}
+
+// lines returns the span of the lines of s, without offsets.
+func (s site) lines() source.Span {
+	return source.Span{
+		Path:  s.path,
+		Start: source.Position{Line: int(s.at.Start.Line)},
+		End:   source.Position{Line: int(s.at.End.Line)},
+	}
+}
+
+// limited sorts sites by path and position, and returns the first limit of them and the sites
+// after those. A limit of zero or less keeps every site.
+func limited(sites []site, limit int) (kept, left []site) {
+	slices.SortStableFunc(sites, func(a, b site) int {
+		return cmp.Or(
+			cmp.Compare(a.path, b.path),
+			cmp.Compare(a.at.Start.Line, b.at.Start.Line),
+			cmp.Compare(a.at.Start.Character, b.at.Start.Character),
+		)
 	})
-	if err != nil {
-		// A server refuses this for anything that is not a type, which
-		// is a question that does not apply rather than one with no
-		// answer.
-		return nil, false, fmt.Errorf("%w: %s: type hierarchy: %w",
-			engine.ErrDecline, e.server.Name, err)
+	if limit <= 0 || len(sites) <= limit {
+		return sites, nil
 	}
-	// No item is the server saying it has no handle on this type, which
-	// is a different fact from the type incorporating nothing.
-	if len(items) == 0 {
-		return nil, false, nil
-	}
-
-	var out []sema.Relation
-	for _, item := range items {
-		related, err := e.hierarchical(ctx, held, item, kind)
-		if err != nil {
-			return nil, false, err
-		}
-		for _, one := range related {
-			edges, err := e.typed(ctx, found, one, kind)
-			if err != nil {
-				return nil, false, err
-			}
-			out = append(out, edges...)
-		}
-	}
-	return out, true, nil
+	return sites[:limit], sites[limit:]
 }
 
-// hierarchical reads one end of the hierarchy for one item.
-func (e *Engine) hierarchical(
-	ctx context.Context,
-	held *session,
-	item protocol.TypeHierarchyItem,
-	kind sema.RelationKind,
-) ([]protocol.TypeHierarchyItem, error) {
-	if kind == sema.Embeds {
-		out, err := held.asks.Supertypes(ctx,
-			&protocol.TypeHierarchySupertypesParams{Item: item})
-		if err != nil {
-			return nil, fmt.Errorf("lsp: %s: supertypes: %w", e.server.Name, err)
-		}
-		return out, nil
-	}
-	out, err := held.asks.Subtypes(ctx, &protocol.TypeHierarchySubtypesParams{Item: item})
-	if err != nil {
-		return nil, fmt.Errorf("lsp: %s: subtypes: %w", e.server.Name, err)
-	}
-	return out, nil
-}
-
-// typed turns one type-hierarchy item into an edge, naming it from an
-// outline where the file can be read and from the item where it cannot.
-func (e *Engine) typed(
-	ctx context.Context,
-	found *finder,
-	item protocol.TypeHierarchyItem,
-	kind sema.RelationKind,
-) ([]sema.Relation, error) {
-	p := e.pathOf(item.URI)
-	far, known, err := found.at(ctx, p, item.SelectionRange.Start)
-	if err != nil {
-		return nil, err
-	}
-	if !known {
-		far = e.itemised(hierarchyItem(item), p)
-	}
-
-	doc, err := found.file(ctx, p)
-	if err != nil {
-		return nil, err
-	}
-	span := source.Span{Path: p}
-	via := ""
-	if len(doc.doc.at) > 0 {
-		span = doc.doc.span(item.SelectionRange)
-		via = doc.doc.sourceLine(span)
-	}
-	return []sema.Relation{{Kind: kind, To: far, At: span, Via: via}}, nil
-}
-
-// hierarchyItem reads a type-hierarchy item as a call-hierarchy one, so
-// one conversion names both. The two carry the same fields under the
-// same names and differ only in which request produced them.
-func hierarchyItem(held protocol.TypeHierarchyItem) protocol.CallHierarchyItem {
-	return protocol.CallHierarchyItem{
-		Name: held.Name, Kind: held.Kind, Detail: held.Detail,
-		URI: held.URI, Range: held.Range, SelectionRange: held.SelectionRange,
-	}
-}
-
-// referring finds every use of a declaration.
+// relation returns the relation of kind that s names.
 //
-// The declaration itself is left out. A caller asking who uses this
-// already has the one it asked about, and counting it makes an unused
-// declaration report one use.
+// The far end of a site with an item is the declaration at the selection range of the item,
+// or a declaration built from the item when its file has none there. The far end of a site
+// without an item is the innermost declaration that contains the site, or the file of the site
+// when no declaration contains it, as for an import.
+func (e *Engine) relation(ctx context.Context, found *finder, kind sema.RelationKind, s site) (sema.Relation, error) {
+	var to sema.Symbol
+	if s.far != nil {
+		farPath := e.pathOf(s.far.URI)
+		declared, known, err := found.at(ctx, farPath, s.far.SelectionRange.Start)
+		if err != nil {
+			return sema.Relation{}, err
+		}
+		to = declared
+		if !known {
+			to = e.itemised(*s.far, farPath)
+		}
+		if !s.placed {
+			return sema.Relation{Kind: kind, To: to}, nil
+		}
+	}
+
+	kept, err := found.file(ctx, s.path)
+	if err != nil {
+		return sema.Relation{}, err
+	}
+	at, via := siteOf(kept.doc, s.path, s.at)
+	if s.far == nil {
+		within, known, err := found.at(ctx, s.path, s.at.Start)
+		if err != nil {
+			return sema.Relation{}, err
+		}
+		to = within
+		if !known {
+			to = e.fileOf(kept.doc, s.path, at)
+		}
+	}
+	return sema.Relation{Kind: kind, To: to, At: at, Via: via}, nil
+}
+
+// located returns the site of a location whose far end is the declaration that contains it.
+func (e *Engine) located(one protocol.Location) site {
+	return site{path: e.pathOf(one.URI), at: one.Range, placed: true}
+}
+
+// referring returns the sites of the uses of the declaration at pick. It asks with the
+// declaration included and drops the declaration, so an empty reply shows that the server has
+// no handle on the declaration, which the second result reports.
 func (e *Engine) referring(
 	ctx context.Context,
 	held *session,
-	found *finder,
 	pick protocol.TextDocumentPositionParams,
-	kind sema.RelationKind,
-) ([]sema.Relation, bool, error) {
+) ([]site, bool, error) {
 	if !provides(held.capable.ReferencesProvider) {
 		return nil, false, e.unsupported("textDocument/references")
 	}
-	// Asked with the declaration included, and it is dropped here. A
-	// server that resolved the declaration returns at least the
-	// declaration; one that returns nothing at all did not resolve it,
-	// and its silence says nothing about how many uses there are.
-	sites, err := held.asks.References(ctx, &protocol.ReferenceParams{
+	answered, err := held.asks.References(ctx, &protocol.ReferenceParams{
 		TextDocumentPositionParams: pick,
 		Context:                    protocol.ReferenceContext{IncludeDeclaration: true},
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("lsp: %s: references: %w", e.server.Name, err)
 	}
-	if len(sites) == 0 {
+	if len(answered) == 0 {
 		return nil, false, nil
 	}
-
-	uses := make([]protocol.Location, 0, len(sites))
-	for _, one := range sites {
-		if declaring(one, pick) {
-			continue
+	out := make([]site, 0, len(answered))
+	for _, one := range answered {
+		if !pointsAt(one, pick) {
+			out = append(out, e.located(one))
 		}
-		uses = append(uses, one)
 	}
-	edges, err := e.sited(ctx, found, uses, kind)
-	return edges, true, err
+	return out, true, nil
 }
 
-// declaring reports whether a location is the declaration the question
-// was about, rather than a use of it.
-func declaring(one protocol.Location, pick protocol.TextDocumentPositionParams) bool {
+// pointsAt reports whether the range of one contains the position of pick in the same file.
+func pointsAt(one protocol.Location, pick protocol.TextDocumentPositionParams) bool {
 	if one.URI != pick.TextDocument.URI {
 		return false
 	}
@@ -341,14 +303,14 @@ func declaring(one protocol.Location, pick protocol.TextDocumentPositionParams) 
 	return at.Line != to.Line || at.Character <= to.Character
 }
 
-// implementing finds what a type satisfies, or what satisfies it.
+// implementing returns the sites of what the declaration at pick implements, or of what
+// implements it, from textDocument/implementation. An empty reply is evidence of none only
+// from a server that has analysed the file, which the second result reports.
 func (e *Engine) implementing(
 	ctx context.Context,
 	held *session,
-	found *finder,
 	pick protocol.TextDocumentPositionParams,
-	kind sema.RelationKind,
-) ([]sema.Relation, bool, error) {
+) ([]site, bool, error) {
 	if !provides(held.capable.ImplementationProvider) {
 		return nil, false, e.unsupported("textDocument/implementation")
 	}
@@ -358,95 +320,55 @@ func (e *Engine) implementing(
 	if err != nil {
 		return nil, false, fmt.Errorf("lsp: %s: implementations: %w", e.server.Name, err)
 	}
-
-	sites := definitions(answered)
-	edges, err := e.sited(ctx, found, sites, kind)
-	if err != nil || len(sites) > 0 {
-		return edges, true, err
+	locations := definitions(answered)
+	if len(locations) == 0 {
+		return nil, e.analysed(ctx, held, e.pathOf(pick.TextDocument.URI)), nil
 	}
-	// Nothing came back, and for a concrete type that is the right
-	// answer. Whether it is depends on the server having a view of the
-	// file at all, which the empty list cannot say and which resolving a
-	// definition does not establish: a syntactic index resolves one.
-	return edges, e.analysed(ctx, held, e.pathOf(pick.TextDocument.URI)), nil
+	out := make([]site, 0, len(locations))
+	for _, one := range locations {
+		out = append(out, e.located(one))
+	}
+	return out, true, nil
 }
 
-// sited turns locations into edges, naming the declaration each one
-// falls inside.
-//
-// A location is a file and a range. What a caller reading who-uses-this
-// wants is which declaration the use is written in, so the file is
-// outlined and the declaration covering the range is the far end.
-func (e *Engine) sited(
-	ctx context.Context,
-	found *finder,
-	sites []protocol.Location,
-	kind sema.RelationKind,
-) ([]sema.Relation, error) {
-	var out []sema.Relation
-	for _, one := range sites {
-		p := e.pathOf(one.URI)
-		within, known, err := found.at(ctx, p, one.Range.Start)
-		if err != nil {
-			return nil, err
-		}
-		held, err := found.file(ctx, p)
-		if err != nil {
-			return nil, err
-		}
-		if !known {
-			// The site falls outside every declaration the outline
-			// reports: an import, a package-level initialiser, an impl
-			// block a server does not report as a symbol. It is still a
-			// site, so it is named by the file that holds it rather than
-			// dropped — an edge that exists and is not reported is the
-			// same false answer as one that was never found.
-			within = at(e, held, one.Range)
-		}
-		span := held.doc.span(one.Range)
-		out = append(out, sema.Relation{
-			Kind: kind, To: within, At: span, Via: held.doc.sourceLine(span),
-		})
+// siteOf returns the span of r in doc and the source line it starts on. For a file without a
+// document, such as a file larger than [lang.Largest], it returns a span with the lines that
+// the server reported, no offsets, and an empty line.
+func siteOf(doc document, p source.Path, r protocol.Range) (source.Span, string) {
+	if len(doc.at) == 0 {
+		return source.Span{
+			Path:  p,
+			Start: source.Position{Line: int(r.Start.Line)},
+			End:   source.Position{Line: int(r.End.Line)},
+		}, ""
 	}
-	return out, nil
+	span := doc.span(r)
+	return span, doc.sourceLine(span)
 }
 
-// at names a site by the file that holds it, for a site no declaration
-// encloses.
-//
-// Worse than an outline and better than silence: it carries the file,
-// the line and the source, which is what a caller reading a list of
-// sites acts on. An import, a package-level initialiser and an impl
-// block a server does not report as a symbol all land here.
-//
-// The file, rather than the kind for a declaration nobody classified.
-// [sema.Kinds] leaves that one out of the set an answer may carry, so an
-// item holding it does not validate against the shape this tool
-// declares — a fuzzing run over a real workspace found exactly that,
-// and a client checking the schema would drop the whole answer.
-func at(e *Engine, held outlined, over protocol.Range) sema.Symbol {
-	span := held.doc.span(over)
+// fileOf returns the file at p as the far end of a relation whose site no declaration
+// contains. Its kind is [sema.KindFile], which [sema.Kinds] lists as a kind an answer
+// may contain.
+func (e *Engine) fileOf(doc document, p source.Path, at source.Span) sema.Symbol {
 	return sema.Symbol{
-		Name:     path.Base(string(held.doc.path)),
+		Name:     path.Base(string(p)),
 		Kind:     sema.KindFile,
 		Language: e.declared.Language,
-		Span:     span,
-		Snippet:  held.doc.text(span),
+		Span:     at,
+		Snippet:  doc.text(at),
 	}
 }
 
-// calling walks the call hierarchy, which is narrower than references
-// and is what a caller asking about calls means.
+// calling returns the sites of the incoming or the outgoing calls of the declaration at pick,
+// from the call hierarchy. A server that refuses to prepare the hierarchy, as servers do for a
+// declaration that cannot be called, returns [engine.ErrDecline]. A server that prepares no
+// item has no handle on the declaration, which the second result reports.
 func (e *Engine) calling(
 	ctx context.Context,
 	held *session,
-	found *finder,
 	pick protocol.TextDocumentPositionParams,
 	kind sema.RelationKind,
-) ([]sema.Relation, bool, error) {
-	// The hierarchy is prepared before it is walked, because the item a
-	// call is reported against is the server's own handle on the
-	// declaration and not a position.
+) ([]site, bool, error) {
 	if !provides(held.capable.CallHierarchyProvider) {
 		return nil, false, e.unsupported("the call hierarchy")
 	}
@@ -454,266 +376,153 @@ func (e *Engine) calling(
 		TextDocumentPositionParams: pick,
 	})
 	if err != nil {
-		// A server refuses this for a declaration nothing can call: an
-		// interface, a type, a constant. Declining rather than failing,
-		// because the question does not apply here and may apply to
-		// whatever answers next — and because answering none would be a
-		// claim that nothing calls it.
-		return nil, false, fmt.Errorf("%w: %s: call hierarchy: %w",
-			engine.ErrDecline, e.server.Name, err)
+		return nil, false, fmt.Errorf("%w: %s: call hierarchy: %w", engine.ErrDecline, e.server.Name, err)
 	}
-	// No item is the server saying it has no handle on this declaration,
-	// which is a different fact from the declaration having no calls.
 	if len(items) == 0 {
 		return nil, false, nil
 	}
 
-	var out []sema.Relation
+	var out []site
 	for _, item := range items {
-		edges, err := e.calls(ctx, held, found, item, kind)
+		sites, err := e.calls(ctx, held, item, kind)
 		if err != nil {
 			return nil, false, err
 		}
-		out = append(out, edges...)
+		out = append(out, sites...)
 	}
 	return out, true, nil
 }
 
-// calls reads one end of the hierarchy for one item.
+// calls returns the sites of the calls of one call hierarchy item. The sites of a call are
+// ranges in the file of the caller: the caller of an incoming call, and the item itself for an
+// outgoing call.
 func (e *Engine) calls(
 	ctx context.Context,
 	held *session,
-	found *finder,
 	item protocol.CallHierarchyItem,
 	kind sema.RelationKind,
-) ([]sema.Relation, error) {
-	var out []sema.Relation
-
+) ([]site, error) {
+	var out []site
 	if kind == sema.CalledBy {
-		answered, err := held.asks.IncomingCalls(ctx,
-			&protocol.CallHierarchyIncomingCallsParams{Item: item})
+		answered, err := held.asks.IncomingCalls(ctx, &protocol.CallHierarchyIncomingCallsParams{Item: item})
 		if err != nil {
 			return nil, fmt.Errorf("lsp: %s: incoming calls: %w", e.server.Name, err)
 		}
 		for _, one := range answered {
-			// The ranges are relative to the caller, so the caller's own
-			// file is where the call sites are written.
-			edges, err := e.hierarchy(ctx, found, one.From, one.FromRanges, kind)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, edges...)
+			out = append(out, e.hierarchy(one.From, one.From.URI, one.FromRanges)...)
 		}
 		return out, nil
 	}
 
-	answered, err := held.asks.OutgoingCalls(ctx,
-		&protocol.CallHierarchyOutgoingCallsParams{Item: item})
+	answered, err := held.asks.OutgoingCalls(ctx, &protocol.CallHierarchyOutgoingCallsParams{Item: item})
 	if err != nil {
 		return nil, fmt.Errorf("lsp: %s: outgoing calls: %w", e.server.Name, err)
 	}
 	for _, one := range answered {
-		// Here the ranges are relative to the item that does the
-		// calling, which is the declaration this question is about,
-		// rather than to the one being called.
-		edges, err := e.hierarchy(ctx, found, one.To, one.FromRanges, kind)
-		if err != nil {
-			return nil, err
-		}
-		for i := range edges {
-			edges[i].At = source.Span{}
-			edges[i].Via = ""
-		}
-		out = append(out, edges...)
+		out = append(out, e.hierarchy(one.To, item.URI, one.FromRanges)...)
 	}
 	return out, nil
 }
 
-// hierarchy turns one call-hierarchy item and its sites into edges.
-//
-// The item carries the name and the kind the server assigned, so the far
-// end is built from it rather than from outlining the file again — which
-// for a caller in a file this language does not claim is the only way to
-// name it at all.
-func (e *Engine) hierarchy(
-	ctx context.Context,
-	found *finder,
-	item protocol.CallHierarchyItem,
-	sites []protocol.Range,
-	kind sema.RelationKind,
-) ([]sema.Relation, error) {
-	p := e.pathOf(item.URI)
-	held, err := found.file(ctx, p)
-	if err != nil {
-		return nil, err
+// hierarchy returns one site per range of ranges, each a range in the file of in, with far as
+// the far end. A far end without ranges has one site without a range.
+func (e *Engine) hierarchy(far protocol.CallHierarchyItem, in uri.URI, ranges []protocol.Range) []site {
+	if len(ranges) == 0 {
+		return []site{{far: &far}}
 	}
-
-	far, known, err := found.at(ctx, p, item.SelectionRange.Start)
-	if err != nil {
-		return nil, err
+	p := e.pathOf(in)
+	out := make([]site, 0, len(ranges))
+	for _, r := range ranges {
+		out = append(out, site{path: p, at: r, placed: true, far: &far})
 	}
-	if !known {
-		far = e.itemised(item, p)
-	}
-
-	if len(sites) == 0 {
-		return []sema.Relation{{Kind: kind, To: far}}, nil
-	}
-
-	out := make([]sema.Relation, 0, len(sites))
-	for _, at := range sites {
-		span := source.Span{Path: p}
-		via := ""
-		if len(held.doc.at) > 0 {
-			span = held.doc.span(at)
-			via = held.doc.sourceLine(span)
-		}
-		out = append(out, sema.Relation{Kind: kind, To: far, At: span, Via: via})
-	}
-	return out, nil
+	return out
 }
 
-// itemised builds a declaration from what the hierarchy said about it.
-//
-// Used where the file cannot be outlined: a caller in a dependency, in a
-// generated tree, in a language this engine does not claim. Naming it
-// from the item is worse than an outline and better than dropping an
-// edge that exists.
+// itemised returns the declaration that a hierarchy item describes, for a file whose
+// declarations the engine has not read. It has a name, a kind and a signature, and its span
+// names the file only.
 func (e *Engine) itemised(item protocol.CallHierarchyItem, p source.Path) sema.Symbol {
 	kind, _ := KindOf(item.Kind)
 	name := trimmed(item.Name)
+	unit := source.Path(e.declared.Namespace(string(p)))
 	return sema.Symbol{
-		ID:         sema.NewID(e.declared.Language, source.Path(e.declared.Namespace(string(p))), name, kind),
+		ID:         sema.NewID(e.declared.Language, unit, qualified(kind, name, "", item.Name), kind),
 		Name:       name,
 		Kind:       kind,
 		Language:   e.declared.Language,
 		Span:       source.Span{Path: p},
 		Visibility: e.declared.Visibility(name),
-		Signature:  strings.TrimSpace(name + " " + detail(item.Detail)),
+		Signature:  strings.TrimSpace(name + " " + optional(item.Detail)),
 	}
 }
 
-// declaring finds the declaration a question is about, and the file it
-// is written in.
-// The last result reports whether there was anything to read at all,
-// which is a different answer from having read it and found no such
-// declaration: the first says nothing about the language, and the second
-// says this engine cannot answer about this name.
-func (e *Engine) declaring(
+// incorporating returns the sites of the supertypes or the subtypes of the type at pick, from
+// the type hierarchy. A server that refuses to prepare the hierarchy, as servers do for a
+// declaration that is not a type, returns [engine.ErrDecline]. A server that prepares no item
+// has no handle on the type, which the second result reports.
+func (e *Engine) incorporating(
 	ctx context.Context,
 	held *session,
-	req engine.Request,
-	of sema.ID,
-	paths []source.Path,
-) (found sema.Symbol, doc document, known, read bool, err error) {
-	// Collected rather than returned on the first match, because the
-	// fallback below has to know whether a name picks out one
-	// declaration or several.
-	var named []sema.Symbol
-	var where []document
-	for _, p := range paths {
-		if err := ctx.Err(); err != nil {
-			return sema.Symbol{}, document{}, false, false, err
-		}
-		if !req.Tests && e.declared.IsTest(string(p)) {
-			continue
-		}
-		read = true
+	pick protocol.TextDocumentPositionParams,
+	kind sema.RelationKind,
+) ([]site, bool, error) {
+	if !provides(held.capable.TypeHierarchyProvider) {
+		return nil, false, e.unsupported("the type hierarchy")
+	}
+	items, err := held.asks.PrepareTypeHierarchy(ctx, &protocol.TypeHierarchyPrepareParams{
+		TextDocumentPositionParams: pick,
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("%w: %s: type hierarchy: %w", engine.ErrDecline, e.server.Name, err)
+	}
+	if len(items) == 0 {
+		return nil, false, nil
+	}
 
-		symbols, doc, err := e.symbols(ctx, held, p)
+	var out []site
+	for _, item := range items {
+		related, err := e.typed(ctx, held, item, kind)
 		if err != nil {
-			return sema.Symbol{}, document{}, false, read, err
+			return nil, false, err
 		}
-		for _, one := range symbols {
-			if one.ID == of {
-				return one, doc, true, read, nil
+		for _, one := range related {
+			called := protocol.CallHierarchyItem{
+				Name: one.Name, Kind: one.Kind, Detail: one.Detail,
+				URI: one.URI, Range: one.Range, SelectionRange: one.SelectionRange,
 			}
-			if one.Name == of.Name() {
-				named = append(named, one)
-				where = append(where, doc)
-			}
+			out = append(out, e.hierarchy(called, one.URI, []protocol.Range{one.SelectionRange})...)
 		}
 	}
-
-	// No identity matched. An identity carries a kind, and the parser
-	// that built the one being asked about and the server answering here
-	// need not agree on it: metals calls a method in a Scala object what
-	// the parser calls a function, and the two identities differ in that
-	// one field alone. Falling back to the name settles it wherever the
-	// name picks out one declaration, and refuses to guess where it does
-	// not.
-	if len(named) == 1 {
-		return named[0], where[0], true, read, nil
-	}
-	return sema.Symbol{}, document{}, false, read, nil
+	return out, true, nil
 }
 
-// naming is where a declaration's own name is written.
-//
-// A request about a declaration has to point at its name. A server asked
-// about the first byte of "type Store struct {" is asked about the
-// keyword and answers about nothing.
-//
-// The server says where the name is, and that is taken: a declaration's
-// span starts at its documentation for the servers that count the
-// documentation as part of it, and a declaration documented with its own
-// name in the first line — which is what a doc comment is — would
-// otherwise have every request about it aimed at the comment. Driving a
-// rename over a documented Rust struct produced exactly that, and
-// rust-analyzer answered that there is nothing there.
-//
-// Searching the text is the fallback, for a server that answers the flat
-// shape and says only where the whole declaration is.
-func naming(doc document, of sema.Symbol) protocol.Position {
-	if at, said := doc.names[of.Span.Start.Offset]; said {
-		return at
-	}
-	if at := worded(doc.text(of.Span), of.Name); at >= 0 {
-		return doc.mark(source.Position{Offset: of.Span.Start.Offset + at})
-	}
-	return doc.mark(of.Span.Start)
-}
-
-// worded finds a name written as a name, and not as part of a longer
-// one.
-//
-// Without the boundary check, resolving Get inside a declaration holding
-// GetAll points the request at the wrong four bytes and the server
-// answers about something else.
-func worded(within, name string) int {
-	if name == "" {
-		return -1
-	}
-	for from := 0; ; {
-		at := strings.Index(within[from:], name)
-		if at < 0 {
-			return -1
+// typed returns the supertypes of item for [sema.Embeds] and its subtypes otherwise.
+func (e *Engine) typed(
+	ctx context.Context,
+	held *session,
+	item protocol.TypeHierarchyItem,
+	kind sema.RelationKind,
+) ([]protocol.TypeHierarchyItem, error) {
+	if kind == sema.Embeds {
+		out, err := held.asks.Supertypes(ctx, &protocol.TypeHierarchySupertypesParams{Item: item})
+		if err != nil {
+			return nil, fmt.Errorf("lsp: %s: supertypes: %w", e.server.Name, err)
 		}
-		at += from
-		if !joined(within, at-1) && !joined(within, at+len(name)) {
-			return at
-		}
-		from = at + len(name)
+		return out, nil
 	}
+	out, err := held.asks.Subtypes(ctx, &protocol.TypeHierarchySubtypesParams{Item: item})
+	if err != nil {
+		return nil, fmt.Errorf("lsp: %s: subtypes: %w", e.server.Name, err)
+	}
+	return out, nil
 }
 
-// joined reports whether the byte at an index could be part of a name.
-func joined(within string, at int) bool {
-	if at < 0 || at >= len(within) {
-		return false
-	}
-	r := rune(within[at])
-	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
-}
-
-// order sorts edges by where they were written, so an answer reads in
-// file order and does not wander between calls.
+// order compares two relations by the path of their site, then its offset, then the name of
+// the far end.
 func order(a, b sema.Relation) int {
-	if by := strings.Compare(string(a.At.Path), string(b.At.Path)); by != 0 {
-		return by
-	}
-	if by := a.At.Start.Offset - b.At.Start.Offset; by != 0 {
-		return by
-	}
-	return strings.Compare(a.To.Name, b.To.Name)
+	return cmp.Or(
+		cmp.Compare(a.At.Path, b.At.Path),
+		cmp.Compare(a.At.Start.Offset, b.At.Start.Offset),
+		cmp.Compare(a.To.Name, b.To.Name),
+	)
 }

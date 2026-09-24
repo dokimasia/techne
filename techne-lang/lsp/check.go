@@ -6,56 +6,66 @@ package lsp
 import (
 	"context"
 	"fmt"
-	"path"
 	"slices"
+	"time"
 
 	"go.dokimi.dev/techne/core/diag"
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/lang"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 )
 
-// Check reports what the server makes of content the workspace does not
-// hold.
+// mendLimit is the number of error findings in one call for which the engine requests a fix.
+const mendLimit = 8
+
+// unchecked is the caveat on a check by a server that does not return workspace diagnostics.
+var unchecked = trust.Caveat{
+	Code: trust.CaveatDependents,
+	Note: "the server checked the changed files and not the files that depend on them",
+}
+
+// Check returns the findings of the server for content that is not on disk, such as the
+// projection of a change before the write path writes it. A path of another language and a
+// path with nil content, which a change deletes, are left out. Check takes these steps:
 //
-// # An unsaved buffer is how an editor asks this
+//  1. Show the server each file of files as an unsaved buffer.
+//  2. Wait for the server to settle.
+//  3. Collect the diagnostics of each file.
+//  4. Send the server the content on disk again, also when a step fails.
 //
-// The protocol has no request that takes content, and it does not need
-// one: a server analyses the buffers a client gives it, and a client
-// gives it text nobody has written all day. So the content is shown as
-// the buffer, the server is asked what is wrong with it, and the file is
-// put back before this returns.
+// A server that returns workspace diagnostics also reports the files that depend on the
+// changed files, and their findings follow the findings of the changed files. For any other
+// server the result contains the caveat [trust.CaveatDependents]. A server whose declaration
+// names what it leaves [Server.Unchecked] adds a [trust.CaveatPartialCheck] caveat.
 //
-// That is what makes the write path's gate a compiler's answer rather
-// than a parser's. A parse gate says the file is still the language it
-// was; this says it still means something. A rename to a name already
-// taken parses and does not compile, and nothing but a type checker
-// tells the two apart.
+// An error finding contains a fix when the server offers one quick fix for it, or marks one of
+// two or more as preferred. Check returns [engine.ErrDecline] in three cases, so the next
+// engine checks the content:
 //
-// # Each finding carries the fix where there is one
-//
-// The same server that reports a fault offers the code actions that
-// resolve it, and it is being asked already. One obvious fix is taken —
-// the only one offered, or the one it marks preferred. Several plausible
-// ones are left out rather than picked between.
-func (e *Engine) Check(
-	ctx context.Context,
-	files map[source.Path][]byte,
-) (engine.Result[edit.Finding], error) {
-	mine := make([]source.Path, 0, len(files))
+//   - files contain no path of the language.
+//   - The server has not settled.
+//   - The server reported nothing about a file.
+//   - The server did not answer within [Server.Answering].
+func (e *Engine) Check(ctx context.Context, files map[source.Path][]byte) (engine.Result[edit.Finding], error) {
+	out, err := e.checking(ctx, files)
+	return out, e.unanswered(ctx, err)
+}
+
+// checking is [Engine.Check] before a missed deadline becomes a decline.
+func (e *Engine) checking(ctx context.Context, files map[source.Path][]byte) (engine.Result[edit.Finding], error) {
+	var mine []source.Path
 	for p, content := range files {
-		// A path with no content is one the change takes away. There is
-		// nothing to analyse and nothing to object to.
-		if content != nil && slices.Contains(e.declared.Extensions, path.Ext(string(p))) {
+		if content != nil && lang.Claims(string(p), e.declared.Extensions) {
 			mine = append(mine, p)
 		}
 	}
 	if len(mine) == 0 {
 		return engine.Result[edit.Finding]{}, fmt.Errorf(
-			"%w: nothing here is %s", engine.ErrDecline, e.declared.Language)
+			"%w: no changed file is %s", engine.ErrDecline, e.declared.Language)
 	}
 	slices.Sort(mine)
 
@@ -63,107 +73,92 @@ func (e *Engine) Check(
 	if err != nil {
 		return engine.Result[edit.Finding]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
+	ctx, done := e.answered(ctx)
+	defer done()
 
-	// The server is holding text that is not on disk from here, and is
-	// put back before this returns however it ends. A question arriving
-	// meanwhile would otherwise put the files back underneath this one.
 	e.showing.Lock()
 	defer e.showing.Unlock()
 	defer e.restore(ctx, held, mine)
-
 	for _, p := range mine {
-		if _, shown := e.sync(ctx, held, e.fullPath(p), files[p]); shown != nil {
-			return engine.Result[edit.Finding]{}, shown
+		if _, err := e.sync(ctx, held, e.fullPath(p), files[p], stamp{}); err != nil {
+			return engine.Result[edit.Finding]{}, err
 		}
 	}
-	// A server given several buffers at once analyses them together, so
-	// this is waited on after all of them rather than per file.
-	e.working.settle(ctx, e.settling())
+	if !e.settle(ctx, held) {
+		return engine.Result[edit.Finding]{}, fmt.Errorf(
+			"%w: %s is still loading the workspace", engine.ErrDecline, e.server.Name)
+	}
 
+	by := time.Now().Add(reporting)
 	var out []edit.Finding
-	settled := true
 	for _, p := range mine {
-		reported, said, err := e.diagnostics(ctx, held, p)
+		reported, said, err := e.diagnostics(ctx, held, p, by)
 		if err != nil {
 			return engine.Result[edit.Finding]{}, err
 		}
-		settled = settled && said
-
+		if !said {
+			return engine.Result[edit.Finding]{}, fmt.Errorf(
+				"%w: %s reported nothing about %s", engine.ErrDecline, e.server.Name, p)
+		}
 		doc := texted(p, files[p])
 		for _, one := range reported {
 			out = append(out, e.finding(ctx, held, one, doc, len(out)))
 		}
 	}
 
-	// A gate that says content is clean is the claim a caller acts on by
-	// writing it, and a server that has not reported on every file it
-	// was shown has not made that claim.
-	//
-	// Declined rather than answered short, so the parser beside this one
-	// gets a turn: metals publishes nothing for a clean file, and a
-	// half-answer from it would leave Scala with no gate at all where it
-	// could still have had a grammar's.
-	if !settled {
-		return engine.Result[edit.Finding]{}, fmt.Errorf(
-			"%w: %s said nothing about what it was shown", engine.ErrDecline, e.server.Name)
+	caveats := []trust.Caveat{dynamic}
+	if e.server.Unchecked != "" {
+		caveats = append(caveats, trust.Caveat{
+			Code: trust.CaveatPartialCheck,
+			Note: e.server.Name + " does not check " + e.server.Unchecked + ", which the compiler checks, " +
+				"so the build can still refuse a change that this check passes",
+		})
 	}
-	return engine.Result[edit.Finding]{
-		Items:        out,
-		Completeness: trust.ScopeTotal,
-		Caveats:      []trust.Caveat{dynamic},
-	}, nil
+	if !workspaceWide(held.capable.DiagnosticProvider) {
+		return engine.Result[edit.Finding]{
+			Items: out, Completeness: trust.ScopeTotal, Caveats: append(caveats, unchecked),
+		}, nil
+	}
+	others, failed := e.dependents(ctx, held, mine)
+	switch {
+	case failed != nil && ctx.Err() != nil:
+		return engine.Result[edit.Finding]{}, failed
+	case failed != nil:
+		caveats = append(caveats, trust.Caveat{
+			Code: trust.CaveatDependents,
+			Note: "the files that depend on the changed files were not checked: " + failed.Error(),
+		})
+	default:
+		out = append(out, others...)
+	}
+	return engine.Result[edit.Finding]{Items: out, Completeness: trust.ScopeTotal, Caveats: caveats}, nil
 }
 
-// diagnostics is what the server says about one file, and whether it
-// said anything at all.
-//
-// Two ways a server reports and both are read. A server with a pull
-// request answers about the buffer it is holding now, which is what a
-// gate over unwritten content needs. One without publishes when it
-// finishes, so the wait is bounded and reports whether it ended with an
-// answer.
-func (e *Engine) diagnostics(
-	ctx context.Context,
-	held *session,
-	p source.Path,
-) ([]protocol.Diagnostic, bool, error) {
-	if held.capable.DiagnosticProvider != nil {
-		reported, err := e.pull(ctx, held, p)
-		return reported, true, err
-	}
-	reported, said := e.pushed.wait(ctx, uri.File(e.fullPath(p)), reporting)
-	return reported, said, nil
-}
-
-// finding is one diagnostic in this vocabulary, with the change that
-// resolves it where the server offers one obvious change.
-//
-// Fixes are fetched for faults alone, and only while there are few of
-// them. A file that stopped compiling on line three reports a fault for
-// most of what follows, and asking the server for a code action at each
-// of them is a round trip apiece for a list nobody reads to the end.
+// finding converts one diagnostic of doc into a finding. An error finding contains the fix
+// from [Engine.mending] while fewer than [mendLimit] findings precede it in the call.
 func (e *Engine) finding(
 	ctx context.Context,
 	held *session,
 	one protocol.Diagnostic,
 	doc document,
-	already int,
+	preceding int,
 ) edit.Finding {
 	out := edit.Finding{Diagnostic: found(one, doc)}
-	if out.Diagnostic.Severity < diag.SeverityError || already >= mendLimit {
+	if out.Diagnostic.Severity != diag.SeverityError || preceding >= mendLimit {
 		return out
 	}
 	out.Fix = e.mending(ctx, held, one, doc)
 	return out
 }
 
-// mending is the change a server offers for one fault, and nothing where
-// it offers none or several.
+// mending returns the changes of the one quick fix that the server offers for a diagnostic
+// of doc, resolved when the server resolves code actions. The ranges of the fix convert against
+// doc, the content the server was shown. mending returns nil in these cases:
 //
-// Several plausible fixes is the case this leaves alone. A caller told
-// there is one obvious change acts on it; told there are three, it has
-// to choose, and choosing needs what the caller was asking this to save
-// it from.
+//   - The server does not offer a fix.
+//   - The server offers two or more fixes without a preferred one.
+//   - The server refuses the request.
+//   - The fix changes a file outside the workspace.
 func (e *Engine) mending(
 	ctx context.Context,
 	held *session,
@@ -177,8 +172,6 @@ func (e *Engine) mending(
 		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(doc.path))},
 		Range:        one.Range,
 		Context: protocol.CodeActionContext{
-			// The fault this is about, so the server offers what
-			// resolves it rather than everything it could do here.
 			Diagnostics: []protocol.Diagnostic{one},
 			Only:        []protocol.CodeActionKind{protocol.CodeActionKindQuickFix},
 			TriggerKind: protocol.CodeActionTriggerKindAutomatic,
@@ -187,15 +180,17 @@ func (e *Engine) mending(
 	if err != nil {
 		return nil
 	}
-
 	action, obvious := only(offered)
 	if !obvious {
 		return nil
 	}
 	made := action.Edit
 	if made == nil && action.Data != nil && resolves(held.capable.CodeActionProvider) {
-		resolved, refused := held.asks.CodeActionResolve(ctx, action)
-		if refused != nil || resolved == nil {
+		// go.lsp.dev/protocol v1.0.1 writes into the action that CodeActionResolve sends, so
+		// the request sends a copy.
+		asked := *action
+		resolved, failed := held.asks.CodeActionResolve(ctx, &asked)
+		if failed != nil || resolved == nil {
 			return nil
 		}
 		made = resolved.Edit
@@ -203,28 +198,21 @@ func (e *Engine) mending(
 	if made == nil {
 		return nil
 	}
-
-	// Against the content the server was shown rather than the file: a
-	// gate judges what a change would produce, and that is what the
-	// fault and the fix are both written in.
-	changes, unreadable := e.changesAgainst(made, map[source.Path]document{doc.path: doc})
-	if unreadable != nil || beyond(changes) != "" {
+	changes, err := e.changes(made, map[source.Path]document{doc.path: doc})
+	if err != nil || beyond(changes) != "" {
 		return nil
 	}
 	return changes
 }
 
-// only returns the one obvious action among what was offered.
-//
-// One action is obvious. Several are obvious only where the server said
-// which it prefers, which is what isPreferred is for and what an editor
-// binds its one-key fix to.
+// only returns the one enabled code action of offered, or the first enabled action that the
+// server marks as preferred, and reports whether there is one. Two or more enabled actions
+// without a preferred one return false. A bare command is skipped.
 func only(offered []protocol.CommandOrCodeAction) (*protocol.CodeAction, bool) {
 	var single *protocol.CodeAction
 	var count int
-
-	for _, held := range offered {
-		action, isAction := held.(*protocol.CodeAction)
+	for _, one := range offered {
+		action, isAction := one.(*protocol.CodeAction)
 		if !isAction || action.Disabled.Reason != "" {
 			continue
 		}
@@ -235,11 +223,3 @@ func only(offered []protocol.CommandOrCodeAction) (*protocol.CodeAction, bool) {
 	}
 	return single, count == 1
 }
-
-// mendLimit caps how many faults in one check are looked up a fix for. A
-// gate needs one fault to refuse, and the fixes are a convenience beside
-// it.
-const mendLimit = 8
-
-// assert the engine serves the role it claims.
-var _ engine.Checker = (*Engine)(nil)

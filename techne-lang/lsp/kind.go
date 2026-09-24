@@ -8,16 +8,9 @@ import (
 	"go.lsp.dev/protocol"
 )
 
-// kinds maps what a server says a declaration is onto what techne says.
-//
-// Keyed by the protocol's own constants rather than by numbers written
-// out here. The numbering is wire format, and a second copy of it is a
-// copy that can drift from the one the answers are decoded with.
-//
-// Not every kind has a home. The protocol names the shapes a value takes
-// in a document as well as the shapes a declaration takes in code — a
-// string, a number, a key — because the same request outlines JSON.
-// Those declare nothing here.
+// kinds maps each LSP 3.17 symbol kind that declares something to its [sema.Kind]. The kinds of
+// a value in a document, such as a string, a number or a key in JSON, are absent, and so is an
+// event.
 var kinds = map[protocol.SymbolKind]sema.Kind{
 	protocol.SymbolKindFile:          sema.KindFile,
 	protocol.SymbolKindModule:        sema.KindModule,
@@ -39,13 +32,10 @@ var kinds = map[protocol.SymbolKind]sema.Kind{
 	protocol.SymbolKindTypeParameter: sema.KindTypeParameter,
 }
 
-// KindOf reports what a declaration of this kind is, and whether it is
-// one at all.
-//
-// A kind the protocol has and this vocabulary does not is dropped rather
-// than reported as unknown. A caller filtering an outline would
-// otherwise meet entries that declare nothing and cannot be acted on.
-func KindOf(held protocol.SymbolKind) (sema.Kind, bool) {
-	kind, declares := kinds[held]
-	return kind, declares
+// KindOf returns the [sema.Kind] of a protocol symbol kind, and reports whether the kind
+// declares something. A kind without a mapping, such as a string in a JSON document or a kind
+// that a later version of the protocol adds, reports false.
+func KindOf(kind protocol.SymbolKind) (sema.Kind, bool) {
+	mapped, declares := kinds[kind]
+	return mapped, declares
 }

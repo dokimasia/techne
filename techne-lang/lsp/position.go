@@ -4,60 +4,55 @@
 package lsp
 
 import (
-	"fmt"
-	"os"
+	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"go.dokimi.dev/techne/core/source"
+	"go.dokimi.dev/techne/lang"
 	"go.lsp.dev/protocol"
 )
 
-// document is a file's bytes and where each of its lines starts.
+// document is the content of one file and the offset at which each of its lines starts. It
+// converts positions between the protocol and techne:
 //
-// Every role converts between the two coordinate systems, and both
-// conversions need the file: the protocol names a line and a character
-// and techne names a byte offset, and neither can be worked out from the
-// other without the text between them.
+//   - The protocol counts a line and a character in UTF-16 code units, the LSP 3.17 default.
+//   - techne counts a byte offset, and a line and a column in bytes.
 //
-// It is read once per file per call and passed around, because a scope
-// holding fifty files would otherwise read each of them once per symbol
-// found in it.
+// A line ends at "\n". A "\r" before the "\n" is not part of the line. Each ASCII byte is one
+// code unit, so a conversion inside the ASCII bytes that start a line takes constant time. A
+// conversion past them decodes the line from its first byte outside ASCII. No conversion copies
+// the content.
 type document struct {
 	path    source.Path
 	content []byte
-	// at is the offset each line begins at, so a line number indexes
-	// straight into the file.
+	// at is the byte offset at which each line starts. The file has len(at) lines.
 	at []int
-	// names is where each declaration writes its own name, keyed by the
-	// byte the declaration starts at. It is what the server said rather
-	// than what could be worked out from the text, and is empty for a
-	// document nobody has outlined.
+	// plain is the number of ASCII bytes at the start of each line.
+	plain []int
+	// names is the position of the name of each declaration that the server reported,
+	// keyed by the offset at which the declaration starts. It is empty for a document whose
+	// symbols were not read.
 	names map[int]protocol.Position
 }
 
-// read loads a file for one call.
-//
-// Gated the same way [Engine.open] is, because a role that resolves a
-// position reads the file without ever giving it to the server, and a
-// gate on one of the two is a gate a caller can walk around.
-func (e *Engine) read(p source.Path) (document, error) {
-	if unreadable := e.readable(p); unreadable != nil {
-		return document{}, unreadable
-	}
-	content, err := os.ReadFile(e.fullPath(p))
-	if err != nil {
-		return document{}, fmt.Errorf("lsp: read %s: %w", p, err)
-	}
-	return texted(p, content), nil
-}
-
-// texted is a file's bytes as a document, for text that is not on disk:
-// what a file would hold after a change nothing has written yet.
+// texted returns the document of content at p, with no name recorded.
 func texted(p source.Path, content []byte) document {
-	return document{path: p, content: content, at: lines(content)}
+	d := document{path: p, content: content, at: lines(content), names: map[int]protocol.Position{}}
+	d.plain = make([]int, len(d.at))
+	for n := range d.at {
+		start, end := d.bounds(n)
+		ascii := start
+		for ascii < end && content[ascii] < utf8.RuneSelf {
+			ascii++
+		}
+		d.plain[n] = ascii - start
+	}
+	return d
 }
 
-// lines is where each line of a file starts.
+// lines returns the offset at which each line of content starts. The first line starts at 0,
+// and each "\n" starts another line.
 func lines(content []byte) []int {
 	at := []int{0}
 	for i, b := range content {
@@ -68,59 +63,63 @@ func lines(content []byte) []int {
 	return at
 }
 
-// line is one line of the file, without its terminator.
+// bounds returns the offsets at which line n starts and ends, without its line ending.
+func (d document) bounds(n int) (start, end int) {
+	start, end = d.at[n], len(d.content)
+	if n+1 < len(d.at) {
+		end = d.at[n+1] - 1
+	}
+	if end > start && d.content[end-1] == '\r' {
+		end--
+	}
+	return start, end
+}
+
+// line returns line n without its line ending, or the empty string for a line past the end.
 func (d document) line(n uint32) string {
 	if int(n) >= len(d.at) {
 		return ""
 	}
-	end := len(d.content)
-	if int(n)+1 < len(d.at) {
-		end = d.at[n+1] - 1
-	}
-	return string(d.content[d.at[n]:min(end, len(d.content))])
+	start, end := d.bounds(int(n))
+	return string(d.content[start:end])
 }
 
-// span turns a protocol range into one this vocabulary counts in.
-func (d document) span(held protocol.Range) source.Span {
-	return source.Span{
-		Path:  d.path,
-		Start: d.position(held.Start),
-		End:   d.position(held.End),
-	}
+// span converts a protocol range to a [source.Span] of the document.
+func (d document) span(r protocol.Range) source.Span {
+	return source.Span{Path: d.path, Start: d.position(r.Start), End: d.position(r.End)}
 }
 
-// position turns a protocol position into one this vocabulary counts in.
+// position converts a protocol position to a [source.Position].
 //
-// The protocol measures a character offset in UTF-16 code units unless a
-// client negotiates otherwise, and techne measures bytes. On a line
-// holding anything outside ASCII the two differ, and a span taken as
-// bytes lands in the middle of a rune: the snippet cut from it is
-// mangled and the edit computed from it writes over half a character.
-//
-// A line past the end of the file keeps the coordinates it arrived with
-// and gets no offset. There is nothing to count bytes in, and a zero
-// offset would name the start of the file.
-func (d document) position(held protocol.Position) source.Position {
-	if int(held.Line) >= len(d.at) {
-		return source.Position{Line: int(held.Line), Column: int(held.Character)}
+// A character past the end of its line is the end of the line, as LSP 3.17 specifies.
+// Character 0 of the line after the last line is the end of the file. Every other position
+// past the end of the file converts to the end of the file with the line and character it
+// named, and [document.inside] reports it.
+func (d document) position(p protocol.Position) source.Position {
+	if int(p.Line) >= len(d.at) {
+		return source.Position{Offset: len(d.content), Line: int(p.Line), Column: int(p.Character)}
 	}
-	column := bytesFor(d.line(held.Line), held.Character)
-	return source.Position{
-		Offset: d.at[held.Line] + column,
-		Line:   int(held.Line),
-		Column: column,
-	}
+	column := d.bytesFor(int(p.Line), p.Character)
+	return source.Position{Offset: d.at[p.Line] + column, Line: int(p.Line), Column: column}
 }
 
-// mark is the reverse: a position this vocabulary counts in, as the
-// protocol writes one.
-//
-// A caller may hand over a line and a column with no offset, because it
-// is looking at an editor rather than at a byte count. It may equally
-// hand over an offset alone, because it read the position out of an
-// answer this package gave it. Both are accepted, and the offset wins
-// where a caller sent both and they disagree — it is the coordinate
-// nothing can round.
+// inside reports whether both ends of r are in the document, where character 0 of the line
+// after the last line counts as the end of the file.
+func (d document) inside(r protocol.Range) bool {
+	for _, p := range []protocol.Position{r.Start, r.End} {
+		switch {
+		case int(p.Line) < len(d.at):
+		case int(p.Line) == len(d.at) && p.Character == 0:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// mark converts the offset of a [source.Position] to a protocol position, or its line and
+// column for an offset of 0, which is what a caller that reads an editor sends. It converts a
+// line past the end of the document to line 0, character 0.
 func (d document) mark(at source.Position) protocol.Position {
 	line, column := at.Line, at.Column
 	if at.Offset > 0 {
@@ -129,29 +128,23 @@ func (d document) mark(at source.Position) protocol.Position {
 	if line < 0 || line >= len(d.at) {
 		return protocol.Position{}
 	}
-	return protocol.Position{
-		Line:      uint32(line),
-		Character: unitsFor(d.line(uint32(line)), column),
-	}
+	return protocol.Position{Line: uint32(line), Character: d.unitsFor(line, column)}
 }
 
-// lineAt is which line an offset falls on, and how far into it.
+// lineAt returns the line that contains the byte at offset and the column of the byte in the
+// line. A negative offset is line 0, column 0.
 func (d document) lineAt(offset int) (line, column int) {
 	if offset < 0 {
 		return 0, 0
 	}
-	line = len(d.at) - 1
-	for i, start := range d.at {
-		if start > offset {
-			line = i - 1
-			break
-		}
+	line, starts := slices.BinarySearch(d.at, offset)
+	if !starts {
+		line--
 	}
 	return line, offset - d.at[line]
 }
 
-// text is the source a span covers, and the empty string for a span this
-// file does not hold.
+// text returns the source that s covers, or the empty string for a span outside the file.
 func (d document) text(s source.Span) string {
 	from, to := s.Start.Offset, s.End.Offset
 	if from < 0 || to > len(d.content) || from >= to {
@@ -160,54 +153,58 @@ func (d document) text(s source.Span) string {
 	return string(d.content[from:to])
 }
 
-// sourceLine is the line a span starts on, trimmed, which is what a
-// caller reading a list of reference sites wants beside each one.
+// sourceLine returns the line that s starts on, cut by [lang.Excerpt] around the start of s,
+// without leading and trailing white space. It returns the empty string for a line outside
+// the document.
 func (d document) sourceLine(s source.Span) string {
-	return strings.TrimSpace(d.line(uint32(max(s.Start.Line, 0))))
+	if s.Start.Line < 0 || s.Start.Line >= len(d.at) {
+		return ""
+	}
+	start, end := d.bounds(s.Start.Line)
+	return strings.TrimSpace(lang.Excerpt(d.content[start:end], s.Start.Offset-start))
 }
 
-// bytesFor is how many bytes of a line make up that many UTF-16 units.
-//
-// A rune outside the basic plane is two units and up to four bytes, so
-// neither count stands in for the other. An emoji in a comment is enough
-// to move every span after it on the line.
-func bytesFor(line string, units uint32) int {
-	if units == 0 {
-		return 0
+// bytesFor returns the number of bytes of line n that units UTF-16 code units cover, up to the
+// length of the line. A rune outside the Basic Multilingual Plane is two code units and four
+// bytes.
+func (d document) bytesFor(n int, units uint32) int {
+	start, end := d.bounds(n)
+	if units <= uint32(d.plain[n]) {
+		return int(units)
 	}
-	var held uint32
-	for i, r := range line {
-		if held >= units {
-			return i
+	counted := uint32(d.plain[n])
+	for i := start + d.plain[n]; i < end; {
+		if counted >= units {
+			return i - start
 		}
-		held++
+		r, size := utf8.DecodeRune(d.content[i:end])
+		counted++
 		if r > 0xFFFF {
-			held++
+			counted++
 		}
+		i += size
 	}
-	return len(line)
+	return end - start
 }
 
-// unitsFor is the reverse: how many UTF-16 units of a line make up that
-// many bytes.
-//
-// A position handed to a server has to be written in the protocol's own
-// coordinates. Without this, every request naming a position in a file
-// holding one character outside ASCII asks about the wrong column, and
-// the answer is about whatever is there instead.
-func unitsFor(line string, bytes int) uint32 {
-	if bytes <= 0 {
+// unitsFor returns the number of UTF-16 code units that the first width bytes of line n
+// cover, up to the length of the line.
+func (d document) unitsFor(n, width int) uint32 {
+	start, end := d.bounds(n)
+	if width <= 0 {
 		return 0
 	}
-	var held uint32
-	for i, r := range line {
-		if i >= bytes {
-			return held
-		}
-		held++
-		if r > 0xFFFF {
-			held++
-		}
+	if width <= d.plain[n] {
+		return uint32(width)
 	}
-	return held
+	counted := uint32(d.plain[n])
+	for i := start + d.plain[n]; i < end && i-start < width; {
+		r, size := utf8.DecodeRune(d.content[i:end])
+		counted++
+		if r > 0xFFFF {
+			counted++
+		}
+		i += size
+	}
+	return counted
 }

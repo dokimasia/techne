@@ -9,15 +9,9 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
-	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
-
-// pointing is the position of Store's own name in [content]: line 2,
-// column 5. Every case below resolves from there.
-func pointing() source.Position {
-	return source.Position{Line: 2, Column: 5}
-}
 
 func TestResolve(t *testing.T) {
 	t.Parallel()
@@ -25,82 +19,70 @@ func TestResolve(t *testing.T) {
 	t.Run("Resolve", func(t *testing.T) {
 		t.Parallel()
 
-		// The three shapes a definition arrives in are the reason this
-		// package takes the protocol bindings as a dependency rather
-		// than decoding by hand. Each of these fails silently against a
-		// decoder built for one of the others: it reports that the name
-		// does not resolve, which is the answer techne exists to be
-		// trusted about.
-		for mode, why := range map[string]string{
-			modeDefault:     "a list of locations, which is what most servers send",
-			modeOneLocation: "one location, unwrapped, which the specification allows",
-			modeLinks:       "a list of links, which carries the name's own range separately",
+		for _, shape := range []struct {
+			mode lsptest.Mode
+			name string
+		}{
+			{lsptest.Default, "a list of locations"},
+			{lsptest.OneLocation, "one location"},
+			{lsptest.Links, "a list of links"},
 		} {
-			t.Run("reads a definition sent as "+why, func(t *testing.T) {
+			t.Run("reads a definition sent as "+shape.name, func(t *testing.T) {
 				t.Parallel()
-				got, err := serving(t, mode, map[string]string{"a.fake": content}).
-					Resolve(t.Context(), engine.Request{Scope: "a.fake"}, pointing())
-
-				assert.NoError(t, err, "resolving a name the server binds succeeds")
-				assert.Length(t, got.Items, 1, "the name denotes one declaration")
-				assert.Equal(t, got.Items[0].Name, "Store",
-					"and it is the declaration the server pointed at")
-				assert.Equal(t, got.Items[0].Kind, sema.KindStruct,
-					"read out of the file rather than out of the location, which carries no kind")
+				got, err := serving(t, shape.mode, sample()).
+					Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
+				assert.NoError(t, err, "Resolve of Store")
+				assert.Equal(t, names(got.Items), []string{"Store"}, "the declarations that Store denotes")
+				assert.Equal(t, got.Items[0].Kind, sema.KindStruct, "the kind of Store")
 			})
 		}
 
-		t.Run("answers a name that denotes nothing with nothing", func(t *testing.T) {
+		t.Run("returns nothing for a name without a definition", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, modeUnresolved, map[string]string{"a.fake": content}).
-				Resolve(t.Context(), engine.Request{Scope: "a.fake"}, pointing())
-
-			assert.NoError(t, err, "a name that resolves to nothing is an answer, not a fault")
-			assert.Empty(t, got.Items, "and the answer is nothing")
-			assert.False(t, got.Skipped, "the file was read, which is different from not reading one")
+			got, err := serving(t, lsptest.Unresolved, sample()).
+				Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
+			assert.NoError(t, err, "Resolve of a name without a definition")
+			assert.Empty(t, got.Items, "the declarations of the name")
+			assert.False(t, got.Skipped, "Skipped of the answer")
 		})
 
-		t.Run("says it read nothing where the scope is not one of its files", func(t *testing.T) {
+		t.Run("returns a partial answer for a name without a definition", func(t *testing.T) {
 			t.Parallel()
-			// A position is in a file. Asked about one this language does
-			// not claim, this engine has read nothing and must not lower
-			// what the engine beside it is worth.
-			got, err := serving(t, modeDefault, map[string]string{"notes.md": "# notes\n"}).
-				Resolve(t.Context(), engine.Request{Scope: "notes.md"}, pointing())
-
-			assert.NoError(t, err, "a scope with nothing to read is not a fault")
-			assert.True(t, got.Skipped, "and the engine says it read nothing")
-			assert.Empty(t, got.Items, "having found nothing to find")
+			got, err := serving(t, lsptest.Unresolved, sample()).
+				Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
+			assert.NoError(t, err, "Resolve of a name without a definition")
+			assert.Equal(t, got.Completeness, trust.ScopePartial, "the completeness of the empty answer")
 		})
 
-		t.Run("says it read nothing where the scope is a directory", func(t *testing.T) {
+		t.Run("skips a scope of another language", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
-				Resolve(t.Context(), engine.Request{Scope: "."}, pointing())
-
-			assert.NoError(t, err, "a scope naming no file is not a fault")
-			assert.True(t, got.Skipped,
-				"a position means nothing against a directory, so nothing was read")
+			got, err := serving(t, lsptest.Default, map[string]string{"notes.md": "# notes\n"}).
+				Resolve(t.Context(), engine.Request{Scope: "notes.md"}, store())
+			assert.NoError(t, err, "Resolve in notes.md")
+			assert.True(t, got.Skipped, "Skipped of the answer")
 		})
 
-		t.Run("carries the caveat every resolved answer carries", func(t *testing.T) {
+		t.Run("skips a directory without a file of the language", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
-				Resolve(t.Context(), engine.Request{Scope: "a.fake"}, pointing())
+			got, err := serving(t, lsptest.Default, map[string]string{"notes.md": "# notes\n"}).
+				Resolve(t.Context(), engine.Request{Scope: "."}, store())
+			assert.NoError(t, err, "Resolve in the workspace root")
+			assert.True(t, got.Skipped, "Skipped of the answer")
+		})
 
-			assert.NoError(t, err, "resolving succeeds")
-			assert.True(t, carries(got.Caveats, trust.CaveatDynamic),
-				"a type checker still sees nothing of what is assembled at run time")
+		t.Run("declines a directory with files of the language", func(t *testing.T) {
+			t.Parallel()
+			_, err := serving(t, lsptest.Default, sample()).
+				Resolve(t.Context(), engine.Request{Scope: "."}, store())
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Resolve in a directory")
+		})
+
+		t.Run("declines a server without definitions", func(t *testing.T) {
+			t.Parallel()
+			_, err := serving(t, lsptest.Thin, sample()).
+				Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Resolve")
+			assert.Contains(t, err.Error(), "textDocument/definition", "the error of Resolve")
 		})
 	})
-}
-
-// carries reports whether an answer named a caveat.
-func carries(held []trust.Caveat, code trust.CaveatCode) bool {
-	for _, one := range held {
-		if one.Code == code {
-			return true
-		}
-	}
-	return false
 }

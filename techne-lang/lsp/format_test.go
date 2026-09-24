@@ -4,12 +4,16 @@
 package lsp_test
 
 import (
+	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
+	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/lang"
+	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
 
 func TestFormat(t *testing.T) {
@@ -18,50 +22,44 @@ func TestFormat(t *testing.T) {
 	t.Run("Format", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("returns what the language's own formatter would change", func(t *testing.T) {
+		t.Run("returns the edits of the formatter", func(t *testing.T) {
 			t.Parallel()
-			// gofmt behind gopls, the TypeScript formatter behind its
-			// server. A caller gets what the language's tooling would
-			// produce rather than what techne thinks it should look
-			// like.
-			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
-				Format(t.Context(), []source.Path{"a.fake"})
-
-			assert.NoError(t, err, "formatting a file the server formats succeeds")
-			assert.Length(t, got.Items, 1, "one file to change")
-			assert.Equal(t, got.Items[0].Kind, edit.ChangeEdit, "by rewriting ranges in it")
-			assert.Length(t, got.Items[0].Edits, 1, "with the edits the formatter named")
+			got, err := serving(t, lsptest.Default, sample()).Format(t.Context(), []source.Path{"a.fake"})
+			assert.NoError(t, err, "Format of a.fake")
+			assert.Equal(t, kinds(got.Items), []edit.ChangeKind{edit.ChangeEdit}, "the changes of Format")
+			assert.Equal(t, got.Items[0].Edits[0].New, "TYPE", "the text of the edit")
 		})
 
-		t.Run("returns nothing for a file already written that way", func(t *testing.T) {
+		t.Run("returns no change for a formatted file", func(t *testing.T) {
 			t.Parallel()
-			// A change with no edits would have the write path rewrite a
-			// file to itself, and report that it had done something.
-			got, err := serving(t, modeEmpty, map[string]string{"a.fake": content}).
-				Format(t.Context(), []source.Path{"a.fake"})
-
-			assert.NoError(t, err, "a file that needs nothing is not a fault")
-			assert.Empty(t, got.Items, "and nothing is reported as changed")
+			got, err := serving(t, lsptest.Empty, sample()).Format(t.Context(), []source.Path{"a.fake"})
+			assert.NoError(t, err, "Format of a formatted file")
+			assert.Empty(t, got.Items, "the changes of Format")
 		})
 
-		t.Run("leaves a file of another language alone", func(t *testing.T) {
+		t.Run("skips paths of another language", func(t *testing.T) {
 			t.Parallel()
-			// A caller naming a mixed set gets each file from whoever
-			// claims it, rather than a refusal for the whole set.
-			got, err := serving(t, modeDefault, map[string]string{"a.fake": content}).
-				Format(t.Context(), []source.Path{"notes.md"})
-
-			assert.NoError(t, err, "a path this language does not claim is not a fault")
-			assert.Empty(t, got.Items, "and nothing of it is touched")
+			got, err := serving(t, lsptest.Default, sample()).Format(t.Context(), []source.Path{"notes.md"})
+			assert.NoError(t, err, "Format of notes.md")
+			assert.True(t, got.Skipped, "Skipped of the answer")
 		})
 
-		t.Run("declines where the server does not format", func(t *testing.T) {
+		t.Run("declines a server without formatting", func(t *testing.T) {
 			t.Parallel()
-			_, err := serving(t, modeThin, map[string]string{"a.fake": content}).
-				Format(t.Context(), []source.Path{"a.fake"})
+			_, err := serving(t, lsptest.Thin, sample()).Format(t.Context(), []source.Path{"a.fake"})
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Format")
+		})
 
-			assert.ErrorIs(t, err, engine.ErrDecline,
-				"another engine gets a turn, rather than the call breaking")
+		t.Run("returns a partial answer for a file larger than lang.Largest", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.Default, map[string]string{
+				"a.fake":   lsptest.Content,
+				"big.fake": strings.Repeat("x", lang.Largest+1),
+			}).Format(t.Context(), []source.Path{"a.fake", "big.fake"})
+			assert.NoError(t, err, "Format of a large file")
+			assert.Length(t, got.Items, 1, "the changes of Format")
+			assert.Equal(t, got.Completeness, trust.ScopePartial, "the completeness of the answer")
+			assert.True(t, unreadIn(got.Caveats, "big.fake"), "the unread caveat names big.fake")
 		})
 	})
 }

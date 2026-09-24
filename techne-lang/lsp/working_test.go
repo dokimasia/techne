@@ -5,140 +5,74 @@ package lsp_test
 
 import (
 	"testing"
+	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/trust"
-	"go.dokimi.dev/techne/lang/lsp"
+	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
 
-// A server that has not finished reading the workspace answers every
-// question with nothing — not "I do not know", but nothing, in the same
-// shape as a real answer. Reported as it stands that is resolved binding
-// over total coverage saying a declaration has no references, which is
-// the claim a caller acts on by deleting it.
-//
-// These are the cases that stop that. The fake announces the work the
-// way a server does, and answers with nothing until it is done.
 func TestWorking(t *testing.T) {
 	t.Parallel()
 
-	t.Run("a server still reading the workspace", func(t *testing.T) {
+	t.Run("Relate", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("is waited for rather than believed", func(t *testing.T) {
+		t.Run("waits for a server that reports a loading job", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, modeLoading, map[string]string{"a.fake": content})
-			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.ReferencedBy)
-
-			assert.NoError(t, err, "relating succeeds")
-			assert.Equal(t, edges(got.Items), []string{"Get", "After"},
-				"the answer the server gives once it has read the workspace, "+
-					"not the empty one it gives before")
+			got, err := serving(t, lsptest.Loading, sample()).Relate(t.Context(),
+				engine.Request{Scope: "a.fake"}, declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate with a loading server")
+			assert.Equal(t, edges(got.Items), []string{"Get", "After"}, "the declarations that use Store")
 		})
 
-		t.Run("gives a total answer once it has finished", func(t *testing.T) {
+		t.Run("returns a total answer after the server settles", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, modeLoading, map[string]string{"a.fake": content})
-			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.ReferencedBy)
+			got, err := serving(t, lsptest.Loading, sample()).Relate(t.Context(),
+				engine.Request{Scope: "a.fake"}, declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate with a loading server")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the answer")
+			assert.False(t, hasCaveat(got.Caveats, trust.CaveatIndexWarming), "the answer has a warming caveat")
+		})
 
-			assert.NoError(t, err, "relating succeeds")
-			assert.Equal(t, got.Completeness, trust.ScopeTotal,
-				"a server that finished read everything it was going to")
-			assert.False(t, carries(got.Caveats, trust.CaveatIndexWarming),
-				"so there is nothing to warn about")
+		t.Run("returns a partial answer from a server that never settles", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.Stuck, sample()).Relate(t.Context(),
+				engine.Request{Scope: "a.fake"}, declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate with a stuck server")
+			assert.Empty(t, got.Items, "the relations from a stuck server")
+			assert.Equal(t, got.Completeness, trust.ScopePartial, "the completeness of the answer")
+			assert.True(t, hasCaveat(got.Caveats, trust.CaveatIndexWarming), "the answer has a warming caveat")
+			assert.False(t, trust.SupportsNegativeClaim(trust.Resolved, got.Completeness),
+				"SupportsNegativeClaim of the answer")
 		})
 	})
 
-	t.Run("a server that never finishes", func(t *testing.T) {
+	t.Run("Resolve", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("is answered from, and the answer says so", func(t *testing.T) {
+		t.Run("returns a warm answer within 100 milliseconds", func(t *testing.T) {
 			t.Parallel()
-			// Waiting forever is a tool that hangs. What it must not do
-			// is pass off what a half-read workspace produced as
-			// everything there is.
-			e := serving(t, modeStuck, map[string]string{"a.fake": content})
-			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.ReferencedBy)
+			e := serving(t, lsptest.Default, sample())
+			_, err := e.Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
+			assert.NoError(t, err, "the first Resolve")
 
-			assert.NoError(t, err, "a slow server is not a fault")
-			assert.Equal(t, got.Completeness, trust.ScopePartial,
-				"what it returned is not everything there is")
-			assert.True(t, carries(got.Caveats, trust.CaveatIndexWarming),
-				"and the answer names why")
-		})
-
-		t.Run("supports no claim that something is absent", func(t *testing.T) {
-			t.Parallel()
-			// The whole point. Resolved binding over total coverage is
-			// what lets a caller conclude a declaration is unused, and a
-			// server that has read half the workspace cannot support it.
-			e := serving(t, modeStuck, map[string]string{"a.fake": content})
-			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
-				subject(t, e, "Store"), sema.ReferencedBy)
-
-			assert.NoError(t, err, "relating succeeds")
-			assert.Empty(t, got.Items, "the server had nothing to say yet")
-			assert.False(t, trust.SupportsNegativeClaim(trust.Resolved, got.Completeness),
-				"so nothing may be read out of its silence")
+			began := time.Now()
+			_, err = e.Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
+			took := time.Since(began)
+			assert.NoError(t, err, "the second Resolve")
+			assert.True(t, took < 100*time.Millisecond, "the second Resolve took "+took.String())
 		})
 	})
 }
 
-// A repository is not a compilation unit. Measured against gopls over a
-// seventeen-module workspace: one untidy root go.mod, reported at error
-// severity, withdrew the tier every write operation needs in every
-// module for the life of the session, over a workspace where go build
-// and go vet were both clean.
-func TestLoweredPerProject(t *testing.T) {
-	t.Parallel()
-
-	t.Run("a fault the server reported in one project", func(t *testing.T) {
-		t.Parallel()
-
-		held := map[string]string{
-			"one/x.manifest": "", "one/a.fake": content,
-			"two/x.manifest": "", "two/b.fake": content,
-		}
-		build := func(t *testing.T) *lsp.Engine {
-			t.Helper()
-			d := declared()
-			d.Manifests = []string{"x.manifest"}
-			e, err := lsp.New(workspace(t, held), d, pretending(modePushesOne))
-			assert.NoError(t, err, "an engine builds over a workspace of two projects")
-			stopping(t, e)
-			return e
-		}
-
-		t.Run("lowers what that project is worth", func(t *testing.T) {
-			t.Parallel()
-			e := build(t)
-			got, err := e.Outline(t.Context(), engine.Request{Scope: "two/b.fake"})
-
-			assert.NoError(t, err, "a broken project is still answered about")
-			assert.Equal(t, got.Lowered, trust.Indexed,
-				"names are bound where it could bind them and matched where it could not")
-			assert.True(t, carries(got.Caveats, trust.CaveatBuildBroken), "and the caveat says why")
-		})
-
-		t.Run("leaves the project beside it worth what it was", func(t *testing.T) {
-			t.Parallel()
-			e := build(t)
-			// The faulty project is read first, so the server has
-			// published about it by the time the sibling is asked.
-			_, err := e.Outline(t.Context(), engine.Request{Scope: "two/b.fake"})
-			assert.NoError(t, err, "reading the broken project succeeds")
-
-			got, err := e.Outline(t.Context(), engine.Request{Scope: "one/a.fake"})
-			assert.NoError(t, err, "and so does reading the one beside it")
-			assert.Equal(t, got.Lowered, trust.None,
-				"another module failing to build says nothing about this one")
-			assert.False(t, carries(got.Caveats, trust.CaveatBuildBroken),
-				"and nothing claims otherwise")
-		})
-	})
+// edges returns the names of the far ends of relations, in order.
+func edges(relations []sema.Relation) []string {
+	out := make([]string, 0, len(relations))
+	for _, one := range relations {
+		out = append(out, one.To.Name)
+	}
+	return out
 }

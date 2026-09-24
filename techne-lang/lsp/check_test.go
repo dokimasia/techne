@@ -4,130 +4,133 @@
 package lsp_test
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/diag"
+	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
-
-// faulty is the fixture with the word this language will not take
-// written into it. It and [content] are the pair a parse gate cannot
-// tell apart: both are the language they claim to be, and one of them
-// does not compile.
-const faulty = "package a\n\ntype Store struct {\n\tsize undeclared\n}\n"
 
 func TestCheck(t *testing.T) {
 	t.Parallel()
 
+	faulty := map[source.Path][]byte{"a.fake": []byte(lsptest.Faulty)}
+
 	t.Run("Check", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("judges content the workspace does not hold", func(t *testing.T) {
+		t.Run("returns the error of content that is not on disk", func(t *testing.T) {
 			t.Parallel()
-			// The protocol has no request that takes content and does not
-			// need one: a server analyses the buffers it is given, and an
-			// editor gives it text nobody has written all day.
-			e := serving(t, modeCompiles, map[string]string{"a.fake": content})
-			got, err := e.Check(t.Context(), map[source.Path][]byte{"a.fake": []byte(faulty)})
-
-			assert.NoError(t, err, "checking content that is not on disk succeeds")
-			assert.Length(t, got.Items, 1, "the server objected to what it was shown")
-			assert.Equal(t, got.Items[0].Diagnostic.Severity, diag.SeverityError,
-				"and graded it a fault")
-			assert.Equal(t, got.Completeness, trust.ScopeTotal,
-				"having reported on every file it was shown")
+			got, err := serving(t, lsptest.Compiles, sample()).Check(t.Context(), faulty)
+			assert.NoError(t, err, "Check of faulty content")
+			assert.Length(t, got.Items, 1, "the findings of faulty content")
+			assert.Equal(t, got.Items[0].Diagnostic.Severity, diag.SeverityError, "the severity of the finding")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the answer")
 		})
 
-		t.Run("finds nothing wrong with content that is whole", func(t *testing.T) {
+		t.Run("returns nothing for content that compiles", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, modeCompiles, map[string]string{"a.fake": content})
-			got, err := e.Check(t.Context(), map[source.Path][]byte{"a.fake": []byte(content)})
-
-			assert.NoError(t, err, "checking succeeds")
-			assert.Empty(t, got.Items, "nothing is wrong with it")
+			got, err := serving(t, lsptest.Compiles, sample()).
+				Check(t.Context(), map[source.Path][]byte{"a.fake": []byte(lsptest.Content)})
+			assert.NoError(t, err, "Check of content that compiles")
+			assert.Empty(t, got.Items, "the findings of content that compiles")
 		})
 
-		t.Run("carries the one obvious fix beside the fault", func(t *testing.T) {
+		t.Run("returns the one fix the server offers", func(t *testing.T) {
 			t.Parallel()
-			// The server that reports a fault offers what resolves it and
-			// is being asked already. A caller that has to work the edit
-			// out from the message pays a round trip for something the
-			// server had.
-			e := serving(t, modeCompiles, map[string]string{"a.fake": content})
-			got, err := e.Check(t.Context(), map[source.Path][]byte{"a.fake": []byte(faulty)})
-
-			assert.NoError(t, err, "checking succeeds")
-			assert.Length(t, got.Items[0].Fix, 1, "one change resolves it")
-			assert.Equal(t, got.Items[0].Fix[0].Edits[0].New, "declared",
-				"which is what the server said to write")
+			got, err := serving(t, lsptest.Compiles, sample()).Check(t.Context(), faulty)
+			assert.NoError(t, err, "Check of faulty content")
+			assert.Length(t, got.Items[0].Fix, 1, "the changes of the fix")
+			assert.Equal(t, got.Items[0].Fix[0].Edits[0].New, "declared", "the text of the fix")
 		})
 
-		t.Run("measures the fix against the content it judged", func(t *testing.T) {
+		t.Run("converts the fix against the checked content", func(t *testing.T) {
 			t.Parallel()
-			// A gate judges what a change would produce, and the fault
-			// and the fix are both written in that. Measured against the
-			// file on disk the edit names other bytes, and writing over
-			// them still parses.
-			e := serving(t, modeCompiles, map[string]string{"a.fake": content})
-			got, err := e.Check(t.Context(), map[source.Path][]byte{"a.fake": []byte(faulty)})
-
-			assert.NoError(t, err, "checking succeeds")
+			got, err := serving(t, lsptest.Compiles, sample()).Check(t.Context(), faulty)
+			assert.NoError(t, err, "Check of faulty content")
 			at := got.Items[0].Fix[0].Edits[0].Span
-			assert.Equal(t, faulty[at.Start.Offset:at.End.Offset], "undeclared",
-				"the range covers the word the server would replace")
+			assert.Equal(t, lsptest.Faulty[at.Start.Offset:at.End.Offset], lsptest.Broken,
+				"the text that the fix replaces")
 		})
 
-		t.Run("puts the files back before it returns", func(t *testing.T) {
+		t.Run("sends the content on disk again after the check", func(t *testing.T) {
 			t.Parallel()
-			// The buffer shown to the server is not a file, and a gate is
-			// not an apply. A server left holding content nobody wrote
-			// answers every later question about code that is nowhere.
-			e := serving(t, modeCompiles, map[string]string{"a.fake": content})
-			_, err := e.Check(t.Context(), map[source.Path][]byte{"a.fake": []byte(faulty)})
-			assert.NoError(t, err, "checking succeeds")
+			e := serving(t, lsptest.Compiles, sample())
+			_, err := e.Check(t.Context(), faulty)
+			assert.NoError(t, err, "Check of faulty content")
 
 			got, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
-			assert.NoError(t, err, "asking about the file succeeds")
-			assert.Empty(t, got.Items, "and the file on disk has nothing wrong with it")
+			assert.NoError(t, err, "Verify after the check")
+			assert.Empty(t, got.Items, "the findings of the file on disk")
 		})
 
-		t.Run("leaves alone what this language does not claim", func(t *testing.T) {
+		t.Run("declines content of another language", func(t *testing.T) {
 			t.Parallel()
-			// One change can touch several languages and each engine
-			// judges its own. Refusing what it cannot read would have the
-			// first engine asked veto every mixed change.
-			e := serving(t, modeCompiles, map[string]string{"a.fake": content})
-			_, err := e.Check(t.Context(), map[source.Path][]byte{"notes.md": []byte("# notes\n")})
-
-			assert.ErrorIs(t, err, engine.ErrDecline,
-				"nothing here is this language, so another engine gets a turn")
+			_, err := serving(t, lsptest.Compiles, sample()).
+				Check(t.Context(), map[source.Path][]byte{"notes.md": []byte("# notes\n")})
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Check")
 		})
 
-		t.Run("says nothing about a file the change takes away", func(t *testing.T) {
+		t.Run("declines a change that deletes the file", func(t *testing.T) {
 			t.Parallel()
-			// A path with no content is one the change removes. There is
-			// nothing to analyse and nothing to object to.
-			e := serving(t, modeCompiles, map[string]string{"a.fake": content})
-			_, err := e.Check(t.Context(), map[source.Path][]byte{"a.fake": nil})
-
-			assert.ErrorIs(t, err, engine.ErrDecline, "there is nothing left to judge")
+			_, err := serving(t, lsptest.Compiles, sample()).
+				Check(t.Context(), map[source.Path][]byte{"a.fake": nil})
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Check")
 		})
 
-		t.Run("declines where the server said nothing about what it was shown", func(t *testing.T) {
+		t.Run("declines content the server reports nothing about", func(t *testing.T) {
 			t.Parallel()
-			// A gate saying content is clean is the claim a caller acts
-			// on by writing it, and a server that reported nothing has
-			// not made it. Declined rather than answered short, so the
-			// parser beside this one gets a turn: answered short, Scala
-			// would have no gate at all where it could still have had a
-			// grammar's.
-			e := serving(t, modeUngated, map[string]string{"a.fake": content})
-			_, err := e.Check(t.Context(), map[source.Path][]byte{"a.fake": []byte(faulty)})
+			_, err := serving(t, lsptest.Ungated, sample()).Check(t.Context(), faulty)
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Check")
+		})
 
-			assert.ErrorIs(t, err, engine.ErrDecline, "so something weaker judges it instead")
+		t.Run("declines while the server loads the workspace", func(t *testing.T) {
+			t.Parallel()
+			_, err := serving(t, lsptest.Stuck, sample()).Check(t.Context(), faulty)
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Check")
+			assert.Contains(t, err.Error(), "loading", "the error of Check")
+		})
+
+		t.Run("returns an error in a file that depends on the change", func(t *testing.T) {
+			t.Parallel()
+			renamed := strings.Replace(lsptest.Content, "type Store", "type Vault", 1)
+			got, err := serving(t, lsptest.WorkspaceDiagnostics, map[string]string{
+				"a.fake": lsptest.Content, "b.fake": "var _ Store\n",
+			}).Check(t.Context(), map[source.Path][]byte{"a.fake": []byte(renamed)})
+			assert.NoError(t, err, "Check of a rename that misses b.fake")
+			assert.True(t, slices.ContainsFunc(got.Items, func(one edit.Finding) bool {
+				return one.Diagnostic.Span.Path == "b.fake"
+			}), "a finding in b.fake")
+			assert.False(t, hasCaveat(got.Caveats, trust.CaveatDependents), "the answer has a dependents caveat")
+		})
+
+		t.Run("adds a dependents caveat for a server without workspace diagnostics", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.Compiles, sample()).Check(t.Context(), faulty)
+			assert.NoError(t, err, "Check of faulty content")
+			assert.True(t, hasCaveat(got.Caveats, trust.CaveatDependents), "the answer has a dependents caveat")
+		})
+
+		t.Run("adds a partial-check caveat for a server that leaves checks out", func(t *testing.T) {
+			t.Parallel()
+			server := lsptest.Server(lsptest.Compiles)
+			server.Unchecked = "lifetimes or borrows"
+			got, err := lsptest.Engine(t, lsptest.Workspace(t, sample()), server).Check(t.Context(), faulty)
+			assert.NoError(t, err, "Check of faulty content")
+			assert.True(t, hasCaveat(got.Caveats, trust.CaveatPartialCheck), "the answer has a partial-check caveat")
+		})
+
+		t.Run("adds no partial-check caveat for a server that checks what the compiler checks", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.Compiles, sample()).Check(t.Context(), faulty)
+			assert.NoError(t, err, "Check of faulty content")
+			assert.False(t, hasCaveat(got.Caveats, trust.CaveatPartialCheck), "the answer has a partial-check caveat")
 		})
 	})
 }

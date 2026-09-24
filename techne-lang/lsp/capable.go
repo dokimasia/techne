@@ -10,19 +10,14 @@ import (
 	"go.lsp.dev/protocol"
 )
 
-// provides reports whether a server said at initialise that it answers a
-// request.
+// provides reports whether a provider field of the capabilities that a server returned from
+// initialize offers its request: true for the value true or an options object, and false for
+// an absent field or the value false.
 //
-// Every provider in the reply is the same shape: absent, a boolean, or
-// an options object. Absent and false both mean no; an options object
-// means yes and carries settings nothing here reads.
-//
-// Asked rather than found out by trying, because a server refuses an
-// unsupported request with an error, and an error stops the whole call.
-// pyright answers "unhandled method" to a request for implementations,
-// which turned a question it simply does not answer into a broken read.
-func provides(held any) bool {
-	switch declared := held.(type) {
+// A role checks the capabilities before it sends a request, because a server refuses a request
+// it does not serve with an error, and an error ends the whole call.
+func provides(provider any) bool {
+	switch declared := provider.(type) {
 	case nil:
 		return false
 	case protocol.Boolean:
@@ -31,25 +26,41 @@ func provides(held any) bool {
 	return true
 }
 
-// prepares reports whether a server answers textDocument/prepareRename,
-// which is a flag inside the rename provider rather than a provider of
-// its own.
-//
-// A server that renames but does not prepare is common. Asking anyway
-// refuses every rename it would have done, because an unsupported
-// request comes back as an error and there is no way to tell that from
-// the position being unrenameable.
-func prepares(held protocol.RenameProvider) bool {
-	options, declared := held.(*protocol.RenameOptions)
-	return declared && options.PrepareProvider != nil && *options.PrepareProvider
+// prepares reports whether the rename provider offers textDocument/prepareRename.
+func prepares(provider protocol.RenameProvider) bool {
+	options, isOptions := provider.(*protocol.RenameOptions)
+	return isOptions && options.PrepareProvider != nil && *options.PrepareProvider
 }
 
-// unsupported is the decline for a request a server said it does not
-// answer.
-//
-// Declined rather than errored, so a parser beside it gets a turn and
-// the caller is told which server would not and what it would not do.
-func (e *Engine) unsupported(what string) error {
-	return fmt.Errorf("%w: %s does not answer %s",
-		engine.ErrDecline, e.server.Name, what)
+// resolves reports whether the code action provider offers codeAction/resolve, which computes
+// the edit of an action that a server offered without one.
+func resolves(provider any) bool {
+	options, isOptions := provider.(*protocol.CodeActionOptions)
+	return isOptions && options.ResolveProvider != nil && *options.ResolveProvider
+}
+
+// willRename reports whether the server offers workspace/willRenameFiles for at least one
+// filter. gopls 0.23.0 refuses the request with an error and offers no filter.
+func willRename(capable protocol.ServerCapabilities) bool {
+	return capable.Workspace != nil &&
+		capable.Workspace.FileOperations != nil &&
+		len(capable.Workspace.FileOperations.WillRename.Filters) > 0
+}
+
+// workspaceWide reports whether the diagnostic provider offers workspace/diagnostic. Of the ten
+// servers that the language modules declare, csharp-ls offers it.
+func workspaceWide(provider protocol.DiagnosticProvider) bool {
+	switch declared := provider.(type) {
+	case *protocol.DiagnosticOptions:
+		return declared.WorkspaceDiagnostics
+	case *protocol.DiagnosticRegistrationOptions:
+		return declared.WorkspaceDiagnostics
+	}
+	return false
+}
+
+// unsupported returns an error that wraps [engine.ErrDecline] and names the request that the
+// server does not serve, so the catalogue asks the next engine.
+func (e *Engine) unsupported(request string) error {
+	return fmt.Errorf("%w: %s does not serve %s", engine.ErrDecline, e.server.Name, request)
 }

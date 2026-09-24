@@ -5,7 +5,6 @@ package lsp
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 
@@ -18,36 +17,32 @@ import (
 	"go.lsp.dev/uri"
 )
 
-// tabbing is the indentation a server is told to assume where a file
-// gives it nothing to go on.
-//
-// The protocol requires both fields and every server that formats has
-// its own answer already — gofmt uses tabs whatever it is told, and a
-// project with an editorconfig has the server read that. What is sent
-// matters only for a server with no other source, and four spaces is
-// what most of those default to.
+// The formatting options of textDocument/formatting. LSP 3.17 requires both. gopls formats
+// with tabs whatever they say, and a server that reads .editorconfig prefers it.
 const (
-	tabbing = 4
-	spaces  = true
+	tabSize      = 4
+	insertSpaces = true
 )
 
-// Format normalises the named paths and returns the edits that would do
-// it, touching nothing.
+// Format returns one change per path that the formatter of the language rewrites, from
+// textDocument/formatting, and writes nothing.
 //
-// The language's own formatter, reached through its server: gofmt behind
-// gopls, the TypeScript formatter behind typescript-language-server. A
-// caller gets what the language's own tooling would produce rather than
-// what techne thinks the language should look like.
-//
-// Nothing here writes. The edits go back through techne's write path,
-// which reads the files, gates the result and applies it atomically.
+// A path of another language is left out, and a set without a path of the language returns a
+// skipped result without starting the server. A file that [lang.Readable] refuses is left out
+// and named in a [trust.CaveatUnread] caveat, and the result is partial. A file already
+// formatted has no change. A server that does not answer within [Server.Answering] returns
+// [engine.ErrDecline].
 func (e *Engine) Format(ctx context.Context, paths []source.Path) (engine.Result[edit.Change], error) {
-	// None of them this engine's is a set to leave alone, and settled
-	// before a server is started rather than after: a caller naming a
-	// mixed set otherwise starts one server per language in it.
-	if !slices.ContainsFunc(paths, func(p source.Path) bool {
-		return lang.Claims(string(p), e.declared.Extensions)
-	}) {
+	out, err := e.formatting(ctx, paths)
+	return out, e.unanswered(ctx, err)
+}
+
+// formatting is [Engine.Format] before a missed deadline becomes a decline.
+func (e *Engine) formatting(ctx context.Context, paths []source.Path) (engine.Result[edit.Change], error) {
+	mine := slices.DeleteFunc(slices.Clone(paths), func(p source.Path) bool {
+		return !lang.Claims(string(p), e.declared.Extensions)
+	})
+	if len(mine) == 0 {
 		return engine.Result[edit.Change]{Skipped: true, Completeness: trust.ScopeTotal}, nil
 	}
 
@@ -55,62 +50,50 @@ func (e *Engine) Format(ctx context.Context, paths []source.Path) (engine.Result
 	if err != nil {
 		return engine.Result[edit.Change]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
+	ctx, done := e.answered(ctx)
+	defer done()
 	if !provides(held.capable.DocumentFormattingProvider) {
 		return engine.Result[edit.Change]{}, e.unsupported("textDocument/formatting")
 	}
 
 	var out []edit.Change
-	var large []source.Path
-	for _, p := range paths {
+	var skipped []source.Path
+	for _, p := range mine {
 		if err := ctx.Err(); err != nil {
 			return engine.Result[edit.Change]{}, err
 		}
-		// A path of another language is not this engine's to touch. A
-		// caller naming a mixed set gets each file from whoever claims
-		// it rather than a refusal for the whole set.
-		if !lang.Claims(string(p), e.declared.Extensions) {
+		doc, err := e.open(ctx, held, p)
+		if refused(err) {
+			skipped = append(skipped, p)
 			continue
 		}
-		if opened := e.open(ctx, held, p); opened != nil {
-			// A file past the size an engine reads is left as it is
-			// rather than costing the rest of the set its formatting.
-			if _, big := errors.AsType[lang.LargeError](opened); big {
-				large = append(large, p)
-				continue
-			}
-			return engine.Result[edit.Change]{}, opened
-		}
-
-		edits, err := held.asks.Formatting(ctx, &protocol.DocumentFormattingParams{
-			TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(p))},
-			Options: protocol.FormattingOptions{
-				TabSize: tabbing, InsertSpaces: spaces,
-			},
-		})
-		if err != nil {
-			return engine.Result[edit.Change]{}, fmt.Errorf("lsp: %s: format %s: %w",
-				e.server.Name, p, err)
-		}
-		if len(edits) == 0 {
-			// Already as the formatter would write it. A change with no
-			// edits would have the write path rewrite a file to itself.
-			continue
-		}
-
-		change, err := e.rewriteAgainst(uri.File(e.fullPath(p)), edits, nil)
 		if err != nil {
 			return engine.Result[edit.Change]{}, err
 		}
-		out = append(out, change)
+		edits, err := held.asks.Formatting(ctx, &protocol.DocumentFormattingParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(p))},
+			Options:      protocol.FormattingOptions{TabSize: tabSize, InsertSpaces: insertSpaces},
+		})
+		if err != nil {
+			return engine.Result[edit.Change]{}, fmt.Errorf("lsp: %s: format %s: %w", e.server.Name, p, err)
+		}
+		if len(edits) == 0 {
+			continue
+		}
+		converted, err := e.textEdits(doc, edits)
+		if err != nil {
+			return engine.Result[edit.Change]{}, err
+		}
+		out = append(out, edit.Change{Kind: edit.ChangeEdit, Path: p, Edits: converted})
 	}
 
 	covered := trust.ScopeTotal
-	if len(large) > 0 {
+	if len(skipped) > 0 {
 		covered = trust.ScopePartial
 	}
 	return engine.Result[edit.Change]{
 		Items:        out,
 		Completeness: covered,
-		Caveats:      append([]trust.Caveat{dynamic}, unread(large)...),
+		Caveats:      append([]trust.Caveat{dynamic}, unread(skipped)...),
 	}, nil
 }

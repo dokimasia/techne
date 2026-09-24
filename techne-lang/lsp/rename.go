@@ -10,77 +10,70 @@ import (
 
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
-	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/lang"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 )
 
-// renaming rewrites a declaration's name and every use of it.
+// renaming plans [edit.RenameSymbol] with textDocument/rename in these steps:
+//
+//  1. Open the file of the declaration, and wait for the server to settle.
+//  2. Open every file that textDocument/references names, because metals renames only in its
+//     open buffers.
+//  3. Ask textDocument/prepareRename where the server offers it.
+//  4. Ask textDocument/rename.
+//
+// renaming returns [engine.ErrRefuse] when the server refuses the position or the rename. A
+// plan that leaves a use unrewritten is partial.
 func (e *Engine) renaming(
 	ctx context.Context,
 	req engine.Request,
 	target edit.Target,
 	args edit.Args,
 ) (engine.Result[edit.Change], error) {
-	const op = edit.RenameSymbol
 	fresh := strings.TrimSpace(args[edit.ArgNewName])
 	if fresh == "" {
 		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"%w: %s needs %s", engine.ErrRefuse, op, edit.ArgNewName)
+			"%w: %s needs %s", engine.ErrRefuse, edit.RenameSymbol, edit.ArgNewName)
+	}
+	files, skipped, err := e.targeted(req, target)
+	if err != nil || skipped {
+		return engine.Result[edit.Change]{Skipped: skipped, Completeness: trust.ScopeTotal}, err
 	}
 
 	held, err := e.running(ctx)
 	if err != nil {
 		return engine.Result[edit.Change]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
-
+	ctx, done := e.answered(ctx)
+	defer done()
 	if !provides(held.capable.RenameProvider) {
 		return engine.Result[edit.Change]{}, e.unsupported("textDocument/rename")
 	}
-
-	at, doc, known, err := e.aimed(ctx, held, req, target)
+	at, doc, err := e.aimed(ctx, held, req, target, files)
 	if err != nil {
 		return engine.Result[edit.Change]{}, err
 	}
-	if !known {
-		return engine.Result[edit.Change]{Skipped: true, Completeness: trust.ScopeTotal}, nil
+	short, err := e.preload(ctx, held, lang.WordAt(string(doc.content), doc.position(at).Offset), doc.path)
+	if err != nil {
+		return engine.Result[edit.Change]{}, err
 	}
-
-	// A plan computed against a half-loaded workspace rewrites the
-	// references the server had found so far and leaves the rest, which
-	// is the one outcome worse than refusing. Waited on after the files
-	// are open, because opening them is what starts the work.
-	e.working.settle(ctx, e.settling())
-
-	// Who uses it, which opens the files holding the uses and is what
-	// the rename below is measured against.
+	ready := e.settle(ctx, held)
 	uses := e.using(ctx, held, doc, at)
 
-	// Asked first, where the server answers it: whether the thing at
-	// this position can be renamed at all. Skipping it turns a keyword
-	// or a literal into a rename that reports no edits and reads as a
-	// rename that had nothing to do.
-	//
-	// Not every server answers it, and one that does not refuses with an
-	// error indistinguishable from the position being unrenameable. So
-	// it is asked only where it was offered, and the rename goes ahead
-	// without it otherwise.
 	if prepares(held.capable.RenameProvider) {
-		ready, refused := held.asks.PrepareRename(ctx, &protocol.PrepareRenameParams{
+		prepared, refused := held.asks.PrepareRename(ctx, &protocol.PrepareRenameParams{
 			TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(doc.path))},
 			Position:     at,
 		})
 		if refused != nil {
-			// The server answered and the answer is no. A caller picks
-			// another position; there is nothing here that is broken.
 			return engine.Result[edit.Change]{}, fmt.Errorf("%w: %s: %s",
 				engine.ErrRefuse, e.server.Name, reasoned(refused))
 		}
-		if ready == nil {
-			return engine.Result[edit.Change]{}, fmt.Errorf(
-				"%w: %s: nothing at %s:%d:%d can be renamed",
+		if prepared == nil {
+			return engine.Result[edit.Change]{}, fmt.Errorf("%w: %s: nothing at %s:%d:%d can be renamed",
 				engine.ErrRefuse, e.server.Name, doc.path, at.Line+1, at.Character+1)
 		}
 	}
@@ -91,30 +84,21 @@ func (e *Engine) renaming(
 		NewName:      fresh,
 	})
 	if err != nil {
-		// A server refuses a rename it worked out and will not do:
-		// gopls answers that the new name conflicts with something in
-		// the same block, and naming another one is the whole of what a
-		// caller does about it. Reported as a fault it reads as a broken
-		// engine, which is the one thing it is not.
-		return engine.Result[edit.Change]{}, fmt.Errorf("%w: %s: %s",
-			engine.ErrRefuse, e.server.Name, reasoned(err))
+		return engine.Result[edit.Change]{}, fmt.Errorf("%w: %s: %s", engine.ErrRefuse, e.server.Name, reasoned(err))
 	}
-
-	changes, err := e.changes(answered)
+	changes, err := e.changes(answered, nil)
 	if err != nil {
 		return engine.Result[edit.Change]{}, err
 	}
 	if outside := beyond(changes); outside != "" {
-		// A server indexes whatever its own configuration covers, which
-		// for a multi-module workspace is more than techne was pointed
-		// at. techne applies changes under its root and reports them
-		// relative to it, so a plan reaching past it cannot be applied
-		// as described — and half of a rename is worse than none.
 		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"%w: %s: the rename reaches %s, which is outside the workspace",
+			"%w: %s: the rename changes %s, which is outside the workspace",
 			engine.ErrRefuse, e.server.Name, outside)
 	}
-	covered, reaches, caveats := e.corroborated(ctx, held, doc, uses, changes)
+	covered, reaches, caveats := e.corroborated(ctx, held, doc, at, uses, changes, ready)
+	if short != nil {
+		covered, caveats = trust.ScopePartial, append(caveats, *short)
+	}
 	return engine.Result[edit.Change]{
 		Items:        changes,
 		Completeness: covered,
@@ -123,98 +107,67 @@ func (e *Engine) renaming(
 	}, nil
 }
 
-// aimed is the position an operation is pointed at.
+// targeted returns the files of the scope of req for a target that names a declaration, and
+// reports true for a target without a file of the language: a span in a file of another
+// language, or a declaration in a scope without files of the language.
+func (e *Engine) targeted(req engine.Request, target edit.Target) (lang.Files, bool, error) {
+	switch target.Kind {
+	case edit.TargetSpan:
+		return lang.Files{}, !lang.Claims(string(target.Span.Path), e.declared.Extensions), nil
+	case edit.TargetSymbol:
+		files, err := e.walk(req)
+		if err != nil {
+			return lang.Files{}, false, err
+		}
+		return files, len(files.Read) == 0 && len(files.Unread) == 0, nil
+	}
+	return lang.Files{}, false, fmt.Errorf("%w: %s names a declaration or a span, and this target names neither",
+		engine.ErrRefuse, edit.RenameSymbol)
+}
+
+// aimed opens the file of target and returns the protocol position of the name of the
+// declaration that target names, and the document of the file.
 //
-// Both kinds resolve to the same thing: the place a declaration's own
-// name is written. A span covers the whole declaration and starts at
-// whatever opens it — class, type, def — and a server asked about a
-// keyword answers that there is nothing there to rename. So the span is
-// used to find the declaration and the declaration to find its name.
+// A span names the innermost declaration that contains its start, and a span outside every
+// declaration names its own start. A declaration is looked up in the files of the walk, and a
+// declaration that no file declares returns [engine.ErrRefuse].
 func (e *Engine) aimed(
 	ctx context.Context,
 	held *session,
 	req engine.Request,
 	target edit.Target,
-) (protocol.Position, document, bool, error) {
-	switch target.Kind {
-	case edit.TargetSpan:
-		symbols, doc, err := e.symbols(ctx, held, target.Span.Path)
-		if err != nil {
-			return protocol.Position{}, document{}, false, err
+	files lang.Files,
+) (protocol.Position, document, error) {
+	if target.Kind == edit.TargetSymbol {
+		subject, doc, known, err := e.declaring(ctx, newFinder(e, held), req, target.Symbol, files.Read)
+		switch {
+		case err != nil:
+			return protocol.Position{}, document{}, err
+		case !known:
+			return protocol.Position{}, document{}, fmt.Errorf("%w: %s: no declaration in %s matches %s%s",
+				engine.ErrRefuse, e.server.Name, req.Scope, target.Symbol, skipping(files.Unread))
 		}
-		// The innermost declaration covering the span, for the reason
-		// [finder.at] takes the innermost: a span inside a method is
-		// inside the type holding it, and the caller meant the one it
-		// pointed at.
-		if inside, known := covering(symbols, target.Span.Start.Offset); known {
-			return naming(doc, inside), doc, true, nil
-		}
-		// A span covering no declaration is believed as it stands.
-		// Whoever sent it may be pointing at something an outline does
-		// not report, and a server is a better judge of that than this.
-		return doc.mark(target.Span.Start), doc, true, nil
-
-	case edit.TargetSymbol:
-		paths, err := e.files(req)
-		if err != nil {
-			return protocol.Position{}, document{}, false, err
-		}
-		subject, doc, known, read, err := e.declaring(ctx, held, req, target.Symbol, paths)
-		if err != nil || !read {
-			return protocol.Position{}, document{}, false, err
-		}
-		if !known {
-			// Read the files and found no such declaration. A plan
-			// computed from a position nothing was found at rewrites
-			// whatever happens to be there.
-			return protocol.Position{}, document{}, false, fmt.Errorf(
-				"%w: %s: no declaration in %q matches %s",
-				engine.ErrRefuse, e.server.Name, req.Scope, target.Symbol)
-		}
-		return naming(doc, subject), doc, true, nil
+		return naming(doc, subject), doc, nil
 	}
 
-	return protocol.Position{}, document{}, false, fmt.Errorf(
-		"%w: %s is pointed at nothing this engine can place", engine.ErrRefuse, e.server.Name)
-}
-
-// covering is the smallest declaration holding an offset.
-func covering(held []sema.Symbol, offset int) (sema.Symbol, bool) {
-	var found sema.Symbol
-	var known bool
-	for _, one := range held {
-		if one.Span.Start.Offset > offset || one.Span.End.Offset < offset {
-			continue
-		}
-		if !known || covers(found.Span) > covers(one.Span) {
-			found, known = one, true
-		}
+	doc, err := e.open(ctx, held, target.Span.Path)
+	if err != nil {
+		return protocol.Position{}, document{}, err
 	}
-	return found, known
+	symbols, err := e.symbols(ctx, held, doc)
+	if err != nil {
+		return protocol.Position{}, document{}, err
+	}
+	start := doc.mark(target.Span.Start)
+	if inside, known := innermost(symbols, doc.position(start).Offset); known {
+		return naming(doc, inside), doc, nil
+	}
+	return start, doc, nil
 }
 
-// using is where the server says a declaration is used, and opens every
-// file it names.
-//
-// # Opening them is the point as much as knowing them
-//
-// A server computes a rename over the buffers the client is holding.
-// metals does exactly that and nothing more: asked to rename a class
-// with only the class's own file open, it rewrites that file, renames it
-// to match, and leaves every other use of the class where it was. It
-// answers who uses the class perfectly well while doing so, because the
-// index and the refactoring are not the same machinery.
-//
-// So the uses are asked for first and the files holding them are opened,
-// which is the state an editor would have been in.
-//
-// # And they are the evidence
-//
-// A rename that rewrites references claims every reference was found.
-// The plan alone cannot support that: a server with no compiler view
-// answers with the declaration and nothing else, which is exactly what a
-// declaration nothing uses looks like. The reference list is the second
-// answer that claim is measured against.
+// using returns the uses of the declaration at position at from textDocument/references,
+// without the declaration, and opens every file in the workspace that contains one. It returns
+// nil for a server that does not serve references or that refuses the request.
 func (e *Engine) using(
 	ctx context.Context,
 	held *session,
@@ -224,80 +177,58 @@ func (e *Engine) using(
 	if !provides(held.capable.ReferencesProvider) {
 		return nil
 	}
-	pick := protocol.TextDocumentPositionParams{
+	answered, err := held.asks.References(ctx, &protocol.ReferenceParams{
 		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(doc.path))},
 		Position:     at,
-	}
-	answered, err := held.asks.References(ctx, &protocol.ReferenceParams{
-		TextDocumentPositionParams: pick,
-		// The declaration itself is not a use, and a rename that
-		// rewrote nothing but its own name would look complete.
-		Context: protocol.ReferenceContext{IncludeDeclaration: false},
+		Context:      protocol.ReferenceContext{IncludeDeclaration: false},
 	})
 	if err != nil {
-		// A server that will not answer this is one whose rename cannot
-		// be corroborated. That is what the answer says, rather than a
-		// reason to fail a rename the server would have done.
 		return nil
 	}
-
 	for _, one := range answered {
-		p := e.pathOf(one.URI)
-		if outside(p) {
-			// A server indexes what its own configuration covers, which
-			// includes a standard library and a module cache. Those are
-			// not techne's to open and not its to rewrite.
-			continue
+		if p := e.pathOf(one.URI); !outside(p) {
+			_, _ = e.open(ctx, held, p)
 		}
-		// A file that cannot be read is one the server named and this
-		// cannot show it. Skipped rather than raised: the rename is
-		// still worth doing, and the coverage below says what it is
-		// worth.
-		_ = e.open(ctx, held, p)
 	}
 	return answered
 }
 
-// corroborated is what a rename's coverage is worth, measured against
-// what the server itself says uses the declaration.
-//
-// A rename covering every use the server can name is as complete as the
-// server is. One that misses a use is short whatever it claims, and a
-// caller acting on total coverage would delete the declaration.
-//
-// Where there is nothing to measure against — a server that answers no
-// references, or a declaration nothing uses — it falls back to the
-// evidence every empty semantic answer rests on: whether the server
-// produced a view of the file at all.
+// corroborated returns the completeness, the lowered tier and the caveats of a rename at the
+// position at of doc, measured against the uses the server named. A plan that rewrites every
+// use is as complete as the server's answer, and a plan that leaves a use unrewritten is
+// partial. Without uses to compare, a server that has not shown a view of the file makes the
+// plan partial. An error lowers the plan when it is on a line that writes the old name outside
+// the edits of the plan.
 func (e *Engine) corroborated(
 	ctx context.Context,
 	held *session,
 	doc document,
+	at protocol.Position,
 	uses []protocol.Location,
 	changes []edit.Change,
+	ready bool,
 ) (trust.Completeness, trust.Fidelity, []trust.Caveat) {
-	covered, reaches, caveats := e.bound(ctx, doc.path)
-	if covered != trust.ScopeTotal {
+	risky := lang.Writing(replaced(doc, at, changes), edited(changes))
+	covered, reaches, caveats := e.bound(held, doc.path, ready, risky)
+	switch {
+	case covered != trust.ScopeTotal:
 		return covered, reaches, caveats
-	}
-	if len(uses) > 0 {
+	case len(uses) > 0:
 		if missed, short := e.uncovered(uses, changes); short {
 			return trust.ScopePartial, reaches, append(caveats, trust.Caveat{
-				Code: trust.CaveatIndexWarming,
-				Note: "the server names a use at " + missed + " that this change does not " +
-					"rewrite, so it is not every use",
+				Code: trust.CaveatUnrewritten,
+				Note: "the server names a use at " + missed + " that the rename does not rewrite",
 			})
 		}
 		return covered, reaches, caveats
-	}
-	if !e.analysed(ctx, held, doc.path) {
+	case !e.analysed(ctx, held, doc.path):
 		return trust.ScopePartial, reaches, append(caveats, unresolved)
 	}
 	return covered, reaches, caveats
 }
 
-// uncovered names the first use a plan leaves alone, and reports whether
-// there was one.
+// uncovered returns the path and line of the first use in the workspace that no edit of
+// changes rewrites, and reports whether there is one.
 func (e *Engine) uncovered(uses []protocol.Location, changes []edit.Change) (string, bool) {
 	edits := map[source.Path][]edit.TextEdit{}
 	for _, c := range changes {
@@ -305,22 +236,19 @@ func (e *Engine) uncovered(uses []protocol.Location, changes []edit.Change) (str
 			edits[c.Path] = append(edits[c.Path], c.Edits...)
 		}
 	}
-
-	// One read per file rather than one per use: a declaration used
-	// thirty times in one file is one file.
-	read := map[source.Path]document{}
+	docs := map[source.Path]document{}
 	for _, one := range uses {
 		p := e.pathOf(one.URI)
 		if outside(p) {
 			continue
 		}
-		doc, loaded := read[p]
-		if !loaded {
-			held, err := e.read(p)
+		doc, read := docs[p]
+		if !read {
+			loaded, err := e.read(p)
 			if err != nil {
 				continue
 			}
-			doc, read[p] = held, held
+			doc, docs[p] = loaded, loaded
 		}
 		if !rewrites(edits[p], doc.position(one.Range.Start).Offset) {
 			return fmt.Sprintf("%s:%d", p, one.Range.Start.Line+1), true
@@ -329,23 +257,52 @@ func (e *Engine) uncovered(uses []protocol.Location, changes []edit.Change) (str
 	return "", false
 }
 
-// reasoned is a server's own words for why it will not do something,
-// without the framing this package would otherwise wrap them in. What a
-// caller acts on is the sentence the server wrote.
-func reasoned(err error) string {
-	held := err.Error()
-	if _, after, cut := strings.Cut(held, ": "); cut && strings.HasPrefix(held, "jsonrpc2: ") {
-		return after
+// replaced returns the text that the edit of changes at the position at of doc replaces, which
+// is the old name of a rename, or the empty string when no edit covers the position.
+func replaced(doc document, at protocol.Position, changes []edit.Change) string {
+	offset := doc.position(at).Offset
+	for _, c := range changes {
+		if c.Kind != edit.ChangeEdit || c.Path != doc.path {
+			continue
+		}
+		for _, one := range c.Edits {
+			if one.Span.Start.Offset <= offset && offset < one.Span.End.Offset {
+				return doc.text(one.Span)
+			}
+		}
 	}
-	return held
+	return ""
 }
 
-// rewrites reports whether an edit list covers the byte at an offset.
-func rewrites(edits []edit.TextEdit, at int) bool {
+// edited returns the lines that the edits of changes replace.
+func edited(changes []edit.Change) lang.Lines {
+	var spans []source.Span
+	for _, c := range changes {
+		for _, one := range c.Edits {
+			span := one.Span
+			span.Path = c.Path
+			spans = append(spans, span)
+		}
+	}
+	return lang.Spanned(spans...)
+}
+
+// rewrites reports whether an edit of edits replaces the byte at offset.
+func rewrites(edits []edit.TextEdit, offset int) bool {
 	for _, one := range edits {
-		if one.Span.Start.Offset <= at && at < one.Span.End.Offset {
+		if one.Span.Start.Offset <= offset && offset < one.Span.End.Offset {
 			return true
 		}
 	}
 	return false
+}
+
+// reasoned returns the message of a server's error response without the "jsonrpc2: " frame
+// that the connection adds.
+func reasoned(err error) string {
+	message := err.Error()
+	if _, after, cut := strings.Cut(message, ": "); cut && strings.HasPrefix(message, "jsonrpc2: ") {
+		return after
+	}
+	return message
 }

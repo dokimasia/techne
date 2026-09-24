@@ -12,19 +12,28 @@ import (
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/lang/lsp"
+	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
 
-// lifting asks for lines 7 and 8 of the fixture to be lifted into a
-// function called weigh, which is how every case here begins.
+// lifting plans the extraction of line 6 of a.fake into a function called name with e.
 func lifting(t *testing.T, e *lsp.Engine, name string) (engine.Result[edit.Change], error) {
 	t.Helper()
 	return e.Plan(t.Context(), engine.Request{Scope: "a.fake"}, edit.ExtractFunction,
 		edit.Target{Kind: edit.TargetSpan, Span: source.Span{
-			Path:  "a.fake",
-			Start: source.Position{Line: 6},
-			End:   source.Position{Line: 6},
+			Path: "a.fake", Start: source.Position{Line: 6}, End: source.Position{Line: 6},
 		}},
 		edit.Args{edit.ArgNewName: name})
+}
+
+// written returns the new text of every edit of changes, joined.
+func written(changes []edit.Change) string {
+	var out strings.Builder
+	for _, one := range changes {
+		for _, e := range one.Edits {
+			out.WriteString(e.New)
+		}
+	}
+	return out.String()
 }
 
 func TestExtract(t *testing.T) {
@@ -33,146 +42,98 @@ func TestExtract(t *testing.T) {
 	t.Run("Plan", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("names the function what the caller asked for", func(t *testing.T) {
+		t.Run("names the function as the caller asks", func(t *testing.T) {
 			t.Parallel()
-			// No server takes a name: in an editor the name is typed into
-			// the box that opens after the extraction. So the extraction
-			// is computed, shown to the server as an unsaved buffer, and
-			// what appeared in it is renamed.
-			e := serving(t, modeExtracts, map[string]string{"a.fake": content})
-			got, err := lifting(t, e, "weigh")
-
-			assert.NoError(t, err, "lifting lines into a function succeeds")
-			assert.Length(t, got.Items, 1, "one file changes")
-			assert.Contains(t, written(got.Items), "func weigh()",
-				"the function carries the name that was asked for")
-			assert.NotContains(t, written(got.Items), placeholder,
-				"and not the one the server gave it")
+			got, err := lifting(t, serving(t, lsptest.Extracts, sample()), "weigh")
+			assert.NoError(t, err, "Plan of an extraction")
+			assert.Length(t, got.Items, 1, "the changes of the plan")
+			assert.Contains(t, written(got.Items), "func weigh() int { return 1 }", "the text the plan writes")
+			assert.NotContains(t, written(got.Items), lsptest.Placeholder, "the text the plan writes")
 		})
 
-		t.Run("takes the action the language module named", func(t *testing.T) {
+		t.Run("takes the action that the language module names", func(t *testing.T) {
 			t.Parallel()
-			// Every server offers several extractions under one kind and
-			// none of them marks one preferred. Taking whichever came
-			// first would extract a variable when a function was asked
-			// for.
-			e := serving(t, modeExtracts, map[string]string{"a.fake": content})
-			got, err := lifting(t, e, "weigh")
-
-			assert.NoError(t, err, "lifting succeeds")
-			assert.NotContains(t, written(got.Items), "var extracted",
-				"the variable beside it in the menu was not taken")
+			got, err := lifting(t, serving(t, lsptest.Extracts, sample()), "weigh")
+			assert.NoError(t, err, "Plan of an extraction")
+			assert.NotContains(t, written(got.Items), "var extracted", "the text the plan writes")
 		})
 
-		t.Run("measures the naming against the text the server was shown", func(t *testing.T) {
+		t.Run("takes the edit of an action that the server performs", func(t *testing.T) {
 			t.Parallel()
-			// The rename is computed over the extraction's result, which
-			// is not what is on disk. A range converted against the file
-			// names different bytes, and writing over them still parses.
-			e := serving(t, modeExtracts, map[string]string{"a.fake": content})
-			got, err := lifting(t, e, "weigh")
-
-			assert.NoError(t, err, "lifting succeeds")
-			assert.Contains(t, written(got.Items), "func weigh() int { return 1 }",
-				"the composed result is the extraction with the name in it")
+			got, err := lifting(t, serving(t, lsptest.Commands, sample()), "weigh")
+			assert.NoError(t, err, "Plan of an extraction by command")
+			assert.Contains(t, written(got.Items), "func weigh()", "the text the plan writes")
 		})
 
-		t.Run("takes an edit a server performs rather than describes", func(t *testing.T) {
+		t.Run("restores the content on disk after the extraction", func(t *testing.T) {
 			t.Parallel()
-			// Some servers expose a refactoring only as a command: they
-			// do the work and offer the client the result to apply.
-			// techne asked for that edit, so it keeps it — and still
-			// gates it rather than letting the server write.
-			e := serving(t, modeCommands, map[string]string{"a.fake": content})
-			got, err := lifting(t, e, "weigh")
-
-			assert.NoError(t, err, "a refactoring behind a command succeeds")
-			assert.Contains(t, written(got.Items), "func weigh()",
-				"the edit the server offered became the plan")
-		})
-
-		t.Run("leaves the server holding what is on disk", func(t *testing.T) {
-			t.Parallel()
-			// The buffer shown to the server is not a file, and a plan is
-			// not an apply. A server left holding text nobody wrote
-			// answers every later question about code that is nowhere.
-			e := serving(t, modeExtracts, map[string]string{"a.fake": content})
+			e := serving(t, lsptest.Extracts, sample())
 			_, err := lifting(t, e, "weigh")
-			assert.NoError(t, err, "lifting succeeds")
+			assert.NoError(t, err, "Plan of an extraction")
 
-			after, err := e.Outline(t.Context(), engine.Request{Scope: "a.fake"})
-			assert.NoError(t, err, "asking again succeeds")
-			assert.Equal(t, names(after.Items), []string{"After"},
-				"the extracted function is not there, because nothing wrote it")
+			got, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify after the extraction")
+			assert.Equal(t, messages(got.Items), []string{"declares=After"}, "the functions the server holds")
 		})
 
-		t.Run("declines where the server offers no such refactoring", func(t *testing.T) {
+		t.Run("declines a server declared without an extraction", func(t *testing.T) {
 			t.Parallel()
-			// Declared per server because it was established per server:
-			// pyright, clangd and metals offer nothing over a run of
-			// statements. Declining lets something else answer.
-			e := serving(t, modeDefault, map[string]string{"a.fake": content})
-			_, err := lifting(t, e, "weigh")
-
-			assert.ErrorIs(t, err, engine.ErrDecline,
-				"a server nobody declared this for is passed over, not failed")
+			_, err := lifting(t, serving(t, lsptest.Default, sample()), "weigh")
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Plan")
 		})
 
-		t.Run("declines where the server answers no code action", func(t *testing.T) {
+		t.Run("declines a server without code actions", func(t *testing.T) {
 			t.Parallel()
-			held := pretending(modeThin)
-			held.Extracts = lsp.Refactor{Kind: "refactor.extract"}
-			e := servingAs(t, held, map[string]string{"a.fake": content})
-			_, err := lifting(t, e, "weigh")
-
-			assert.ErrorIs(t, err, engine.ErrDecline, "the request is not offered")
-			assert.Contains(t, err.Error(), "codeAction", "and the reason names it")
+			server := lsptest.Server(lsptest.Thin)
+			server.Extracts = lsp.Refactor{Kind: "refactor.extract"}
+			_, err := lifting(t, lsptest.Engine(t, lsptest.Workspace(t, sample()), server), "weigh")
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Plan")
+			assert.Contains(t, err.Error(), "codeAction", "the error of Plan")
 		})
 
-		t.Run("refuses without a name to give the function", func(t *testing.T) {
+		t.Run("names the lines for which the server offers no extraction", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, modeExtracts, map[string]string{"a.fake": content})
-			_, err := lifting(t, e, "")
-
-			assert.ErrorIs(t, err, engine.ErrRefuse, "there is nothing to call it")
+			server := lsptest.Server(lsptest.Compiles)
+			server.Extracts = lsp.Refactor{Kind: "refactor.extract"}
+			_, err := lifting(t, lsptest.Engine(t, lsptest.Workspace(t, sample()), server), "weigh")
+			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of Plan")
+			assert.Contains(t, err.Error(), "offers no extraction of lines 7 to 7 of a.fake", "the error of Plan")
 		})
 
-		t.Run("refuses a selection past the end of the file", func(t *testing.T) {
+		t.Run("refuses an extraction without a name", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, modeExtracts, map[string]string{"a.fake": content})
-			_, err := e.Plan(t.Context(), engine.Request{Scope: "a.fake"},
-				edit.ExtractFunction,
+			_, err := lifting(t, serving(t, lsptest.Extracts, sample()), "")
+			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of Plan")
+		})
+
+		t.Run("refuses lines past the end of the file", func(t *testing.T) {
+			t.Parallel()
+			_, err := serving(t, lsptest.Extracts, sample()).Plan(t.Context(),
+				engine.Request{Scope: "a.fake"}, edit.ExtractFunction,
 				edit.Target{Kind: edit.TargetSpan, Span: source.Span{
-					Path:  "a.fake",
-					Start: source.Position{Line: 400},
-					End:   source.Position{Line: 900},
+					Path: "a.fake", Start: source.Position{Line: 400}, End: source.Position{Line: 900},
 				}},
 				edit.Args{edit.ArgNewName: "weigh"})
-
-			assert.ErrorIs(t, err, engine.ErrRefuse, "there are no such lines to lift")
+			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of Plan")
 		})
 
-		t.Run("refuses a target that is not a run of lines", func(t *testing.T) {
+		t.Run("refuses a target that is not a span", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, modeExtracts, map[string]string{"a.fake": content})
-			_, err := e.Plan(t.Context(), engine.Request{Scope: "a.fake"},
-				edit.ExtractFunction,
+			_, err := serving(t, lsptest.Extracts, sample()).Plan(t.Context(),
+				engine.Request{Scope: "a.fake"}, edit.ExtractFunction,
 				edit.Target{Kind: edit.TargetSymbol, Symbol: "fake::Store"},
 				edit.Args{edit.ArgNewName: "weigh"})
+			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of Plan")
+		})
 
-			assert.ErrorIs(t, err, engine.ErrRefuse, "an extraction is pointed at lines")
+		t.Run("skips lines in a file of another language", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.Extracts, map[string]string{"notes.md": "# notes\n"}).Plan(t.Context(),
+				engine.Request{Scope: "notes.md"}, edit.ExtractFunction,
+				edit.Target{Kind: edit.TargetSpan, Span: source.Span{Path: "notes.md"}},
+				edit.Args{edit.ArgNewName: "weigh"})
+			assert.NoError(t, err, "Plan of lines in notes.md")
+			assert.True(t, got.Skipped, "Skipped of the plan")
 		})
 	})
-}
-
-// written is the text a plan's edits put into the files, joined so a
-// case can say what is in it without walking the shape.
-func written(held []edit.Change) string {
-	var out strings.Builder
-	for _, one := range held {
-		for _, e := range one.Edits {
-			out.WriteString(e.New)
-		}
-	}
-	return out.String()
 }
