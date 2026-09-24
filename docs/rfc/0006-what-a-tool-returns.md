@@ -25,8 +25,8 @@ channels of a tool result two different renderings, replaces the item
 with something shaped for the question, nests declarations instead of
 pointing at them, and drops the fields that restate what is beside them.
 
-It amends the detail table, the budget order and the status field in
-RFC-0003. Everything else there stands.
+It amends the text block, the detail table, the budget order and the
+status field in RFC-0003. Everything else there stands.
 
 ## Motivation
 
@@ -117,9 +117,10 @@ document it must unescape first.
 ```
 
 `language` is constant, because a request routes to one language. `unit`
-is constant when the scope is one file or one package. `path` appears
-per item only when the scope covers more than one file. An item repeats
-none of them.
+is constant when the scope is one file or one package. `path` appears on
+an item only when the item is not in the file of the scope: in an answer
+about a directory, and on a declaration that `resolve` finds in another
+file. An item repeats none of them.
 
 `scope` is not provenance. Provenance is how the answer was reached;
 scope is what it is about.
@@ -193,10 +194,10 @@ every answer that ran, so the common path pays nothing for it.
 - **`id`** is gone. Nothing is addressable by it that is not addressable
   by name, kind and container, and it was never unique.
 
-Nesting by span leaves a Go method outside its receiver. Belonging is
-not containment: every language with methods names the receiver or the
-enclosing type in the declaration, so a query can capture it. Until one
-does, a method sits at depth 0 beside its type rather than inside it.
+Nesting by span leaves a Go method outside its receiver, at depth 0
+beside its type. Belonging is not containment: the Go query captures the
+receiver, so the qualified name of the method is `Store.Get`, and a
+caller addresses the method by that name.
 
 ### Levels are named for what they carry
 
@@ -252,8 +253,10 @@ declare something other code can refer to.
 | `["local"]` | and declarations inside callable bodies |
 | `["all"]` | every name the file binds |
 
-`tests` defaults to false and drops the paths a language module calls
-tests. Every module states the rule and nothing consults it.
+`tests` defaults to false. An engine then leaves out the files that the
+`IsTest` rule of the language declaration names, and `tests` true keeps
+them. The request passes the choice to the engine as
+`engine.Request.Tests`.
 
 ### The budget drops the cheapest evidence first
 
@@ -291,8 +294,9 @@ an identity:
 `name` accepts the qualified form the language writes, because that is
 how a reader recognises it. `kind` narrows an ambiguous name, and so
 does `line`, counted from one, to the declarations whose span contains
-it. The line picks one of the overloads of a method. An
-ambiguous name is answered with the candidates rather than refused.
+it. The line picks one of the overloads of a method. A name that is
+still ambiguous is refused, and the reason lists the kind and the site of
+each candidate.
 
 ## The tools
 
@@ -509,8 +513,9 @@ Structured:
 }
 ```
 
-A diagnostic that carries a fix carries it in the shape the write path
-takes, so applying it needs no translation.
+An issue with one obvious fix states the text that the fix writes, with
+its file and its line. No tool takes a fix, so a caller applies it with
+its own edit.
 
 ### `capabilities` — what can you answer
 
@@ -745,11 +750,11 @@ by offset, and it slices in the write path, which has the span.
   order has to drop members first, and a deep tree truncates less
   gracefully than a flat list.
 - Addressing by name is ambiguous where a language allows two
-  declarations to share a name, kind and container. The answer is a list
-  the caller picks from, which is a turn.
-- `in` needs the parser to read a receiver, a pattern per language
-  rather than one rule over spans. Until it does, two methods sharing a
-  name and kind are told apart only by their line.
+  declarations to share a name, kind and container. The refusal lists the
+  site of each, and the caller asks again with a line, which is a turn.
+- The `in` of a Go method needs the parser to read its receiver, a
+  pattern of the Go query rather than the rule over spans that serves the
+  other languages.
 
 ## Unresolved and future work
 

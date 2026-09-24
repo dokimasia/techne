@@ -283,23 +283,6 @@ second process. Releasing between pinning the content and writing it back
 would let another change land in between, and the byte ranges would then
 describe a file nobody computed them against.
 
-**Formatting touches only what the plan named.** The format step runs
-over the paths in `plan.Changes` and no others. If any other file
-changed, the gate fails. A formatter configured over the whole workspace
-would otherwise fold unrelated reformatting into a rename, and the diff
-would be unreviewable.
-
-A language whose formatter has to touch a sibling, to normalise imports
-across a package, names those paths in the plan. They then get a
-precondition and a lock like every other touched path, rather than being
-an exception to the rule.
-
-**The gate records which verifier answered.** An in-process `Verifier` is
-preferred; a language's declared argv is the fallback. The result names
-which ran, because "the build passed" means different things when it came
-from a type checker in this process and from a subprocess that may not
-have seen the same files.
-
 ### A dry run is gated, not just previewed
 
 `dry_run` runs the whole pipeline against an overlay: the plan's changes
@@ -314,35 +297,16 @@ apply without reading the diff in between.
 
 ### A failed gate carries its fixes
 
-When the gate fails, each diagnostic that has a known fix carries it as a
-ready `Plan`. A lint, fix and re-verify cycle costs two round trips
-rather than five, because the caller never has to work the edit out from
-the message.
+When the gate fails, each finding that has one obvious fix contains the
+changes of the fix, and the write tool shows the text that each fix
+writes, with its file and its line. No tool applies a fix. The caller
+reads the fix instead of working the edit out from the message, and
+writes it with its next change.
 
 The limit is the same as anywhere else this is done: carry a fix when
 there is one obvious fix. A diagnostic with three plausible ones carries
 none, because three payloads to save one round trip that may not be taken
 is a bad trade.
-
-### Batches share one gate
-
-Half the catalogue is naturally plural: moving eight symbols, documenting
-every declaration in a file. Applying those one at a time leaves the
-workspace broken between members and costs N verifications.
-
-```go
-// Batch merges plans and admits on the weakest member.
-func (s *Service) Batch(ctx context.Context, plans []Plan) (Result, error)
-```
-
-Plans are merged and checked for overlap before anything is written, and
-the batch is admitted on its weakest member, so a resolved change cannot
-carry a syntactic one past the policy.
-
-Every plan in a batch is for one language. The gate is a language's own
-verifier, so a mixed batch would need a gate per language and a rollback
-rule for the case where one passes and another fails. A caller changing
-two languages sends two batches.
 
 ### What a caller gets back
 
@@ -450,10 +414,11 @@ the other's work. Locks are cheaper than the failure they prevent.
 
 ## Unresolved and future work
 
-Two questions wait for more of the write path to exist. Whether
-`extract.variable` can be correct on a parser's evidence in a language
-with type inference, and whether the second-process lock is a file in the
-workspace or something the caller supplies.
+Whether `extract.variable` can be correct on a parser's evidence in a
+language that infers the type of a variable waits for a planner of it.
+
+A batch of plans under one gate is not proposed. Each write tool plans
+one operation, and nothing calls a batch.
 
 What a dry run reports for a language whose toolchain has no in-memory
 projection is settled: it reports that nothing judged the change. The

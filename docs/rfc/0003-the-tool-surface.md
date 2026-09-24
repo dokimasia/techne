@@ -82,14 +82,20 @@ could point at anything, which is a round trip spent on something it
 already knew. The agent has the name: from an error message, from a
 search result, or from the code it just wrote.
 
-When a name matches several declarations the answer ranks the candidates
-rather than refusing, and each carries what is needed to choose.
+When a name matches more than one declaration, the tool refuses the
+request, and the reason lists the kind and the site of each. Matches are one
+declaration when they are imports of one name, a type and its own
+constructors, or declarations of one identity. The caller narrows any
+other set with `kind` or `line`, or qualifies the name as the language
+writes it. The relations, rename and documentation tools apply one rule,
+so a name addresses the same declaration in each of them.
 
-The engine ports take a position, because that is how a type checker and
-a language server are both addressed. Converting a name to a position is
-the service's job, and it is the same lookup `search` performs. Pushing
-that conversion onto the agent would move a round trip from the server to
-the conversation.
+The engine ports take a position or a span, because that is how a type
+checker and a language server are both addressed. The tool converts a
+name to a declaration: it finds the name in the outline of the scope and
+passes the span of the declaration to the engine. Pushing that conversion
+onto the agent would move a round trip from the server to the
+conversation.
 
 The protocol permits this. Tool names may hold ASCII letters, digits,
 underscore, hyphen and dot, between 1 and 128 characters, and the
@@ -191,9 +197,10 @@ a truncation caveat rather than an error.
 ### Paths are relative
 
 Every path in a request and an answer is relative to the workspace root
-and slash-separated. An absolute path in a request is an error, because
-answering it would leak the machine's directory layout into an agent's
-context and make the answer unusable on any other machine.
+and slash-separated. The tool refuses an absolute path in a request,
+because answering it would leak the machine's directory layout into an
+agent's context and make the answer unusable on any other machine. It
+refuses a path that leaves the workspace root too.
 
 ### Capabilities
 
@@ -226,9 +233,9 @@ Every operation with a planner in at least one language is a tool.
 Calling it for a language that cannot serve it returns `unsupported` with
 the reason, which is the whole argument for one tool per operation.
 
-An operation nothing implements anywhere is not a tool. It appears in
-`capabilities` with `available: false`, so an agent is told the operation
-exists and cannot run rather than that no such operation exists.
+An operation that nothing implements is not a tool, and `capabilities`
+does not list it. `capabilities` lists the roles that each engine serves,
+and no port reports which operations an engine plans.
 
 That rule keeps the list proportional to what works. Eleven tools are
 registered:
@@ -249,10 +256,11 @@ with the reason.
 another operation planned, so it has no row in the catalogue and no
 planner; what it needs is the handle a preview returned.
 
-`verify` runs a language's gate without changing anything, so an agent
-can check its own work before asking for a change. It is the same
-verifier the write path runs, reached directly, and a failed run carries
-its fixes the same way.
+`verify` runs the checks of a language over the files on disk without
+changing anything, so an agent can check its own work before it asks for
+a change. The write path runs the checker of the same language over the
+content of a change before it writes the change. An issue of either
+states the text of its one obvious fix.
 
 ## Alternatives considered
 
