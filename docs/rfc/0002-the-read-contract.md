@@ -4,7 +4,7 @@ title: The read contract
 author: Roy Klopper
 status: Accepted
 created: 2026-09-01
-updated: 2026-09-06
+updated: 2026-09-24
 discussion: none
 supersedes: none
 superseded-by: none
@@ -15,7 +15,7 @@ produces-adr: ADR-0003
 
 ## Summary
 
-The types every engine and service names, the eight ports an engine may
+The types every engine and service names, the nine ports an engine may
 implement, and how the catalogue picks one. It splits how an answer was
 bound from whether the engine saw everything, because reading an empty
 list as "there are none" needs both, and a language server can bind a
@@ -171,27 +171,61 @@ const (
 	KindFile
 	KindType
 	KindStruct
+	KindUnion
 	KindEnum
 	KindEnumMember
 	KindInterface
+	KindAnnotation
 	KindFunction
 	KindMethod
 	KindConstructor
+	KindProperty
+	KindMacro
+	KindImplementation
 	KindField
 	KindVariable
 	KindConstant
+	KindParameter
+	KindTypeParameter
+	KindImport
+	KindLabel
 )
 
-// Symbol is one declaration.
+// Visibility reports whether code outside a declaration's unit can refer
+// to it. A parser that reads names alone reports VisibilityUnknown for a
+// language that declares visibility with a modifier.
+type Visibility uint8
+
+const (
+	VisibilityUnknown Visibility = iota
+	Unexported
+	Exported
+)
+
+// Symbol is one declaration. The fields after Span are optional, and an
+// engine sets each one that it can extract.
 type Symbol struct {
-	ID       ID
-	Name     string
-	Kind     Kind
-	Language source.Language
-	Span     source.Span
-	Parent   ID     // empty at the top level of a unit
-	Exported bool
-	Doc      string // the output budget drops this first
+	ID          ID
+	Name        string
+	Kind        Kind
+	Language    source.Language
+	Span        source.Span
+	Parent      ID // empty at the top level of a unit
+	Visibility  Visibility
+	Modifiers   []string // keywords such as static, async, pub or export
+	Annotations []Annotation
+	Signature   string // the declaration without its body
+	Doc         string // the output budget drops this first
+	Snippet     string // the source text of the declaration
+}
+
+// Annotation is metadata attached to a declaration: a Java annotation, a
+// decorator, a Rust or C# attribute, or a Go struct tag. It declares
+// nothing, so it is not a Symbol.
+type Annotation struct {
+	Name string // without punctuation or arguments, such as derive
+	Text string // exactly as written
+	Span source.Span
 }
 
 // RelationKind is how one symbol connects to another. Every kind has an
@@ -215,12 +249,14 @@ const (
 	EmbeddedBy
 )
 
-// Relation is one edge, and where in the source it was found.
+// Relation is one edge from the declaration a question is about. It
+// records the far end only, because the near end is the same for every
+// edge in an answer.
 type Relation struct {
-	Kind RelationKind
-	From ID
-	To   ID
-	At   source.Span
+	Kind RelationKind // the direction the caller asked for
+	To   Symbol       // the declaration at the far end
+	At   source.Span  // the call or the reference
+	Via  string       // the trimmed source line that At starts on
 }
 
 // Unit is what a language calls the thing a file belongs to: a package
@@ -295,6 +331,9 @@ const (
 	CaveatUnrouted      CaveatCode = "unrouted"
 	CaveatUnsupported   CaveatCode = "unsupported"
 	CaveatUnread        CaveatCode = "unread"
+	CaveatDependents    CaveatCode = "dependents"
+	CaveatUnrewritten   CaveatCode = "unrewritten"
+	CaveatPartialCheck  CaveatCode = "partial-check"
 )
 ```
 
@@ -323,8 +362,10 @@ it keeps the bare names.
 
 ### The ports
 
-Eight roles. An engine declines one by not having the method, so a
-capability gap is a missing method rather than an error at run time.
+Nine roles. An engine declines one by not having the method, so a
+capability gap is a missing method rather than an error at run time. An
+engine can also decline a role of a port that it implements by declaring
+the fidelity `trust.None` for it.
 
 ```go
 // Package engine holds the plug-in contract.
@@ -333,12 +374,14 @@ package engine
 type Role uint8
 
 const (
-	RoleOutline Role = iota
+	RoleUnset Role = iota // never valid on a request
+	RoleOutline
 	RoleSearch
 	RoleResolve
 	RoleRelate
 	RolePlan
 	RoleFormat
+	RoleCheck
 	RoleVerify
 	RoleIndex
 )
@@ -350,6 +393,13 @@ type Result[T any] struct {
 	Items        []T
 	Completeness trust.Completeness
 	Caveats      []trust.Caveat
+	// Lowered is a tier below the declared one, for an answer worth less
+	// than usual, such as a type check of code that does not compile.
+	// Publish uses the lower of the two.
+	Lowered trust.Fidelity
+	// Skipped reports that the scope contains no file of the engine's
+	// language.
+	Skipped bool
 }
 
 // Answer is what a service publishes. Publish stamps the provenance from
@@ -359,16 +409,33 @@ type Answer[T any] struct {
 	Items      []T
 	Status     trust.Status
 	Provenance trust.Provenance
+	Skipped    bool // Result.Skipped of the engine that answered
 }
 
 func Publish[T any](r Result[T], e Engine, role Role, want trust.Fidelity) Answer[T]
 
-// Request is the scope of a question.
+// Request is the scope of a question. Limit and Declared apply to Relate
+// alone.
 type Request struct {
 	Scope     source.Path     // one file or one directory
 	Language  source.Language
 	Preferred trust.Fidelity  // the caller's minimum; a weaker answer is marked Degraded
+	Tests     bool            // include the files the language treats as tests
+	Limit     int             // the relations the caller keeps, zero for all
+	Declared  source.Span     // where the caller found the declaration, or zero
 }
+
+// Bindings are the bindings an answer contains beside the declarations
+// that a file offers to the rest of a program. The zero value contains
+// none of them.
+type Bindings uint8
+
+const (
+	BindImports Bindings = 1 << iota
+	BindParameters
+	BindLocals
+	BindLabels
+)
 
 // Query is what to search for. Text matches symbol names fuzzily and
 // doc comments by content, so a caller that knows neither the exact name
@@ -378,6 +445,7 @@ type Query struct {
 	Text    string    // a name, or a description of the thing
 	Kind    sema.Kind // zero means any kind
 	Private bool      // include unexported declarations
+	Include Bindings  // imports, parameters, locals or labels beside the declarations
 	Limit   int       // zero means the engine's default
 }
 
@@ -386,6 +454,11 @@ type Query struct {
 // selection, because substituting a weaker answer for a broken engine
 // hides the breakage.
 var ErrDecline = errors.New("engine: decline")
+
+// ErrRefuse reports that the engine understands the request and will not
+// serve it, for a reason the caller can act on. The catalogue does not try
+// another engine, because the request must change first.
+var ErrRefuse = errors.New("engine: refuse")
 
 type Outliner interface {
 	Outline(ctx context.Context, req Request) (Result[sema.Symbol], error)
@@ -417,12 +490,21 @@ type Formatter interface {
 	Format(ctx context.Context, paths []source.Path) (Result[edit.Change], error)
 }
 
+// Verifier judges the workspace on disk. Suites names the checks in the
+// language's own terms, such as linters or test runners, and an empty
+// list runs the language's default.
 type Verifier interface {
-	Verify(ctx context.Context, req Request) ([]diag.Diagnostic, error)
+	Verify(ctx context.Context, req Request, suites []string) (Result[edit.Finding], error)
+}
+
+// Checker judges content in memory, such as the projection of a change
+// before the write path writes it.
+type Checker interface {
+	Check(ctx context.Context, files map[source.Path][]byte) (Result[edit.Finding], error)
 }
 
 type Indexer interface {
-	Index(ctx context.Context, p source.Path) ([]sema.Symbol, []sema.Relation, error)
+	Index(ctx context.Context, p source.Path) (Result[sema.Symbol], error)
 	// Granularity is static: how far this engine's facts can ever reach.
 	Granularity() Invalidation
 	// Affected is dynamic: given this file changed, which paths must be
@@ -506,20 +588,25 @@ broken hides the breakage for as long as anyone believes the answer.
 ### Capability as a value
 
 ```go
-// Capability is what the catalogue can answer for one language and role.
+// Capability is one role that one engine serves for one language. It has
+// no completeness field, because the coverage of an answer depends on its
+// scope and on the state of the index.
 type Capability struct {
-	Language     source.Language
-	Role         Role
-	Fidelity     trust.Fidelity
-	Completeness trust.Completeness
-	Cost         Cost
-	Engine       string
-	Unavailable  string // why not, when it cannot run
+	Language    source.Language
+	Role        Role
+	Engine      string
+	Fidelity    trust.Fidelity
+	Cost        Cost
+	Available   bool   // whether the engine can run now
+	Unavailable string // why not, when it cannot run
 }
 
-// Add registers an engine. It reports an error when the name is taken:
-// a provenance names the engine that answered, so two engines sharing a
-// name make an answer untraceable.
+// Add registers an engine, and returns an error when an engine of the
+// same name already serves the same language. A provenance identifies the
+// engine that answered by its name, so two engines of one name and one
+// language would make an answer untraceable. One name can serve two
+// languages, as typescript-language-server serves TypeScript and
+// JavaScript.
 func (c *Catalog) Add(e Engine) error
 
 // For returns the engines that can answer this role for this language,
@@ -609,7 +696,7 @@ between adapters.
   that reports `Total` when it skipped a file is not caught by anything
   here. The conformance suite has to test it against a workspace with a
   known symbol count.
-- Eight ports is eight interfaces to keep stable across five language
+- Nine ports are nine interfaces to keep stable across ten language
   modules. Three more are named in the prototype and left out here, so
   adding one later is a change to the contract module.
 - `Answer[T]` uses generics, so the dispatcher is generic over role and

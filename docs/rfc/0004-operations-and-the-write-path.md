@@ -4,7 +4,7 @@ title: Operations and the write path
 author: Roy Klopper
 status: Accepted
 created: 2026-09-01
-updated: 2026-09-02
+updated: 2026-09-24
 discussion: none
 supersedes: none
 superseded-by: none
@@ -44,7 +44,7 @@ a label on an answer and starts deciding whether a file is written.
 
 ### The catalogue
 
-Twelve operations across seven families, named `family.subject`.
+Twelve operations, named `verb.subject`.
 
 | Operation | Target | Rewrites references | Weakest fidelity that can be correct |
 |---|---|---|---|
@@ -74,16 +74,13 @@ prose to write is the caller's rather than something derived from the
 target. A caller that has already resolved which declaration it means
 says so by position.
 
-The family exists so a caller can ask what extractions there are, and so
-a language module can advertise or refuse a family as a unit.
-
 ### Types
 
 ```go
 // Package edit describes how code changes.
 package edit
 
-// Operation is one thing a caller can ask for, named family.subject.
+// Operation is one thing a caller can ask for, named verb.subject.
 type Operation string
 
 const (
@@ -101,14 +98,15 @@ const (
 	DocumentSymbol     Operation = "document.symbol"
 )
 
-// Family is the part before the dot.
-func (o Operation) Family() Family
+// Operations returns every declared operation, grouped by verb.
+func Operations() []Operation
 
 // TargetKind is what an operation is pointed at.
 type TargetKind uint8
 
 const (
-	TargetSymbol TargetKind = iota
+	TargetUnset TargetKind = iota
+	TargetSymbol
 	TargetFile
 	TargetSpan
 )
@@ -173,7 +171,8 @@ type Plan struct {
 type ChangeKind uint8
 
 const (
-	ChangeEdit ChangeKind = iota
+	ChangeUnset ChangeKind = iota
+	ChangeEdit
 	ChangeCreate
 	ChangeDelete
 	ChangeMove
@@ -225,16 +224,23 @@ gate does not catch it.
 func (p Policy) Admit(spec Spec, plan Plan) error
 ```
 
-Four checks, in order:
+Six checks, in order. Each refusal wraps an error of its own:
 
-1. The plan's fidelity is at least `spec.MinFidelity`.
-2. If `spec.RewritesReferences`, then
+1. The plan is for the operation of the spec (`ErrWrongOperation`).
+2. The plan's fidelity is at least `spec.MinFidelity` (`ErrWeakEvidence`).
+3. If `spec.RewritesReferences`, then
    `trust.SupportsNegativeClaim(plan.Provenance.Fidelity,
-   plan.Provenance.Completeness)` is true.
-3. No two edits in the plan overlap, and every edit list is sorted.
-4. Every path the plan touches has a precondition.
+   plan.Provenance.Completeness)` is true (`ErrNoNegativeClaim`).
+4. Every change has the field that its kind requires, and the edits of
+   each change are in the order that `Apply` requires (`ErrMalformed`,
+   `ErrDisordered`).
+5. No two changes contradict each other on one path (`ErrConflict`). A
+   path has at most one edit, creation or deletion, and moves to at most
+   one destination. A moved path can also be edited, and the edit applies
+   before the move.
+6. Every path that the plan reads has a precondition (`ErrUnsealed`).
 
-Check 2 is what makes splitting fidelity from completeness worth a second
+Check 3 is what makes splitting fidelity from completeness worth a second
 field. A
 language server that binds through types but is still building its index
 reports `resolved` and `partial`. It can serve `outline` and `relations`
@@ -256,7 +262,7 @@ file. That is a separate port from the one that runs a build:
 // hold. A dry run gates a projection, and a projection exists only in
 // memory, so a gate that can only read the workspace cannot serve one.
 type Checker interface {
-	Check(ctx context.Context, files map[source.Path][]byte) (Result[diag.Diagnostic], error)
+	Check(ctx context.Context, files map[source.Path][]byte) (Result[edit.Finding], error)
 }
 ```
 
@@ -352,9 +358,18 @@ type Outcome struct {
 	Changed     []source.Path     // empty for a dry run
 	Changes     []Change          // what was done, or would be
 	Rewrites    []Rewrite         // the same, read back as text
-	Diagnostics []diag.Diagnostic // when the gate objected
-	Provenance  trust.Provenance
-	Reason      string // when Status is Refused or Unsupported
+	Handle      string            // the plan of a dry run, for a later commit
+	Diagnostics []Finding         // when the gate objected
+	Provenance  trust.Provenance  // the engine that planned the change
+	Gate        *trust.Provenance // the engine that checked it, or nil
+	Reason      string            // when Status is Refused or Unsupported
+}
+
+// Finding is a diagnostic from a gate, with the change that fixes it. Fix
+// is empty when there is no fix, or more than one plausible fix.
+type Finding struct {
+	Diagnostic diag.Diagnostic
+	Fix        []Change
 }
 
 // Rewrite is one range a change replaces, with the text on both sides.
@@ -415,7 +430,8 @@ the other's work. Locks are cheaper than the failure they prevent.
 
 ## Drawbacks
 
-- Twelve operations are declared and one is planned. Eleven entries in
+- Twelve operations are declared and four are planned: `rename.symbol`,
+  `move.file`, `extract.function` and `document.symbol`. Eight entries in
   the catalogue are refusals for every language until someone writes a
   planner, and a caller reading the catalogue may reasonably expect more
   than it can do.
@@ -460,7 +476,7 @@ Undo beyond the rollback of a single call is not proposed. A caller that
 wants to reverse a change that already passed the gate uses version
 control.
 
-Planners for the eleven operations without one are not proposed here.
+Planners for the eight operations without one are not proposed here.
 Each needs its own design per language.
 
 ## References

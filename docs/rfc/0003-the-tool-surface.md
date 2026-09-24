@@ -4,7 +4,7 @@ title: The tool surface
 author: Roy Klopper
 status: Accepted
 created: 2026-09-01
-updated: 2026-09-02
+updated: 2026-09-24
 discussion: none
 supersedes: none
 superseded-by: none
@@ -67,13 +67,14 @@ needs one.
 
 ### Targeting is by name
 
-Every tool that points at a symbol takes `symbol` as a string, scoped by
-`package` or `path`. `file` and `line` are optional, and needed only when
-the name alone matches more than one declaration.
+Every tool that points at a declaration takes its `name` as a string, in
+a `scope` that is a file or a directory. `kind` and `line` are optional.
+A caller needs them only when the name alone matches more than one
+declaration.
 
 ```json
-{ "symbol": "Status", "package": "core/trust" }
-{ "symbol": "kind", "file": "service/query/service.go", "line": 42 }
+{ "scope": "core/trust", "name": "Status" }
+{ "scope": "service/query/service.go", "name": "kind", "line": 42 }
 ```
 
 A position-first interface would make the agent read the file before it
@@ -201,11 +202,11 @@ context and make the answer unusable on any other machine.
   "items": [
     { "language": "go", "role": "relate", "engine": "gopls",
       "fidelity": "resolved", "cost": "session", "available": true },
-    { "language": "python", "role": "relate", "engine": "treesitter",
+    { "language": "python", "role": "relate", "engine": "treesitter/python",
       "fidelity": "syntactic", "cost": "parse", "available": true },
-    { "language": "python", "role": "plan", "engine": "",
-      "available": false,
-      "unavailable": "no planner for python: rename.symbol needs resolved evidence" }
+    { "language": "csharp", "role": "plan", "engine": "csharp-ls",
+      "fidelity": "resolved", "cost": "session", "available": false,
+      "unavailable": "lsp: csharp-ls: csharp-ls is not on PATH" }
   ]
 }
 ```
@@ -230,12 +231,19 @@ An operation nothing implements anywhere is not a tool. It appears in
 exists and cannot run rather than that no such operation exists.
 
 That rule keeps the list proportional to what works. Eleven tools are
-registered. Four of them answer for the ten languages that ship —
-`outline`, `search`, `capabilities` and `document.symbol` — and the rest
-answer for any language whose engine reaches the tier they need, which
-today is none of them. A caller is told so rather than left to infer it:
-`capabilities` reports what each language and role can reach, and a tool
-asked for more returns `unsupported` with the reason.
+registered:
+
+- `outline`, `search`, `relations` and `document.symbol` serve the ten
+  languages from their grammars.
+- `resolve`, `verify`, `rename.symbol`, `move.file` and
+  `extract.function` serve a language that has a language server or a
+  type checker at the tier that they need.
+- `capabilities` reports the catalogue, and `apply.change` writes the
+  change of a preview.
+
+A caller does not have to infer this: `capabilities` reports the tier of
+each language and role, and a tool asked for more returns `unsupported`
+with the reason.
 
 `apply.change` is the one tool that is not an operation. It applies what
 another operation planned, so it has no row in the catalogue and no

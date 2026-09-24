@@ -4,7 +4,7 @@ title: What a tool returns
 author: Roy Klopper
 status: Accepted
 created: 2026-09-01
-updated: 2026-09-02
+updated: 2026-09-24
 discussion: none
 supersedes: none
 superseded-by: none
@@ -205,7 +205,7 @@ does, a method sits at depth 0 beside its type rather than inside it.
 | `names` | name, kind, line | is X here, and where |
 | `signatures` | signature, visibility, modifiers, annotations | how do I call or implement it |
 | `docs` | doc | what is it for |
-| `source` | snippet, span, annotation text | what does it do |
+| `source` | snippet, span | what does it do |
 
 The default follows the scope. A file is asked about because someone
 means to work in it, and `signatures` is where the answer replaces
@@ -289,17 +289,20 @@ an identity:
 ```
 
 `name` accepts the qualified form the language writes, because that is
-how a reader recognises it. `kind` narrows an ambiguous name. An
+how a reader recognises it. `kind` narrows an ambiguous name, and so
+does `line`, counted from one, to the declarations whose span contains
+it. The line picks one of the overloads of a method. An
 ambiguous name is answered with the candidates rather than refused.
 
 ## The tools
 
-Every read tool takes `scope`, `language`, `detail`, `include`, `tests`,
-`max_tokens` and `preferred_fidelity`. Only what a tool adds is listed.
+Every read tool but `capabilities` takes `scope`, `language` and
+`preferred_fidelity`. Only what a tool adds is listed.
 
 ### `outline` — what does this declare
 
-Adds `names`, `kind`, `prefix`, `private`.
+Adds `detail`, `names`, `kind`, `prefix`, `private`, `include`, `tests`,
+`max_tokens`.
 
 ```json
 { "name": "outline", "arguments": { "scope": "core/sema/kind.go" } }
@@ -357,7 +360,8 @@ visibility.go  20 type Visibility · 24 const VisibilityUnknown · 5 more
 
 ### `search` — where is the thing called X
 
-Adds `text`, `kind`, `private`, `limit`.
+Adds `text`, `kind`, `private`, `limit`, `detail`, `include`, `tests`,
+`max_tokens`.
 
 ```json
 { "name": "search", "arguments": { "text": "Outranks" } }
@@ -381,12 +385,12 @@ Structured:
 ```json
 {
   "scope": { "language": "go" },
+  "text": "Outranks",
   "items": [
     { "name": "Outranks", "kind": "function", "line": 145,
-      "path": "lang/treesitter/capture.go", "unit": "lang/treesitter",
+      "path": "lang/treesitter/capture.go",
       "signature": "func Outranks(candidate, held sema.Kind) bool",
-      "doc": "Outranks reports whether one kind says more about a declaration than another, and so should replace it.",
-      "score": 1.0, "matched": ["name", "doc"] }
+      "doc": "Outranks reports whether one kind says more about a declaration than another, and so should replace it." }
   ],
   "provenance": { "engine": "treesitter/go", "fidelity": "syntactic",
                   "completeness": "total", "supportsNegativeClaim": false }
@@ -405,7 +409,7 @@ engines here match a name and nothing else, so `matched` would read
 
 ### `resolve` — what does this name denote
 
-Adds `line`, `column`.
+Adds `line`, `column`, `detail`, `include`, `max_tokens`.
 
 ```json
 { "name": "resolve",
@@ -428,7 +432,7 @@ Two items mean the name is ambiguous and the caller chooses.
 
 ### `relations` — how does this connect
 
-Adds `name`, `kind`, `relation`, `limit`.
+Adds `name`, `kind`, `line`, `relation`, `limit`, `max_tokens`.
 
 ```json
 { "name": "relations",
@@ -452,10 +456,12 @@ Structured:
 ```json
 {
   "scope": { "language": "go", "unit": "lang/treesitter" },
+  "of": "Outranks",
+  "relation": "called-by",
   "items": [
-    { "name": "declarations", "kind": "method", "line": 123,
-      "path": "lang/treesitter/outline.go", "in": "Engine",
-      "at": 123, "via": "if Outranks(kind, out[seen].Kind) {" }
+    { "name": "declarations", "kind": "method", "in": "Engine",
+      "path": "lang/treesitter/outline.go", "line": 123,
+      "via": "if Outranks(kind, out[seen].Kind) {" }
   ],
   "provenance": { "engine": "gopls", "fidelity": "resolved",
                   "completeness": "total", "supportsNegativeClaim": true }
@@ -495,9 +501,8 @@ Structured:
       "message": "Ranging over FieldsSeq is more efficient",
       "path": "treesitter/metadata.go", "line": 227,
       "at": "for part := range strings.Fields(unquoted) {",
-      "change": { "path": "treesitter/metadata.go", "line": 227,
-                  "was": "for part := range strings.Fields(unquoted) {",
-                  "now": "for part := range strings.FieldsSeq(unquoted) {" } }
+      "fix": [ { "path": "treesitter/metadata.go", "line": 227,
+                 "now": "for part := range strings.FieldsSeq(unquoted) {" } ] }
   ],
   "provenance": { "engine": "golangci-lint", "fidelity": "resolved",
                   "completeness": "total", "supportsNegativeClaim": true }
@@ -509,7 +514,7 @@ takes, so applying it needs no translation.
 
 ### `capabilities` — what can you answer
 
-Adds `language`.
+Takes `language` alone.
 
 ```json
 { "name": "capabilities", "arguments": {} }
@@ -518,11 +523,13 @@ Adds `language`.
 Text:
 
 ```text
-go          outline search resolve relations  gopls          resolved   session
-go          outline search                    treesitter/go  syntactic  parse
-python      outline search                    treesitter/py  syntactic  parse
-csharp      —                                 lsp/csharp     unavailable
-            omnisharp is not on PATH
+csharp     treesitter/csharp          syntactic parse   outline search relate plan check index
+csharp     csharp-ls                  resolved  session resolve relate plan format check verify
+           lsp: csharp-ls: csharp-ls is not on PATH
+go         treesitter/go              syntactic parse   outline search relate plan check index
+go         gopls                      resolved  session resolve relate plan format check verify
+go         go/types                   resolved  session resolve relate check verify
+python     treesitter/python          syntactic parse   outline search relate plan check index
 ```
 
 Structured:
@@ -530,11 +537,11 @@ Structured:
 ```json
 {
   "items": [
-    { "language": "go", "role": "relations", "engine": "gopls",
+    { "language": "go", "role": "relate", "engine": "gopls",
       "fidelity": "resolved", "cost": "session", "available": true },
-    { "language": "csharp", "role": "outline", "engine": "lsp/csharp",
+    { "language": "csharp", "role": "resolve", "engine": "csharp-ls",
       "fidelity": "resolved", "cost": "session", "available": false,
-      "unavailable": "omnisharp is not on PATH" }
+      "unavailable": "lsp: csharp-ls: csharp-ls is not on PATH" }
   ]
 }
 ```
@@ -544,16 +551,17 @@ only that it is not.
 
 ### The write tools
 
-Every one takes `dry_run`, defaulting to true, and answers with the
-changes it would make. Applying is a second call with `dry_run` false. A
-preview whose gate passed is guaranteed to apply.
+Every one but `apply.change` takes `language` and `dry_run`. `dry_run`
+defaults to true, and a dry run returns the changes that the tool would
+make. Applying is a second call with `dry_run` false. A preview whose gate
+passed is guaranteed to apply.
 
 | Tool | Names | Takes |
 |---|---|---|
-| `rename.symbol` | scope, name, kind | `new_name` |
+| `rename.symbol` | scope, name, kind, line | `new_name` |
 | `move.file` | path | `to` |
-| `document.symbol` | scope, name, kind | `doc` |
-| `extract.function` | scope, path, lines | `new_name`, `receiver` |
+| `document.symbol` | scope, name, kind, line | `doc` |
+| `extract.function` | path, first_line, last_line | `new_name` |
 | `apply.change` | — | `handle` |
 
 ```json
@@ -579,14 +587,18 @@ Structured:
 ```json
 {
   "scope": { "language": "go", "unit": "core/sema" },
+  "operation": "rename.symbol",
+  "target": "Kind",
+  "applied": false,
   "items": [
     { "path": "core/sema/kind.go", "sites": 18,
       "changes": [ { "line": 18, "was": "type Kind uint8",
                      "now": "type Category uint8" } ] }
   ],
-  "verified": { "gate": "build", "engine": "go build", "result": "pass" },
+  "verified": { "gate": "compile", "engine": "gopls", "result": "pass" },
   "provenance": { "engine": "gopls", "fidelity": "resolved",
-                  "completeness": "total", "supportsNegativeClaim": true }
+                  "completeness": "total", "supportsNegativeClaim": true },
+  "handle": "7939cc5a281ab6f839d5902ca5c2f355"
 }
 ```
 
@@ -637,7 +649,8 @@ Structured:
 ```json
 {
   "scope": { "language": "rust", "path": "src/store.rs" },
-  "symbol": "Store",
+  "operation": "document.symbol",
+  "target": "Store",
   "applied": false,
   "items": [
     { "path": "src/store.rs", "sites": 1,
@@ -646,7 +659,8 @@ Structured:
   ],
   "verified": { "gate": "parse", "engine": "treesitter/rust", "result": "pass" },
   "provenance": { "engine": "treesitter/rust", "fidelity": "syntactic",
-                  "completeness": "total", "supportsNegativeClaim": false }
+                  "completeness": "total", "supportsNegativeClaim": false },
+  "handle": "3b41a0c9e2d84f6aa15c7e90d2b8f613"
 }
 ```
 
