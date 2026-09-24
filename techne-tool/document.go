@@ -18,6 +18,7 @@ type DocumentInput struct {
 	Name     string   `json:"name"               jsonschema:"the declaration, qualified as the language writes it when the name is ambiguous"`
 	Doc      string   `json:"doc"                jsonschema:"the text of the documentation, without comment markers"`
 	Kind     KindWord `json:"kind,omitempty"     jsonschema:"the kind of the declaration, for a name of several kinds"`
+	Line     int      `json:"line,omitempty"     jsonschema:"a line of the declaration, counted from one, for a name of several declarations such as the overloads of a method"`
 	Language string   `json:"language,omitempty" jsonschema:"the language to ask, in place of the languages of the scope"`
 	DryRun   *bool    `json:"dry_run,omitempty"  jsonschema:"preview the change without writing it, true when omitted"`
 }
@@ -37,7 +38,7 @@ func Document(reads Outliner, writes Writer) (Tool, error) {
 					"doc is empty: doc is the text to write onto the declaration"), nil
 			}
 
-			found, target, failure := addressing(ctx, reads, scope, in.Language, in.Name, in.Kind)
+			found, target, failure := addressing(ctx, reads, scope, in.Language, in.Name, in.Kind, in.Line)
 			if failure != nil {
 				return declined(edit.DocumentSymbol, held, in.Name, failure.Code, failure.Reason), nil
 			}

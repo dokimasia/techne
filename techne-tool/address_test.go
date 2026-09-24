@@ -143,14 +143,60 @@ func TestAddress(t *testing.T) {
 
 		t.Run("addresses the first of the declarations of one ID", func(t *testing.T) {
 			t.Parallel()
-			prototype := declared("stem", sema.KindFunction, "", 2, 20)
-			definition := declared("stem", sema.KindFunction, "", 9, 90)
-			both := []sema.Symbol{prototype, definition}
-			got, asked := addressing(t, both, `{"scope":"a.fx","name":"stem","doc":"x"}`)
+			got, asked := addressing(t, stems(), `{"scope":"a.fx","name":"stem","doc":"x"}`)
 			assert.False(t, got.Failed(), "the failure of the output")
 			assert.Equal(t, asked.Target.Span.Start.Offset, 20, "the offset of the prototype of stem")
 		})
+
+		t.Run("addresses a declaration of one ID by a line of it", func(t *testing.T) {
+			t.Parallel()
+			got, asked := addressing(t, stems(), `{"scope":"a.fx","name":"stem","line":10,"doc":"x"}`)
+			assert.False(t, got.Failed(), "the failure of the output")
+			assert.Equal(t, asked.Target.Span.Start.Offset, 90, "the offset of the definition of stem")
+		})
+
+		t.Run("addresses a declaration by a line inside its span", func(t *testing.T) {
+			t.Parallel()
+			found := stems()
+			found[1].Span.End.Line = 14
+			got, asked := addressing(t, found, `{"scope":"a.fx","name":"stem","line":12,"doc":"x"}`)
+			assert.False(t, got.Failed(), "the failure of the output")
+			assert.Equal(t, asked.Target.Span.Start.Offset, 90, "the offset of the definition of stem")
+		})
+
+		t.Run("addresses a declaration by its line in the relations tool", func(t *testing.T) {
+			t.Parallel()
+			over := serving(stems()...)
+			related := relatedOver(t, over, `{"scope":"a.fx","name":"stem","line":10,"relation":"called-by"}`)
+			assert.False(t, related.Failed(), "the failure of the relations output")
+			assert.Equal(t, over.related[0].Declared, stems()[1].Span, "the declared span of the request")
+		})
+
+		t.Run("refuses a line without a declaration of the name with the site of each", func(t *testing.T) {
+			t.Parallel()
+			got, _ := addressing(t, stems(), `{"scope":"a.fx","name":"stem","line":5,"doc":"x"}`)
+			assert.True(t, got.Failed(), "the failure of the output")
+			assert.Equal(t, got.Error.Reason,
+				`"a.fx" declares no "stem" on line 5. It declares function at a.fx:3, function at a.fx:10`,
+				"the reason of the failure")
+		})
+
+		t.Run("refuses a negative line", func(t *testing.T) {
+			t.Parallel()
+			got, _ := addressing(t, stored(), `{"scope":"a.fx","name":"Store","line":-1,"doc":"x"}`)
+			assert.True(t, got.Failed(), "the failure of the output")
+			assert.Equal(t, got.Error.Reason, "line -1: lines count from one", "the reason of the failure")
+		})
 	})
+}
+
+// stems returns the prototype of stem on line 3 and its definition on line 10, which share an
+// ID as the prototype and the definition of a C function do.
+func stems() []sema.Symbol {
+	return []sema.Symbol{
+		declared("stem", sema.KindFunction, "", 2, 20),
+		declared("stem", sema.KindFunction, "", 9, 90),
+	}
 }
 
 // unreadOver returns over with an unread caveat that names big.fx on each outline.

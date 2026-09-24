@@ -35,10 +35,11 @@
 // A tool that takes the name of a declaration finds the declaration in the outline of its
 // scope. A name matches a declaration of that name or of that qualified name: the names of
 // its containers and its own name, joined by dots as
-// [go.dokimi.dev/techne/core/sema.Qualify] joins them. A kind narrows the match. Two or more
-// matches are one declaration when they are imports of one name, a type and its own
-// constructors, or declarations of one ID. The tool refuses any other set of matches, and the
-// reason lists the kind and the site of each.
+// [go.dokimi.dev/techne/core/sema.Qualify] joins them. A kind narrows the match, and so does a
+// line, counted from one, to the declarations whose span contains it. The line picks one of
+// the overloads of a method. Two or more matches are one declaration when they are imports of
+// one name, a type and its own constructors, or declarations of one ID. The tool refuses any
+// other set of matches, and the reason lists the kind and the site of each.
 //
 // # Budget
 //

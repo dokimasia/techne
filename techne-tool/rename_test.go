@@ -61,6 +61,14 @@ func TestRename(t *testing.T) {
 			assert.Contains(t, got.Error.Reason, "a.fx:4", "the reason of the failure")
 		})
 
+		t.Run("points the write path at the declaration on the line of the input", func(t *testing.T) {
+			t.Parallel()
+			writer := &recorder{}
+			got := renamed(t, writer, `{"scope":"a.fx","name":"Get","line":6,"new_name":"Fetch"}`)
+			assert.False(t, got.Failed(), "the failure of the output")
+			assert.Equal(t, writer.asked.Target.Span.Start.Offset, 50, "the offset of the function Get")
+		})
+
 		t.Run("previews a request without dry_run", func(t *testing.T) {
 			t.Parallel()
 			writer := &recorder{}

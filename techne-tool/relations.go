@@ -24,6 +24,7 @@ type RelationsInput struct {
 	Name      string       `json:"name"                         jsonschema:"the declaration, qualified as the language writes it when the name is ambiguous"`
 	Relation  RelationWord `json:"relation"                     jsonschema:"the direction of the relations"`
 	Kind      KindWord     `json:"kind,omitempty"               jsonschema:"the kind of the declaration, for a name of several kinds"`
+	Line      int          `json:"line,omitempty"               jsonschema:"a line of the declaration, counted from one, for a name of several declarations such as the overloads of a method"`
 	Language  string       `json:"language,omitempty"           jsonschema:"the language to ask, in place of the languages of the scope"`
 	Limit     int          `json:"limit,omitempty"              jsonschema:"the number of relations to return, 50 when omitted"`
 	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"ceiling of the answer in tokens, 6000 when omitted"`
@@ -123,7 +124,7 @@ func Relations(reads Outliner, relates Relator) (Tool, error) {
 				Preferred: preferred,
 				Limit:     limit,
 			}
-			of, failure := addressed(ctx, reads, req, scope, in.Name, declaredKind)
+			of, failure := addressed(ctx, reads, req, scope, in.Name, declaredKind, in.Line)
 			if failure != nil {
 				return relationsRefused(scope, in, failure), nil
 			}

@@ -14,9 +14,10 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// addressed returns the declaration that a name and a kind address in the outline of scope,
-// with the test files of the scope. The document.symbol, rename.symbol and relations tools
-// call it, so a name addresses the same declaration in each of them.
+// addressed returns the declaration that a name, a kind and a line address in the outline of
+// scope, with the test files of the scope. The document.symbol, rename.symbol and relations
+// tools call it, so a name addresses the same declaration in each of them. A line of zero
+// narrows nothing, as [pick] states.
 //
 // It returns a refused [Failure] when the name addresses no declaration or more than one, and
 // an unsupported Failure when no engine outlines the scope. A name that addresses nothing in a
@@ -29,6 +30,7 @@ func addressed(
 	scope source.Path,
 	name string,
 	kind sema.Kind,
+	line int,
 ) (sema.Symbol, *Failure) {
 	asking := req
 	asking.Tests = true
@@ -45,7 +47,7 @@ func addressed(
 			Reason: fmt.Sprintf("no engine outlines %q, so no declaration in it can be found", scope),
 		}
 	}
-	found, failure := pick(answered.Items, scope, name, kind)
+	found, failure := pick(answered.Items, scope, name, kind, line)
 	if failure != nil && len(matching(answered.Items, name, kind)) == 0 {
 		if unread, skipped := passedOver(answered.Provenance); skipped {
 			return sema.Symbol{}, &Failure{
@@ -79,22 +81,50 @@ func paths(list []source.Path) []string {
 	return out
 }
 
-// pick returns the declaration of items that a name and a kind address, for a tool that has
-// the outline already. The declarations that [matching] selects address one declaration when
-// there is one of them, or when [together] reports that they are one subject. Any other count
-// is refused with the reason of [ambiguous].
-func pick(items []sema.Symbol, scope source.Path, name string, kind sema.Kind) (sema.Symbol, *Failure) {
-	found := matching(items, name, kind)
+// pick returns the declaration of items that a name, a kind and a line address, for a tool that
+// has the outline already. The declarations that [matching] selects, and whose span contains
+// line when line is not zero, address one declaration when there is one of them, or when
+// [together] reports that they are one subject. The line counts from one, and picks one of the
+// overloads of a method.
+//
+// Any other count is refused with the reason of [ambiguous], and a line on which no declaration
+// of the name is with the site of each declaration of the name. A negative line is refused.
+func pick(items []sema.Symbol, scope source.Path, name string, kind sema.Kind, line int) (sema.Symbol, *Failure) {
+	if line < 0 {
+		return sema.Symbol{}, &Failure{
+			Code:   trust.Refused.String(),
+			Reason: fmt.Sprintf("line %d: lines count from one", line),
+		}
+	}
+	named := matching(items, name, kind)
+	found := onLine(named, line)
 	if len(found) == 1 {
 		return found[0], nil
 	}
 	if one, same := together(found); same {
 		return one, nil
 	}
-	return sema.Symbol{}, &Failure{
-		Code:   trust.Refused.String(),
-		Reason: ambiguous(name, scope, found, items),
+	reason := ambiguous(name, scope, found, items)
+	if len(found) == 0 && len(named) > 0 {
+		reason = fmt.Sprintf("%q declares no %q on line %d. It declares %s",
+			scope, name, line, strings.Join(sites(named), ", "))
 	}
+	return sema.Symbol{}, &Failure{Code: trust.Refused.String(), Reason: reason}
+}
+
+// onLine returns the declarations of found whose span contains line, which counts from one. A
+// line of zero returns found.
+func onLine(found []sema.Symbol, line int) []sema.Symbol {
+	if line == 0 {
+		return found
+	}
+	var out []sema.Symbol
+	for _, s := range found {
+		if s.Span.Start.Line+1 <= line && line <= max(s.Span.End.Line, s.Span.Start.Line)+1 {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // together returns the declaration that two or more declarations of one name address, and
@@ -171,7 +201,7 @@ func matching(found []sema.Symbol, name string, kind sema.Kind) []sema.Symbol {
 // names of scope that [similar] returns.
 func ambiguous(name string, scope source.Path, found, all []sema.Symbol) string {
 	if len(found) > 1 {
-		return fmt.Sprintf("%q names %d declarations in %q: %s — narrow it with kind, "+
+		return fmt.Sprintf("%q names %d declarations in %q: %s — narrow it with kind or line, "+
 			"or qualify it as the language writes it",
 			name, len(found), scope, strings.Join(sites(found), ", "))
 	}

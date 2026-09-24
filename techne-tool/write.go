@@ -222,9 +222,9 @@ func asked(
 	return reported(op, scope, target, done), nil
 }
 
-// addressing returns the declaration that a name and a kind address in scope, by the rule of
-// [addressed], and the target of an operation at its span. The span identifies one of two
-// declarations that share an ID, and a language server takes a position for the same
+// addressing returns the declaration that a name, a kind and a line address in scope, by the
+// rule of [addressed], and the target of an operation at its span. The span identifies one of
+// two declarations that share an ID, and a language server takes a position for the same
 // operations.
 func addressing(
 	ctx context.Context,
@@ -232,6 +232,7 @@ func addressing(
 	scope source.Path,
 	language, name string,
 	word KindWord,
+	line int,
 ) (sema.Symbol, edit.Target, *Failure) {
 	kind, failure := kindOf(word)
 	if failure != nil {
@@ -240,7 +241,7 @@ func addressing(
 	found, failure := addressed(ctx, reads, engine.Request{
 		Scope:    scope,
 		Language: source.Language(language),
-	}, scope, name, kind)
+	}, scope, name, kind, line)
 	if failure != nil {
 		return sema.Symbol{}, edit.Target{}, failure
 	}
