@@ -1,0 +1,135 @@
+{
+  "budget": "2s",
+  "sample": 12,
+  "seed": 20260923,
+  "repositories": [
+    {
+      "name": "kubernetes",
+      "language": "go",
+      "url": "https://github.com/kubernetes/kubernetes.git",
+      "tag": "v1.37.1",
+      "commit": "f78e722310e50bcaca9276be22276d9e91d91308",
+      "build": ["go", "vet", "-buildtag", "./..."],
+      "exclude": ["vendor/", "third_party/"],
+      "warmup": "20m"
+    },
+    {
+      "name": "typescript",
+      "language": "typescript",
+      "url": "https://github.com/microsoft/TypeScript.git",
+      "tag": "v6.0.3",
+      "commit": "050880ce59e30b356b686bd3144efe24f875ebc8",
+      "prepare": [["npm", "ci", "--no-audit", "--no-fund"]],
+      "build": ["sh", "-c", "npx hereby build-src && npx hereby scripts"],
+      "exclude": ["lib/", "tests/baselines/"],
+      "warmup": "15m"
+    },
+    {
+      "name": "three.js",
+      "language": "javascript",
+      "url": "https://github.com/mrdoob/three.js.git",
+      "tag": "r186",
+      "commit": "148ef33ecb6d2502ff796d4554abd1549c95d519",
+      "prepare": [["npm", "ci", "--no-audit", "--no-fund"]],
+      "build": ["sh", "-c", "npm run build && { npm run test-unit; npm run test-unit-addons; }"],
+      "errors": "# fail (\\d+)",
+      "exclude": ["build/", "editor/js/libs/", "examples/jsm/libs/", "src/extras/lib/"],
+      "warmup": "10m"
+    },
+    {
+      "name": "django",
+      "language": "python",
+      "url": "https://github.com/django/django.git",
+      "tag": "6.1.1",
+      "commit": "249b13d6e93ee3164dee8ed1775395622a50c337",
+      "prepare": [
+        ["python3", "-m", "venv", "{tools}/venv"],
+        ["{tools}/venv/bin/pip", "install", "--quiet", "--editable", "."]
+      ],
+      "build": ["pyright", "--pythonpath", "{tools}/venv/bin/python", "django", "tests"],
+      "errors": "(\\d+) errors?",
+      "env": {"PATH": "{tools}/venv/bin:{PATH}", "VIRTUAL_ENV": "{tools}/venv"},
+      "warmup": "10m"
+    },
+    {
+      "name": "spring-framework",
+      "language": "java",
+      "url": "https://github.com/spring-projects/spring-framework.git",
+      "tag": "v7.0.9",
+      "commit": "82a6b40b9366ec181ededdad282b307ee5381a52",
+      "prepare": [["./gradlew", "--no-daemon", "--quiet", "compileJava"]],
+      "build": ["./gradlew", "--no-daemon", "--quiet", "compileJava", "compileTestJava"],
+      "warmup": "30m"
+    },
+    {
+      "name": "jellyfin",
+      "language": "csharp",
+      "url": "https://github.com/jellyfin/jellyfin.git",
+      "tag": "v12.1",
+      "commit": "ee91c75e777da41a9c4f4855e70adc604fbf2ef8",
+      "prepare": [["dotnet", "restore", "Jellyfin.sln"]],
+      "build": ["dotnet", "build", "Jellyfin.sln", "--no-restore", "--verbosity", "quiet"],
+      "warmup": "15m"
+    },
+    {
+      "name": "postgres",
+      "language": "c",
+      "url": "https://github.com/postgres/postgres.git",
+      "tag": "REL_18_6",
+      "commit": "724edf9bde9d356724ad384a2e196edc3c9f80f7",
+      "prepare": [
+        ["python3", "-m", "venv", "{tools}/venv"],
+        ["{tools}/venv/bin/pip", "install", "--quiet", "meson"],
+        ["mkdir", "-p", "{tools}/perl5/File"],
+        ["curl", "-sSfL", "-o", "{tools}/perl5/FindBin.pm",
+          "https://raw.githubusercontent.com/Perl/perl5/v5.42.3/dist/FindBin/lib/FindBin.pm"],
+        ["curl", "-sSfL", "-o", "{tools}/perl5/File/Compare.pm",
+          "https://raw.githubusercontent.com/Perl/perl5/v5.42.3/lib/File/Compare.pm"],
+        ["{tools}/venv/bin/meson", "setup", "{tools}/build", "-Dauto_features=disabled"],
+        ["ln", "-sf", "{tools}/build/compile_commands.json", "compile_commands.json"]
+      ],
+      "build": ["ninja", "-C", "{tools}/build"],
+      "env": {"PERL5LIB": "{tools}/perl5"},
+      "warmup": "15m"
+    },
+    {
+      "name": "rust-analyzer",
+      "language": "rust",
+      "url": "https://github.com/rust-lang/rust-analyzer.git",
+      "tag": "2026-09-21",
+      "commit": "aaddfb73fd95f2c0bf001b474dca91ae28bcce3a",
+      "prepare": [["cargo", "fetch"]],
+      "build": ["cargo", "check", "--workspace", "--all-targets", "--offline", "--quiet"],
+      "exclude": ["bench_data/"],
+      "warmup": "20m"
+    },
+    {
+      "name": "rubocop",
+      "language": "ruby",
+      "url": "https://github.com/rubocop/rubocop.git",
+      "tag": "v1.91.0",
+      "commit": "6eee0afc5fc9d5ba09f2769c689d0e6769402a79",
+      "prepare": [["bundle", "install", "--quiet"]],
+      "build": ["bundle", "exec", "rspec"],
+      "errors": "examples?, (\\d+) failures?",
+      "env": {"BUNDLE_PATH": "{tools}/bundle"},
+      "warmup": "10m"
+    },
+    {
+      "name": "cats",
+      "language": "scala",
+      "url": "https://github.com/typelevel/cats.git",
+      "tag": "v2.13.0",
+      "commit": "32a50dcfad9d897459bb755c4b5a22b4c7bc745c",
+      "prepare": [["sbt", "-batch", "coreJVM/compile"]],
+      "build": ["sbt", "-batch", "catsJVM/Test/compile"],
+      "warmup": "30m"
+    },
+    {
+      "name": "stealth",
+      "language": "typescript",
+      "path": "../stealth",
+      "warmup": "10m"
+    }
+  ]
+}

@@ -9,7 +9,7 @@
         lint lint-vet lint-go lint-md lint-license \
         lint-skip-expiry lint-error-prefix lint-vuln \
         tidy check-tidy \
-        test test-race test-bench test-fuzz test-coverage test-e2e \
+        test test-race test-bench test-fuzz test-coverage test-e2e corpus \
         bench-baseline bench-regression bench-profile \
         check check-coverage check-uncovered check-mutation check-branch \
         release
@@ -70,6 +70,8 @@ test-coverage: ## Render per-module coverage profiles to HTML
 	$(ERGON) test coverage
 test-e2e: ## Run the end-to-end tests behind `//go:build e2e` (skipped by default)
 	go test -tags=e2e ./...
+corpus: ## Drive the binary over the repositories of test/corpus/corpus.json (hours on a first run; ONLY=names or languages)
+	TECHNE_CORPUS_ONLY=$(ONLY) go test -tags=corpus -count=1 -timeout=24h -v -run TestCorpus ./test/corpus
 
 bench-baseline: ## Pin the current benchmark numbers to bench/baseline.txt
 	$(ERGON) bench baseline
