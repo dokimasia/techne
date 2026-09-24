@@ -11,22 +11,21 @@ import (
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
+	"go.dokimi.dev/techne/core/trust"
 )
 
-// VerifyInput is what an agent sends to the verify tool.
-//
-// Suites names what to run in the language's own words: its linters, its
-// test runner, its type checker. Empty runs whatever that language runs
-// by default, which is what a caller checking its own work wants.
+// VerifyInput is the input of the verify tool. Suites names the checks in the words of the
+// language, such as its linters or its test runner, and the empty list runs the checks that the
+// language runs by default.
 type VerifyInput struct {
-	Scope     string   `json:"scope"                        jsonschema:"file or directory, workspace-relative"`
-	Suites    []string `json:"suites,omitempty"             jsonschema:"what to run, in the language's own words"`
-	Language  string   `json:"language,omitempty"           jsonschema:"language to assume"`
-	MaxIssues int      `json:"max_issues,omitempty"         jsonschema:"cap the issues returned"`
-	Preferred string   `json:"preferred_fidelity,omitempty" jsonschema:"syntactic|indexed|resolved"`
+	Scope     string       `json:"scope"                        jsonschema:"file or directory, relative to the workspace root"`
+	Suites    []string     `json:"suites,omitempty"             jsonschema:"the checks to run, in the words of the language"`
+	Language  string       `json:"language,omitempty"           jsonschema:"the language to ask, in place of the languages of the scope"`
+	MaxIssues int          `json:"max_issues,omitempty"         jsonschema:"the number of issues to return, all when omitted"`
+	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence the caller wants: a weaker answer is degraded, not refused"`
 }
 
-// VerifyOutput is what the verify tool returns.
+// VerifyOutput is the output of the verify tool.
 type VerifyOutput struct {
 	Scope      Scope      `json:"scope"`
 	Items      []Reported `json:"items"`
@@ -34,12 +33,9 @@ type VerifyOutput struct {
 	Error      *Failure   `json:"error,omitempty"`
 }
 
-// Reported is one thing a gate said about the code.
-//
-// At is the line the diagnostic is about, carried because whoever reads
-// this has no filesystem and a message without its line costs a read
-// each. Fix is the change that resolves it, and carries only what it
-// would write: saying what it would replace needs the file.
+// Reported is one issue that a check reported. At is the source line of the issue. Fix is the
+// text that the one obvious remedy writes, without the text it replaces, which only the file
+// contains.
 type Reported struct {
 	Severity string `json:"severity"`
 	Code     string `json:"code,omitempty"`
@@ -51,21 +47,20 @@ type Reported struct {
 	Fix      []Fix  `json:"fix,omitempty"`
 }
 
-// Fix is one range a diagnostic's remedy would write.
+// Fix is one range that a remedy writes: its file, the line on which it starts, counted from
+// one, and the text.
 type Fix struct {
 	Path string `json:"path"`
 	Line int    `json:"line"`
 	Now  string `json:"now"`
 }
 
-// Failed reports whether a caller should read this as a failure.
-//
-// Issues are not a failure. A gate that ran and found twelve problems
-// answered the question it was asked, and a caller that treats that as a
-// fault cannot act on the twelve.
+// Failed reports whether the output has an Error. Issues are no failure: a check that ran and
+// reported issues served the request.
 func (o VerifyOutput) Failed() bool { return o.Error != nil }
 
-// Render writes what the gate said for a reader rather than a parser.
+// Render returns the issues as text: a heading, each issue with its site, its severity, its
+// code, its message, its source line and whether a fix is available, and the evidence.
 func (o VerifyOutput) Render() string {
 	var b strings.Builder
 	if o.Error != nil {
@@ -78,11 +73,10 @@ func (o VerifyOutput) Render() string {
 		about = o.Scope.Unit
 	}
 	fmt.Fprintf(&b, "%s — %s\n", about, plural(len(o.Items), "issue", "issues"))
-
 	for _, one := range o.Items {
 		fmt.Fprintf(&b, "\n%s:%d  %s", one.Path, one.Line, one.Severity)
 		if one.Code != "" {
-			fmt.Fprintf(&b, "  %s", qualify(one.Source, one.Code))
+			fmt.Fprintf(&b, "  %s", coded(one.Source, one.Code))
 		}
 		fmt.Fprintf(&b, "\n  %s\n", one.Message)
 		if one.At != "" {
@@ -92,13 +86,23 @@ func (o VerifyOutput) Render() string {
 			b.WriteString("  fix available\n")
 		}
 	}
-
 	b.WriteString("\n")
 	b.WriteString(evidence(o.Provenance))
 	return b.String()
 }
 
-// Verify builds the tool that reports what a language's gate says.
+// coded returns the code of an issue after the tool that reported it and a dot, or the code
+// alone when no tool is named.
+func coded(reporter, code string) string {
+	if reporter == "" {
+		return code
+	}
+	return reporter + "." + code
+}
+
+// Verify returns the tool that runs the checks of a language over a scope and reports what
+// they found. It returns the first MaxIssues issues, with a truncation caveat when it leaves
+// any out.
 func Verify(gates Verifier) (Tool, error) {
 	return New("verify", verifyDescription,
 		func(ctx context.Context, in VerifyInput) (VerifyOutput, error) {
@@ -106,23 +110,32 @@ func Verify(gates Verifier) (Tool, error) {
 			if err != nil {
 				return VerifyOutput{}, err
 			}
+			out := VerifyOutput{Scope: Scope{Language: in.Language, Unit: string(scope)}, Items: []Reported{}}
+			if names(scope) {
+				out.Scope.Path, out.Scope.Unit = string(scope), ""
+			}
+			preferred, failure := fidelityOf(in.Preferred)
+			if failure != nil {
+				out.Error = failure
+				return out, nil
+			}
 
 			answered, err := gates.Verify(ctx, engine.Request{
 				Scope:     scope,
 				Language:  source.Language(in.Language),
-				Preferred: fidelity(in.Preferred),
+				Preferred: preferred,
 			}, in.Suites)
 			if err != nil {
 				return VerifyOutput{}, err
 			}
 
-			out := VerifyOutput{
-				Scope:      Scope{Language: in.Language, Unit: string(scope)},
-				Items:      reportedIn(answered.Items, in.MaxIssues),
-				Provenance: provenance(answered.Provenance),
-			}
-			if names(scope) {
-				out.Scope.Path, out.Scope.Unit = string(scope), ""
+			out.Items = reportedIn(answered.Items, in.MaxIssues)
+			out.Provenance = provenance(answered.Provenance)
+			if len(out.Items) < len(answered.Items) {
+				out.Provenance.Caveats = append(out.Provenance.Caveats, Caveat{
+					Code: string(trust.CaveatTruncated),
+					Note: fmt.Sprintf("%d of %d issues returned", len(out.Items), len(answered.Items)),
+				})
 			}
 			if !answered.Status.Answered() {
 				out.Error = &Failure{
@@ -134,8 +147,8 @@ func Verify(gates Verifier) (Tool, error) {
 		})
 }
 
-// reportedIn turns findings into what a caller reads, stopping at the
-// cap it set.
+// reportedIn returns the first limit findings of found, each as a caller reads it, and every
+// finding for a limit of zero or less.
 func reportedIn(found []edit.Finding, limit int) []Reported {
 	out := []Reported{}
 	for _, one := range found {
@@ -156,11 +169,7 @@ func reportedIn(found []edit.Finding, limit int) []Reported {
 	return out
 }
 
-// fixes reads a remedy as the lines it would write.
-//
-// Only what arrives, not what goes: reading the text a fix replaces
-// needs the file, and nothing here has one. A caller that wants the
-// before applies the fix as a preview.
+// fixes returns the ranges that changes write, each with the line on which it starts.
 func fixes(changes []edit.Change) []Fix {
 	var out []Fix
 	for _, c := range changes {
@@ -176,7 +185,7 @@ func fixes(changes []edit.Change) []Fix {
 }
 
 const verifyDescription = "PREFER OVER running the build or the linter in a shell. " +
-	"Runs a language's own gate over a scope and returns what it said, each issue with " +
-	"the line it is about and, where there is one obvious remedy, the change that makes " +
-	"it. Finding issues is an answer rather than a failure. It is the same gate the write " +
-	"path runs, so a caller can check its own work before asking for a change."
+	"It runs the checks of a language over a scope and returns what they reported, each issue " +
+	"with its line and, where there is one obvious remedy, the change that makes it. Issues " +
+	"are an answer, not a failure. The write tools run the same checks before they write, so " +
+	"a caller can check its own work before it asks for a change."

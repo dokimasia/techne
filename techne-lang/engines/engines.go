@@ -12,13 +12,12 @@ import (
 	"go.dokimi.dev/techne/lang/treesitter"
 )
 
-// For builds the engines a workspace supports for one language, in the
-// order a catalogue should meet them.
+// For returns the engines of one language over a workspace, in the order in which a catalogue
+// meets them: the tree-sitter engine, the server engine when [Serving] returns one, and then
+// the engines of also. A catalogue keeps that order for two engines of equal fidelity and
+// cost, so a server engine comes before an engine of the module.
 //
-// A declaration with no server named registers a parser alone, and so
-// does a workspace that is not on disk. Neither is a fault: the first is
-// a language nobody has written a server declaration for, and the second
-// is a tree that a process cannot open by name.
+// It returns the error of [treesitter.New] and of [Serving].
 func For(
 	w lang.Workspace,
 	d lang.Declaration,
@@ -32,52 +31,46 @@ func For(
 	}
 	out := []engine.Engine{parser}
 
-	served, declared, err := Serving(w, d, s)
+	served, declared, err := Serving(w, d, s, parser)
 	if err != nil {
 		return nil, err
 	}
 	if declared {
 		out = append(out, served)
 	}
-	// Last, so an engine a module brings of its own meets a catalogue
-	// after the server: two engines claiming one tier are ordered by
-	// where they were registered, and the server is the one that is
-	// warm.
 	return append(out, also...), nil
 }
 
-// Serving returns the server engine a workspace supports for one
-// language, and whether it has one at all.
+// Serving returns the server engine of one language over a workspace, and reports whether the
+// workspace has one. It has none when s names no server, and none when the workspace is not on
+// disk, because a server opens files by name. A server that is not on PATH still has an
+// engine, and its [lsp.Engine.Available] names the program to install.
 //
-// It has none when the module declared no server, and none when the
-// workspace is not on disk: a server is a process that opens files by
-// name, and one pointed at a tree that was never written opens nothing
-// and is answered about nothing.
+// declarations is the outline engine of the language. The server engine reads the
+// declarations of a file through it, so the server does not open the file.
 //
-// A server that is not installed still counts. Left out, a caller
-// concludes the language cannot be served; declared, it reports through
-// [lsp.Engine.Available] what to install, which is a different problem
-// and a fixable one.
-func Serving(w lang.Workspace, d lang.Declaration, s lsp.Server) (engine.Engine, bool, error) {
+// It returns the error of [lsp.New] for a server declaration that is not valid.
+func Serving(
+	w lang.Workspace,
+	d lang.Declaration,
+	s lsp.Server,
+	declarations engine.Outliner,
+) (engine.Engine, bool, error) {
 	if s.Name == "" || !w.OnDisk() {
 		return nil, false, nil
 	}
-	served, err := lsp.New(w.Root, d, s)
+	served, err := lsp.New(w.Root, d, s, declarations)
 	if err != nil {
 		return nil, false, fmt.Errorf("engines: %q: %w", d.Language, err)
 	}
 	return served, true, nil
 }
 
-// Register adds a language to a registry and its engines to a catalogue.
+// Register adds the language that d declares to r and its engines to c, from [For]. A module
+// passes an engine of its own in also, as the Go module passes its type checker.
 //
-// A language module's whole entry point. Nothing is registered when any
-// part of it fails, because [lang.Registry.Register] checks the
-// declaration before it touches the catalogue.
-//
-// A module with an engine of its own passes it last. Go has one: an
-// in-process type checker, which answers what a server answers on a
-// machine where no server is installed.
+// It registers nothing when an engine fails to build, and [lang.Registry.Register] checks the
+// declaration before it changes the catalogue.
 func Register(
 	w lang.Workspace,
 	r *lang.Registry,

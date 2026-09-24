@@ -105,10 +105,26 @@ func Server(mode Mode, options ...Option) lsp.Server {
 }
 
 // Engine returns an engine over root that runs server for [Language], and closes the engine
-// when the test ends. The test fails if the engine cannot be built.
+// when the test ends. The engine reads every declaration from the server. The test fails if
+// the engine cannot be built.
 func Engine(tb testing.TB, root string, server lsp.Server) *lsp.Engine {
 	tb.Helper()
-	e, err := lsp.New(root, Declaration(), server)
+	return built(tb, root, server, nil)
+}
+
+// Parsing returns an engine over root that runs server for [Language] and reads the
+// declarations of a file through [Parser], and closes the engine when the test ends. The test
+// fails if the engine cannot be built.
+func Parsing(tb testing.TB, root string, server lsp.Server) *lsp.Engine {
+	tb.Helper()
+	return built(tb, root, server, Parser(root))
+}
+
+// built returns an engine over root that runs server and reads the declarations of a file
+// through declarations, and closes it when the test ends.
+func built(tb testing.TB, root string, server lsp.Server, declarations engine.Outliner) *lsp.Engine {
+	tb.Helper()
+	e, err := lsp.New(root, Declaration(), server, declarations)
 	if err != nil {
 		tb.Fatalf("lsptest: build an engine over %s: %v", root, err)
 	}

@@ -15,73 +15,25 @@ import (
 	"go.dokimi.dev/techne/tool"
 )
 
-func TestApply(t *testing.T) {
-	t.Parallel()
+// handle is a handle that a preview returns.
+const handle = "0123456789abcdef0123456789abcdef"
 
-	t.Run("Apply", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("names the built-in it replaces", func(t *testing.T) {
-			t.Parallel()
-			assert.HasPrefix(t, applying(t, &committer{}).Description(), "PREFER OVER ",
-				"an agent previews and asks again unless told why not to")
-		})
-
-		t.Run("sends the handle and nothing else", func(t *testing.T) {
-			t.Parallel()
-			// The changes stay where they were computed. A rename over
-			// thirty sites is kilobytes a caller would have to reproduce
-			// exactly, and reproducing bytes exactly is the least
-			// reliable thing a model does.
-			writer := &committer{}
-			got := applied(t, writer, `{"handle":"0123456789abcdef0123456789abcdef"}`)
-
-			assert.False(t, got.Failed(), "a handle the service holds is applied")
-			assert.Equal(t, writer.asked, "0123456789abcdef0123456789abcdef",
-				"the handle reaches the service unchanged")
-			assert.True(t, got.Applied, "and the change was written")
-			assert.Equal(t, got.Target, "a.fx",
-				"what is reported back is the file that changed, not how it was asked for")
-		})
-
-		t.Run("reports the operation the preview was for", func(t *testing.T) {
-			t.Parallel()
-			// A caller reading a result should not have to remember what
-			// it previewed.
-			got := applied(t, &committer{}, `{"handle":"0123456789abcdef0123456789abcdef"}`)
-			assert.Equal(t, got.Operation, "rename.symbol",
-				"the change says which operation it was, not that it was applied by handle")
-		})
-
-		t.Run("refuses a call with no handle", func(t *testing.T) {
-			t.Parallel()
-			got := applied(t, &committer{}, `{"handle":""}`)
-			assert.True(t, got.Failed(), "there is nothing to apply")
-			assert.Equal(t, got.Error.Code, "refused", "which the caller can correct")
-		})
-
-		t.Run("passes back a refusal rather than raising it", func(t *testing.T) {
-			t.Parallel()
-			// A stale handle is something a caller corrects by
-			// previewing again.
-			got := applied(t, &committer{refuses: "no preview is held under that handle"},
-				`{"handle":"0123456789abcdef0123456789abcdef"}`)
-			assert.True(t, got.Failed(), "a handle nobody holds is refused")
-			assert.Contains(t, got.Error.Reason, "no preview is held", "with the reason")
-		})
-	})
-}
-
-// committer is a write path that records the handle it was given.
+// committer is a write path that records the handle it receives. It refuses the commit with
+// the reason refuses when refuses is set, writes nothing when idle is set, and otherwise
+// writes a rename of Store in a.fx.
 type committer struct {
 	asked   string
 	refuses string
+	idle    bool
 }
 
 func (c *committer) Commit(_ context.Context, handle string) (edit.Outcome, error) {
 	c.asked = handle
-	if c.refuses != "" {
+	switch {
+	case c.refuses != "":
 		return edit.Outcome{Status: trust.Refused, Reason: c.refuses}, nil
+	case c.idle:
+		return edit.Outcome{Operation: edit.RenameSymbol, Status: trust.OK, Applied: true}, nil
 	}
 	return edit.Outcome{
 		Operation: edit.RenameSymbol,
@@ -95,21 +47,74 @@ func (c *committer) Commit(_ context.Context, handle string) (edit.Outcome, erro
 	}, nil
 }
 
-// applying builds the apply tool.
-func applying(t *testing.T, writer *committer) tool.Tool {
-	t.Helper()
-	built, err := tool.Apply(writer)
-	assert.NoError(t, err, "the apply tool builds from a write path alone")
-	return built
-}
-
-// applied runs it and decodes what came back.
+// applied runs the apply.change tool over writer with input, and decodes the output.
 func applied(t *testing.T, writer *committer, input string) tool.Written {
 	t.Helper()
-	result, err := applying(t, writer).Execute(t.Context(), json.RawMessage(input))
-	assert.NoError(t, err, "a well-formed call reaches the service")
-
+	built, err := tool.Apply(writer)
+	assert.NoError(t, err, "the error of Apply")
+	result, err := built.Execute(t.Context(), json.RawMessage(input))
+	assert.NoError(t, err, "the error of Execute")
 	var out tool.Written
-	assert.NoError(t, json.Unmarshal(result.Payload, &out), "the answer is JSON a caller can read")
+	assert.NoError(t, json.Unmarshal(result.Payload, &out), "the decoding of the output")
 	return out
+}
+
+func TestApply(t *testing.T) {
+	t.Parallel()
+
+	call := `{"handle":"` + handle + `"}`
+
+	t.Run("Apply", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("starts its description with PREFER OVER", func(t *testing.T) {
+			t.Parallel()
+			built, err := tool.Apply(&committer{})
+			assert.NoError(t, err, "the error of Apply")
+			assert.HasPrefix(t, built.Description(), "PREFER OVER ", "the description")
+		})
+
+		t.Run("sends the handle to the write path unchanged", func(t *testing.T) {
+			t.Parallel()
+			writer := &committer{}
+			got := applied(t, writer, call)
+			assert.False(t, got.Failed(), "the failure of the output")
+			assert.Equal(t, writer.asked, handle, "the handle of the commit")
+			assert.True(t, got.Applied, "Applied of the output")
+		})
+
+		t.Run("returns the first file written as the target and the path", func(t *testing.T) {
+			t.Parallel()
+			got := applied(t, &committer{}, call)
+			assert.Equal(t, got.Target, "a.fx", "the target of the output")
+			assert.Equal(t, got.Scope.Path, "a.fx", "the path of the scope")
+		})
+
+		t.Run("returns no path for a change that wrote no file", func(t *testing.T) {
+			t.Parallel()
+			got := applied(t, &committer{idle: true}, call)
+			assert.Equal(t, got.Target, handle, "the target of the output")
+			assert.Empty(t, got.Scope.Path, "the path of the scope")
+		})
+
+		t.Run("returns the operation of the preview", func(t *testing.T) {
+			t.Parallel()
+			got := applied(t, &committer{}, call)
+			assert.Equal(t, got.Operation, "rename.symbol", "the operation of the output")
+		})
+
+		t.Run("refuses an empty handle", func(t *testing.T) {
+			t.Parallel()
+			got := applied(t, &committer{}, `{"handle":""}`)
+			assert.True(t, got.Failed(), "the failure of the output")
+			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
+		})
+
+		t.Run("returns the refusal of the write path with its reason", func(t *testing.T) {
+			t.Parallel()
+			got := applied(t, &committer{refuses: "no preview has that handle"}, call)
+			assert.True(t, got.Failed(), "the failure of the output")
+			assert.Equal(t, got.Error.Reason, "no preview has that handle", "the reason of the failure")
+		})
+	})
 }

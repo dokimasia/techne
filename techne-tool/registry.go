@@ -8,31 +8,23 @@ import (
 	"strings"
 )
 
-// maxNameLength is what the protocol asks of a tool name. A client that
-// rejects a name drops the tool, and the server then looks as though it
-// never offered it.
+// maxNameLength is the longest tool name that the Model Context Protocol allows.
 const maxNameLength = 128
 
-// Registry holds the tools a server offers.
-//
-// A composition root builds one and then serves requests; nothing adds a
-// tool afterwards, so it is safe for concurrent reads.
+// Registry is the set of tools that a server offers. A composition root adds the tools before
+// the server serves a request, so the registry is safe for concurrent reads after that.
 type Registry struct {
 	tools []Tool
 	named map[string]bool
 }
 
-// NewRegistry returns a registry holding no tools.
+// NewRegistry returns a registry without tools.
 func NewRegistry() *Registry {
 	return &Registry{named: map[string]bool{}}
 }
 
-// Add registers a tool.
-//
-// It refuses a name already taken, because a name is what an agent
-// routes on and two tools sharing one make the choice undefined. It also
-// refuses a name outside what the protocol allows, so an unusable tool
-// is caught here rather than dropped by a client.
+// Add adds t to the registry. It returns an error for a name that another tool of the
+// registry has, and for a name that [validName] refuses.
 func (r *Registry) Add(t Tool) error {
 	name := t.Name()
 	if err := validName(name); err != nil {
@@ -46,33 +38,16 @@ func (r *Registry) Add(t Tool) error {
 	return nil
 }
 
-// notAllowed reports whether a rune may not appear in a tool name.
-func notAllowed(r rune) bool {
-	switch {
-	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		return false
-	case r == '_', r == '-', r == '.':
-		return false
-	default:
-		return true
-	}
-}
-
-// Tools returns every registered tool, in registration order.
-//
-// The order is stable so a client can cache the list; one that reordered
-// itself would invalidate that cache for no reason.
+// Tools returns every tool of the registry, in the order in which they were added.
 func (r *Registry) Tools() []Tool {
 	out := make([]Tool, len(r.tools))
 	copy(out, r.tools)
 	return out
 }
 
-// validName reports why a name cannot be offered, or nil.
-//
-// The protocol allows ASCII letters, digits, underscore, hyphen and dot,
-// between 1 and 128 characters. The dot is what family.subject relies
-// on.
+// validName returns an error for a name that the Model Context Protocol does not allow: a
+// name that is empty, longer than [maxNameLength] characters, or contains a character other
+// than an ASCII letter, a digit, an underscore, a hyphen or a dot.
 func validName(name string) error {
 	switch {
 	case name == "":
@@ -82,8 +57,20 @@ func validName(name string) error {
 			name, len(name), maxNameLength)
 	}
 	if i := strings.IndexFunc(name, notAllowed); i >= 0 {
-		return fmt.Errorf("tool: %q holds %q, which the protocol does not allow in a name",
+		return fmt.Errorf("tool: %q contains %q, which the protocol does not allow in a name",
 			name, name[i:i+1])
 	}
 	return nil
+}
+
+// notAllowed reports whether r is a character that a tool name cannot contain.
+func notAllowed(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return false
+	case r == '_', r == '-', r == '.':
+		return false
+	default:
+		return true
+	}
 }

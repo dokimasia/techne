@@ -23,10 +23,11 @@ import (
 // and the ID breaks the remaining ties, so identical requests return
 // identical answers. An empty text matches every name. Without q.Private,
 // Search leaves out the declarations that Outline reports as
-// sema.Unexported. Search reads the metadata of matching declarations only.
+// sema.Unexported. It returns the bindings that q.Include selects, and no
+// other binding. Search reads the metadata of matching declarations only.
 //
-// When q.Limit cuts the list, a caveat states how many of the matches the
-// result contains.
+// q.Limit cuts the list after the filters. When it does, a caveat states how
+// many of the matches the result contains.
 func (e *Engine) Search(ctx context.Context, req engine.Request, q engine.Query) (engine.Result[sema.Symbol], error) {
 	files, err := e.walk(req)
 	if err != nil {
@@ -35,6 +36,7 @@ func (e *Engine) Search(ctx context.Context, req engine.Request, q engine.Query)
 	wanted := func(d named) bool {
 		return (q.Kind == sema.KindUnknown || d.kind == q.Kind) &&
 			(q.Private || d.visibility != sema.Unexported) &&
+			q.Include.Keeps(d.kind, d.local) &&
 			rank(d.name, q.Text) != noMatch
 	}
 	found, err := parse(ctx, e, files.Read, wanted, declaredIn)

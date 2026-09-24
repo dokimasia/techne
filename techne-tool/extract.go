@@ -12,27 +12,22 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// ExtractInput is what an agent sends to the extract.function tool.
-//
-// FirstLine and LastLine count from one and are both inclusive, which is
-// how an editor reports a selection and how a caller reading a diff
-// counts.
-//
-// There is no receiver to name. Where a function hangs is the language's
-// answer and the engine's: a selection inside a class extracts to a
-// method on it, and one at the top level extracts to a function. A field
-// nothing reads is an operation that silently does something other than
-// what was asked.
+// ExtractInput is the input of the extract.function tool. FirstLine and LastLine count from
+// one, and the selection includes both, as an editor reports a selection. The engine places
+// the function: a selection inside a class becomes a method of the class, and one at the top
+// level a function.
 type ExtractInput struct {
-	Path      string `json:"path"               jsonschema:"the file the lines are in, workspace-relative"`
-	FirstLine int    `json:"first_line"         jsonschema:"first line to extract, counting from one"`
-	LastLine  int    `json:"last_line"          jsonschema:"last line to extract, inclusive"`
-	NewName   string `json:"new_name"           jsonschema:"what to call the new function"`
-	Language  string `json:"language,omitempty" jsonschema:"language to assume"`
-	DryRun    *bool  `json:"dry_run,omitempty"  jsonschema:"preview without writing; true when omitted"`
+	Path      string `json:"path"               jsonschema:"the file of the lines, relative to the workspace root"`
+	FirstLine int    `json:"first_line"         jsonschema:"the first line to extract, counted from one"`
+	LastLine  int    `json:"last_line"          jsonschema:"the last line to extract, included"`
+	NewName   string `json:"new_name"           jsonschema:"the name of the new function"`
+	Language  string `json:"language,omitempty" jsonschema:"the language to ask, in place of the language of the file"`
+	DryRun    *bool  `json:"dry_run,omitempty"  jsonschema:"preview the change without writing it, true when omitted"`
 }
 
-// Extract builds the tool that lifts a run of lines into a function.
+// Extract returns the tool that moves a run of lines into a new function and calls the
+// function in their place. It refuses an empty NewName and a selection that [selected]
+// refuses.
 func Extract(writes Writer) (Tool, error) {
 	return New(string(edit.ExtractFunction), extractDescription,
 		func(ctx context.Context, in ExtractInput) (Written, error) {
@@ -44,7 +39,7 @@ func Extract(writes Writer) (Tool, error) {
 
 			if in.NewName == "" {
 				return declined(edit.ExtractFunction, held, in.NewName, trust.Refused.String(),
-					"there is nothing to call it: new_name is the function's name"), nil
+					"new_name is empty: new_name is the name of the new function"), nil
 			}
 			span, failure := selected(path, in.FirstLine, in.LastLine)
 			if failure != nil {
@@ -63,12 +58,10 @@ func Extract(writes Writer) (Tool, error) {
 		})
 }
 
-// selected turns the lines a caller read off an editor into the span the
-// vocabulary counts in.
-//
-// The offsets are left unset. Counting bytes needs the file, which only
-// an engine has, and a wrong offset would name different code with no
-// sign that it had.
+// selected returns the span of the lines from first to last of the file at path, counted
+// from zero as the vocabulary counts them. It leaves the offsets unset, because only an engine
+// reads the file that they need. It refuses a first line below one and a last line before the
+// first.
 func selected(path source.Path, first, last int) (source.Span, *Failure) {
 	switch {
 	case first < 1:
@@ -91,7 +84,7 @@ func selected(path source.Path, first, last int) (source.Span, *Failure) {
 }
 
 const extractDescription = "PREFER OVER cutting lines out and writing a call by hand. " +
-	"Lifts a run of lines into a function, works out what it takes and returns, and " +
-	"leaves a call in their place. A selection inside a class becomes a method on it. " +
-	"Give the lines as an editor numbers them, counting from one and including the " +
-	"last. Previews by default."
+	"It moves a run of lines into a new function, works out what the function takes and " +
+	"returns, and leaves a call in their place. A selection inside a class becomes a method " +
+	"of the class. Give the lines as an editor numbers them: from one, the last line " +
+	"included. It previews the change unless dry_run is false."

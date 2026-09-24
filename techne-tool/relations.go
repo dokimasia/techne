@@ -14,23 +14,24 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// RelationsInput is what an agent sends to the relations tool.
+// DefaultRelations is the number of relations that the relations tool returns to a caller
+// that names no limit.
+const DefaultRelations = 50
+
+// RelationsInput is the input of the relations tool.
 type RelationsInput struct {
-	Scope     string `json:"scope"                        jsonschema:"file or directory, workspace-relative"`
-	Name      string `json:"name"                         jsonschema:"the declaration to ask about"`
-	Relation  string `json:"relation"                     jsonschema:"calls|called-by|implements|implemented-by|references|referenced-by|imports|imported-by|embeds|embedded-by"`
-	Kind      string `json:"kind,omitempty"               jsonschema:"narrows an ambiguous name to one kind"`
-	Language  string `json:"language,omitempty"           jsonschema:"language to assume"`
-	Limit     int    `json:"limit,omitempty"              jsonschema:"cap the edges returned"`
-	Preferred string `json:"preferred_fidelity,omitempty" jsonschema:"syntactic|indexed|resolved"`
+	Scope     string       `json:"scope"                        jsonschema:"file or directory of the declaration, relative to the workspace root"`
+	Name      string       `json:"name"                         jsonschema:"the declaration, qualified as the language writes it when the name is ambiguous"`
+	Relation  RelationWord `json:"relation"                     jsonschema:"the direction of the relations"`
+	Kind      KindWord     `json:"kind,omitempty"               jsonschema:"the kind of the declaration, for a name of several kinds"`
+	Language  string       `json:"language,omitempty"           jsonschema:"the language to ask, in place of the languages of the scope"`
+	Limit     int          `json:"limit,omitempty"              jsonschema:"the number of relations to return, 50 when omitted"`
+	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"ceiling of the answer in tokens, 6000 when omitted"`
+	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence the caller wants: a weaker answer is degraded, not refused"`
 }
 
-// RelationsOutput is what the relations tool returns.
-//
-// The declaration asked about is stated once, in Of, rather than on each
-// of its callers. The direction is stated once too: every edge in an
-// answer runs the way the caller asked, whichever way an engine happened
-// to store it.
+// RelationsOutput is the output of the relations tool. It states the declaration and the
+// direction once, and every relation runs in that direction.
 type RelationsOutput struct {
 	Scope      Scope       `json:"scope"`
 	Of         string      `json:"of"`
@@ -40,64 +41,64 @@ type RelationsOutput struct {
 	Error      *Failure    `json:"error,omitempty"`
 }
 
-// Connected is one declaration at the far end of an edge.
-//
-// Path and Line are where the edge was written rather than where the
-// declaration is. A caller asking who calls this navigates to the call;
-// the declaration is named, and finding it is what outline is for.
+// Connected is one relation: the declaration at its far end, and its site. Path and Line are
+// the site of the relation, such as a call, and not the declaration.
 type Connected struct {
 	Name string    `json:"name"`
 	Kind sema.Kind `json:"kind"`
-	// In is the declaration this one sits inside, empty at the top level.
+	// In is the qualified name of the declaration that contains the far end, or empty at the
+	// top level of a file.
 	In   string `json:"in,omitempty"`
 	Path string `json:"path"`
 	Line int    `json:"line"`
-	// Via is the source line the edge was written on, so a caller reads
-	// the call rather than spending a turn per caller fetching it.
+	// Via is the source line of the site.
 	Via string `json:"via,omitempty"`
 }
 
-// Failed reports whether a caller should read this as a failure.
+// Failed reports whether the output has an Error.
 func (o RelationsOutput) Failed() bool { return o.Error != nil }
 
-// Render writes the edges for a reader rather than a parser.
+// Render returns the relations as text: a heading, the site of each relation with the
+// declaration at its far end and the line of the site, and the evidence.
 func (o RelationsOutput) Render() string {
 	var b strings.Builder
 	if o.Error != nil {
 		fmt.Fprintf(&b, "%s %s — %s\n%s\n", o.Relation, o.Of, o.Error.Code, o.Error.Reason)
 		return b.String()
 	}
-
-	fmt.Fprintf(&b, "%s %s — %s\n", o.Relation, o.Of, plural(len(o.Items), "site", "sites"))
+	b.WriteString(o.heading(len(o.Items)))
 	for _, one := range o.Items {
-		fmt.Fprintf(&b, "\n%s:%d", one.Path, one.Line)
-		// The far end is named unless it is the file the site is in,
-		// which an import edge makes it: "a.go:7 in a.go" states the
-		// same fact twice and reads as a mistake.
-		if one.Name != "" && one.Name != one.Path {
-			fmt.Fprintf(&b, "  in %s", qualify(one.In, one.Name))
-		}
-		b.WriteString("\n")
-		if one.Via != "" {
-			fmt.Fprintf(&b, "  %s\n", strings.TrimSpace(one.Via))
-		}
+		b.WriteString(one.render())
 	}
-
 	b.WriteString("\n")
 	b.WriteString(evidence(o.Provenance))
 	return b.String()
 }
 
-// qualify writes a declaration as its language would, so a reader
-// recognises it.
-func qualify(in, name string) string {
-	if in == "" {
-		return name
-	}
-	return in + "." + name
+// heading returns the first line of the render of o with n relations.
+func (o RelationsOutput) heading(n int) string {
+	return fmt.Sprintf("%s %s — %s\n", o.Relation, o.Of, plural(n, "site", "sites"))
 }
 
-// Relations builds the tool that reports how a declaration connects.
+// render returns the lines of the render of c. The far end is left out when it is the file of
+// the site, as the far end of an import is.
+func (c Connected) render() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n%s:%d", c.Path, c.Line)
+	if c.Name != "" && c.Name != c.Path {
+		fmt.Fprintf(&b, "  in %s", sema.Qualify(c.In, c.Name))
+	}
+	b.WriteString("\n")
+	if c.Via != "" {
+		fmt.Fprintf(&b, "  %s\n", strings.TrimSpace(c.Via))
+	}
+	return b.String()
+}
+
+// Relations returns the tool that reports the relations of one declaration in one direction.
+// It finds the declaration by the rule of [addressed], and asks the language of the
+// declaration with its span, the limit of the input and [DefaultRelations] for none. It fits
+// the output to the budget with the run of relations that [longest] finds.
 func Relations(reads Outliner, relates Relator) (Tool, error) {
 	return New("relations", relationsDescription,
 		func(ctx context.Context, in RelationsInput) (RelationsOutput, error) {
@@ -105,60 +106,68 @@ func Relations(reads Outliner, relates Relator) (Tool, error) {
 			if err != nil {
 				return RelationsOutput{}, err
 			}
-			kind, known := relationOf(in.Relation)
-			if !known {
-				return relationsRefused(scope, in, fmt.Sprintf(
-					"no relation is called %q; the directions are %s",
-					in.Relation, strings.Join(relationNames(), ", "))), nil
+			kind, byRelation := relationOf(in.Relation)
+			declaredKind, byKind := kindOf(in.Kind)
+			preferred, byFidelity := fidelityOf(in.Preferred)
+			if failure := first(byRelation, byKind, byFidelity); failure != nil {
+				return relationsRefused(scope, in, failure), nil
 			}
 
+			limit := in.Limit
+			if limit <= 0 {
+				limit = DefaultRelations
+			}
 			req := engine.Request{
 				Scope:     scope,
 				Language:  source.Language(in.Language),
-				Preferred: fidelity(in.Preferred),
+				Preferred: preferred,
+				Limit:     limit,
 			}
-			of, failure := addressed(ctx, reads, req, scope, in.Name, kindOf(in.Kind))
+			of, failure := addressed(ctx, reads, req, scope, in.Name, declaredKind)
 			if failure != nil {
-				out := relationsRefused(scope, in, failure.Reason)
-				out.Error.Code = failure.Code
-				return out, nil
+				return relationsRefused(scope, in, failure), nil
 			}
 
+			req.Language, req.Declared = of.Language, of.Span
 			answered, err := relates.Relate(ctx, req, of.ID, kind)
 			if err != nil {
 				return RelationsOutput{}, err
 			}
 
 			out := RelationsOutput{
-				Scope:      about(scope, in.Language, engine.Answer[sema.Symbol]{}),
+				Scope:      about(scope, string(of.Language), engine.Answer[sema.Symbol]{}),
 				Of:         in.Name,
 				Relation:   kind.String(),
-				Items:      connected(answered.Items, in.Limit),
+				Items:      connected(answered.Items, limit),
 				Provenance: provenance(answered.Provenance),
 			}
-			out.Scope.Language = string(of.Language)
+			if len(out.Items) < len(answered.Items) {
+				out.Provenance.Caveats = append(out.Provenance.Caveats, Caveat{
+					Code: string(trust.CaveatTruncated),
+					Note: fmt.Sprintf("%d of %d relations returned", len(out.Items), len(answered.Items)),
+				})
+			}
 			if !answered.Status.Answered() {
 				out.Error = &Failure{
 					Code:   answered.Status.String(),
 					Reason: reasonFrom(out.Provenance.Caveats),
 				}
 			}
-			return out, nil
+			return out.fitted(Budget{MaxTokens: in.MaxTokens}), nil
 		})
 }
 
-// connected turns the edges an engine found into what a caller reads,
-// and stops at the cap the caller set.
+// connected returns the first limit relations of found, each as a caller reads it.
 func connected(found []sema.Relation, limit int) []Connected {
 	out := []Connected{}
 	for _, edge := range found {
-		if limit > 0 && len(out) == limit {
+		if len(out) == limit {
 			break
 		}
 		out = append(out, Connected{
 			Name: edge.To.Name,
 			Kind: edge.To.Kind,
-			In:   parentName(edge.To),
+			In:   container(edge.To),
 			Path: string(edge.At.Path),
 			Line: edge.At.Start.Line + 1,
 			Via:  edge.Via,
@@ -167,60 +176,65 @@ func connected(found []sema.Relation, limit int) []Connected {
 	return out
 }
 
-// parentName reads the container out of a declaration's parent identity.
-//
-// An identity is language, unit, name and kind joined, so the name is in
-// there and the alternative is a lookup per edge for something the
-// engine already stated.
-func parentName(s sema.Symbol) string {
-	if s.Parent == "" {
-		return ""
-	}
-	held := string(s.Parent)
-	from := strings.LastIndex(held, "#")
-	if from < 0 {
-		return ""
-	}
-	name := held[from+1:]
-	if to := strings.LastIndex(name, ":"); to >= 0 {
-		name = name[:to]
-	}
-	return name
-}
-
-// relationOf reads the direction a caller asked for.
-func relationOf(name string) (sema.RelationKind, bool) {
-	for _, kind := range sema.RelationKinds() {
-		if kind.String() == name {
-			return kind, true
+// container returns the qualified name of the declaration that contains s: the name of the
+// parent of s, or for a method without a parent the qualifier of its qualified name, as the
+// receiver qualifies a Go method.
+func container(s sema.Symbol) string {
+	switch {
+	case s.Parent != "":
+		return s.Parent.Name()
+	case s.Kind == sema.KindMethod:
+		if qualifier, cut := strings.CutSuffix(s.ID.Name(), "."+s.Name); cut {
+			return qualifier
 		}
 	}
-	return sema.RelationUnknown, false
+	return ""
 }
 
-// relationNames lists the directions, for a caller that named none of
-// them.
-func relationNames() []string {
-	out := make([]string, 0, len(sema.RelationKinds()))
-	for _, kind := range sema.RelationKinds() {
-		out = append(out, kind.String())
+// fitted returns o with the longest run of its first relations whose render fits b, at least
+// one, and a truncation caveat when it leaves any out.
+func (o RelationsOutput) fitted(b Budget) RelationsOutput {
+	if o.Error != nil || len(o.Items) == 0 {
+		return o
 	}
+	ceiling := b.MaxTokens
+	if ceiling <= 0 {
+		ceiling = DefaultMaxTokens
+	}
+	limit := (ceiling+1)*bytesPerToken - 1
+	sums := make([]int, len(o.Items)+1)
+	for i, one := range o.Items {
+		sums[i+1] = sums[i] + len(one.render())
+	}
+	tail := len("\n") + len(evidence(o.Provenance))
+	fits := func(k int) bool { return len(o.heading(k))+sums[k]+tail <= limit }
+	if fits(len(o.Items)) {
+		return o
+	}
+	k := longest(len(o.Items), fits)
+	out := o
+	out.Items = o.Items[:k]
+	out.Provenance.Caveats = append(append([]Caveat(nil), o.Provenance.Caveats...), Caveat{
+		Code: string(trust.CaveatTruncated),
+		Note: fmt.Sprintf("%d of %d relations returned within the token budget", k, len(o.Items)),
+	})
 	return out
 }
 
-// relationsRefused is the answer when the request never reached an
-// engine.
-func relationsRefused(scope source.Path, in RelationsInput, why string) RelationsOutput {
+// relationsRefused returns the output of a request that the tool refuses before an engine
+// reads it.
+func relationsRefused(scope source.Path, in RelationsInput, f *Failure) RelationsOutput {
 	return RelationsOutput{
 		Scope:    about(scope, in.Language, engine.Answer[sema.Symbol]{}),
 		Of:       in.Name,
-		Relation: in.Relation,
+		Relation: string(in.Relation),
 		Items:    []Connected{},
-		Error:    &Failure{Code: trust.Refused.String(), Reason: why},
+		Error:    f,
 	}
 }
 
 const relationsDescription = "PREFER OVER grep for finding what calls, implements or " +
-	"references a declaration. Returns each edge with the line it was written on, so a " +
-	"caller reads the call rather than fetching it, and states whether an empty answer " +
-	"means there are none or only that none were found."
+	"references a declaration. It returns each relation with the line of its site, so a " +
+	"caller reads the call without fetching the file, and states whether an empty answer " +
+	"means that there are none or that none were found. It returns 50 relations when limit " +
+	"is omitted, and a caveat counts the relations it leaves out."

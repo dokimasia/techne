@@ -19,9 +19,8 @@ import (
 
 const fixture = source.Language("fixture")
 
-// parser is the engine a read service would have selected, and is here
-// so an answer carries a real name and a real tier rather than ones a
-// case wrote down.
+// parser is an engine of the language fixture that serves outline at the syntactic tier, so
+// an answer has the name and the tier of an engine.
 type parser struct{ found []sema.Symbol }
 
 func (parser) Name() string                        { return "parser" }
@@ -29,76 +28,78 @@ func (parser) Language() source.Language           { return fixture }
 func (parser) Fidelity(engine.Role) trust.Fidelity { return trust.Syntactic }
 func (parser) Cost(engine.Role) engine.Cost        { return engine.CostParse }
 
-// Outline is what makes this serve a role, which is what the capability
-// report is about. Nothing calls it: a tool is given a service, and the
-// service that would have called this lives in another module.
+// Outline returns the declarations of p, which makes parser an engine of the role outline for
+// the capabilities tool.
 func (p parser) Outline(context.Context, engine.Request) (engine.Result[sema.Symbol], error) {
 	return engine.Result[sema.Symbol]{Items: p.found, Completeness: trust.ScopeTotal}, nil
 }
 
-// reads stands in for the read service, which lives in another module.
-//
-// What is under test here is what a tool does with an answer, not how
-// one is assembled, so the answer is stamped by [engine.Publish] and
-// withheld by [engine.Unsupported] exactly as a service would do it.
-// Building the real service instead would make every case in this file
-// depend on selection and merging as well.
+// reads is the read service of the tests. It publishes the results of its parser with
+// [engine.Publish], as a service does, for the scopes that it claims, and returns
+// [engine.Unsupported] for any other scope. It records each request of Relate and each query
+// of Search.
 type reads struct {
 	engine parser
 	claims map[source.Path]bool
-	// edges and found are what the roles nothing implements yet answer
-	// with, so a tool over them is testable before an engine exists.
+	// edges are the relations of Relate, and found the findings of Verify.
 	edges []sema.Relation
 	found []edit.Finding
+
+	related  []engine.Request
+	relating []sema.ID
+	searched []engine.Query
 }
 
-func (r reads) Outline(_ context.Context, req engine.Request) (engine.Answer[sema.Symbol], error) {
+// unsupported returns the answer of a scope that r does not claim.
+func unsupported[T any](scope source.Path) engine.Answer[T] {
+	return engine.Unsupported[T]("no engine serves " + string(scope) + " for this role")
+}
+
+func (r *reads) Outline(_ context.Context, req engine.Request) (engine.Answer[sema.Symbol], error) {
 	if !r.claims[req.Scope] {
-		return engine.Unsupported[sema.Symbol](
-			"no engine serves " + string(req.Scope) + " for this role"), nil
+		return unsupported[sema.Symbol](req.Scope), nil
 	}
 	return engine.Publish(
 		engine.Result[sema.Symbol]{Items: r.engine.found, Completeness: trust.ScopeTotal},
 		r.engine, engine.RoleOutline, req.Preferred), nil
 }
 
-func (r reads) Search(
+func (r *reads) Search(
 	_ context.Context,
 	req engine.Request,
-	_ engine.Query,
+	q engine.Query,
 ) (engine.Answer[sema.Symbol], error) {
+	r.searched = append(r.searched, q)
 	if !r.claims[req.Scope] {
-		return engine.Unsupported[sema.Symbol](
-			"no engine serves " + string(req.Scope) + " for this role"), nil
+		return unsupported[sema.Symbol](req.Scope), nil
 	}
 	return engine.Publish(
 		engine.Result[sema.Symbol]{Items: r.engine.found, Completeness: trust.ScopeTotal},
 		r.engine, engine.RoleSearch, req.Preferred), nil
 }
 
-func (r reads) Resolve(
+func (r *reads) Resolve(
 	_ context.Context,
 	req engine.Request,
 	_ source.Position,
 ) (engine.Answer[sema.Symbol], error) {
 	if !r.claims[req.Scope] {
-		return engine.Unsupported[sema.Symbol](
-			"no engine serves " + string(req.Scope) + " for this role"), nil
+		return unsupported[sema.Symbol](req.Scope), nil
 	}
 	return engine.Publish(
 		engine.Result[sema.Symbol]{Items: r.engine.found, Completeness: trust.ScopeTotal},
 		r.engine, engine.RoleResolve, req.Preferred), nil
 }
 
-func (r reads) Relate(
+func (r *reads) Relate(
 	_ context.Context,
 	req engine.Request,
-	_ sema.ID,
+	of sema.ID,
 	kind sema.RelationKind,
 ) (engine.Answer[sema.Relation], error) {
+	r.related, r.relating = append(r.related, req), append(r.relating, of)
 	if !r.claims[req.Scope] {
-		return engine.Unsupported[sema.Relation](
-			"no engine serves " + string(req.Scope) + " for this role"), nil
+		return unsupported[sema.Relation](req.Scope), nil
 	}
 	edges := make([]sema.Relation, 0, len(r.edges))
 	for _, one := range r.edges {
@@ -110,150 +111,180 @@ func (r reads) Relate(
 		r.engine, engine.RoleRelate, req.Preferred), nil
 }
 
-func (r reads) Verify(
+func (r *reads) Verify(
 	_ context.Context,
 	req engine.Request,
 	_ []string,
 ) (engine.Answer[edit.Finding], error) {
 	if !r.claims[req.Scope] {
-		return engine.Unsupported[edit.Finding](
-			"no engine serves " + string(req.Scope) + " for this role"), nil
+		return unsupported[edit.Finding](req.Scope), nil
 	}
 	return engine.Publish(
 		engine.Result[edit.Finding]{Items: r.found, Completeness: trust.ScopeTotal},
 		r.engine, engine.RoleVerify, req.Preferred), nil
 }
 
-// serving is a read service over the declarations a case gave it.
-func serving(found ...sema.Symbol) reads {
-	return reads{
+// serving returns a read service over found that claims the scope a.fx.
+func serving(found ...sema.Symbol) *reads {
+	return &reads{
 		engine: parser{found: found},
 		claims: map[source.Path]bool{"a.fx": true},
 	}
 }
 
-func outlineTool(t *testing.T, found ...sema.Symbol) tool.Tool {
+// outlining returns the outline tool over a read service of found.
+func outlining(t *testing.T, found ...sema.Symbol) tool.Tool {
 	t.Helper()
 	built, err := tool.Outline(serving(found...))
-	assert.NoError(t, err, "the outline tool builds from a read service")
+	assert.NoError(t, err, "the error of Outline")
 	return built
 }
 
-func call(t *testing.T, built tool.Tool, input string) map[string]any {
+// outlined runs the outline tool over found with input, and decodes the answer.
+func outlined(t *testing.T, input string, found ...sema.Symbol) tool.Answer {
 	t.Helper()
-	got, err := built.Execute(t.Context(), json.RawMessage(input))
-	assert.NoError(t, err, "a well-formed call reaches the service")
-	var decoded map[string]any
-	assert.NoError(t, json.Unmarshal(got.Payload, &decoded), "the result is JSON a caller can read")
-	return decoded
+	result, err := outlining(t, found...).Execute(t.Context(), json.RawMessage(input))
+	assert.NoError(t, err, "the error of Execute")
+	var out tool.Answer
+	assert.NoError(t, json.Unmarshal(result.Payload, &out), "the decoding of the answer")
+	return out
+}
+
+// function returns an exported function of the language fixture named name in a.fx, with
+// the documentation doc.
+func function(name, doc string) sema.Symbol {
+	return sema.Symbol{
+		ID: sema.NewID(fixture, "a", name, sema.KindFunction), Name: name, Kind: sema.KindFunction,
+		Language: fixture, Span: source.Span{Path: "a.fx"}, Visibility: sema.Exported, Doc: doc,
+	}
 }
 
 func TestOutline(t *testing.T) {
 	t.Parallel()
 
-	declared := sema.Symbol{
-		ID: "fixture:./a#F:function", Name: "F", Kind: sema.KindFunction,
-		Language: fixture, Span: source.Span{Path: "a.fx"}, Visibility: sema.Exported,
-		Doc: "F does a thing.",
-	}
+	documented := function("F", "F does a thing.")
 
 	t.Run("Outline", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("names the built-in it replaces", func(t *testing.T) {
+		t.Run("starts its description with PREFER OVER", func(t *testing.T) {
 			t.Parallel()
-			assert.HasPrefix(t, outlineTool(t).Description(), "PREFER OVER ",
-				"an agent reaches for read unless told why not to")
+			assert.HasPrefix(t, outlining(t).Description(), "PREFER OVER ", "the description")
 		})
 
-		t.Run("answers what a scope declares", func(t *testing.T) {
+		t.Run("returns the declarations of a scope", func(t *testing.T) {
 			t.Parallel()
-			got := call(t, outlineTool(t, declared), `{"scope":"a.fx"}`)
-			items, ok := got["items"].([]any)
-			assert.True(t, ok, "an answer carries its items")
-			assert.Length(t, items, 1, "the engine found one declaration")
+			got := outlined(t, `{"scope":"a.fx"}`, documented)
+			assert.Equal(t, names(got.Items), []string{"F"}, "the declarations of a.fx")
 		})
 
-		t.Run("states the evidence behind the answer", func(t *testing.T) {
+		t.Run("returns the evidence of the engine", func(t *testing.T) {
 			t.Parallel()
-			got := call(t, outlineTool(t, declared), `{"scope":"a.fx"}`)
-			provenance, ok := got["provenance"].(map[string]any)
-			assert.True(t, ok, "an answer states what stands behind it")
-			assert.Equal(t, provenance["fidelity"], "syntactic", "a caller reads the tier as a word")
-			assert.Equal(t, provenance["completeness"], "total", "a caller reads the coverage as a word")
-			assert.Equal(t, provenance["engine"], "parser", "a caller can tell which engine answered")
+			got := outlined(t, `{"scope":"a.fx"}`, documented)
+			assert.Equal(t, got.Provenance.Fidelity, "syntactic", "the fidelity")
+			assert.Equal(t, got.Provenance.Completeness, "total", "the completeness")
+			assert.Equal(t, got.Provenance.Engine, "parser", "the engine")
 		})
 
-		t.Run("says whether an empty answer proves absence", func(t *testing.T) {
+		t.Run("supports no negative claim at the syntactic tier", func(t *testing.T) {
 			t.Parallel()
-			// An agent should not have to know that this means resolved
-			// binding together with total coverage.
-			got := call(t, outlineTool(t), `{"scope":"a.fx"}`)
-			provenance := got["provenance"].(map[string]any)
-			assert.Equal(t, provenance["supportsNegativeClaim"], false,
-				"a parser's empty answer means none were found, never that there are none")
+			got := outlined(t, `{"scope":"a.fx"}`)
+			assert.False(t, got.Provenance.SupportsNegativeClaim, "the negative claim of an empty answer")
 		})
 
-		t.Run("carries no error when an engine answered", func(t *testing.T) {
+		t.Run("encodes no error for a served request", func(t *testing.T) {
 			t.Parallel()
-			// An answer that ran states its evidence in the provenance.
-			// A status beside it would restate one of those fields.
-			got := call(t, outlineTool(t, declared), `{"scope":"a.fx"}`)
-			_, failed := got["error"]
-			assert.False(t, failed, "an answer that ran says what it found and how, and no more")
+			result, err := outlining(t, documented).Execute(t.Context(), json.RawMessage(`{"scope":"a.fx"}`))
+			assert.NoError(t, err, "the error of Execute")
+			var fields map[string]any
+			assert.NoError(t, json.Unmarshal(result.Payload, &fields), "the decoding of the answer")
+			assert.NotContains(t, fields, "error", "the fields of the answer")
 		})
 
-		t.Run("tells a caller the language is not served", func(t *testing.T) {
+		t.Run("returns an unsupported failure for a scope that no engine serves", func(t *testing.T) {
 			t.Parallel()
-			got := call(t, outlineTool(t, declared), `{"scope":"notes.md"}`)
-			failure := got["error"].(map[string]any)
-			assert.Equal(t, failure["code"], "unsupported",
-				"a capability gap is something a caller routes around")
-			assert.NotEmpty(t, failure["reason"],
-				"a caller told only no cannot tell a gap from a mistake it could correct")
+			got := outlined(t, `{"scope":"notes.md"}`, documented)
+			assert.True(t, got.Failed(), "the failure of the answer")
+			assert.Equal(t, got.Error.Code, "unsupported", "the code of the failure")
+			assert.NotEmpty(t, got.Error.Reason, "the reason of the failure")
 		})
 
-		t.Run("marks an unsupported language as a failure without the transport reading it", func(t *testing.T) {
+		t.Run("marks a result as failed for a scope that no engine serves", func(t *testing.T) {
 			t.Parallel()
-			// A transport that had to parse the payload to learn this
-			// would change every time the payload did.
-			got, err := outlineTool(t, declared).Execute(t.Context(), json.RawMessage(`{"scope":"notes.md"}`))
-			assert.NoError(t, err, "a capability gap is not a fault")
-			assert.True(t, got.Failed, "a model can correct a request for a language nothing serves")
+			got, err := outlining(t, documented).Execute(t.Context(), json.RawMessage(`{"scope":"notes.md"}`))
+			assert.NoError(t, err, "the error of Execute")
+			assert.True(t, got.Failed, "Failed of the result")
 		})
 
-		t.Run("does not mark a degraded answer as a failure", func(t *testing.T) {
+		t.Run("marks no degraded answer as failed", func(t *testing.T) {
 			t.Parallel()
-			// Weaker evidence than asked for is still worth reading.
-			got, err := outlineTool(t, declared).Execute(t.Context(),
+			got, err := outlining(t, documented).Execute(t.Context(),
 				json.RawMessage(`{"scope":"a.fx","preferred_fidelity":"resolved"}`))
-			assert.NoError(t, err, "a weaker engine still answered")
-			assert.False(t, got.Failed, "a degraded answer carries items a caller can use")
+			assert.NoError(t, err, "the error of Execute")
+			assert.False(t, got.Failed, "Failed of the result")
 		})
 
-		t.Run("drops documentation before it drops a declaration", func(t *testing.T) {
+		t.Run("returns the documentation at docs", func(t *testing.T) {
 			t.Parallel()
-			got := call(t, outlineTool(t, declared), `{"scope":"a.fx","detail":"source","max_tokens":1}`)
-			items := got["items"].([]any)
-			assert.Length(t, items, 1, "an answer that found something returns something")
-			first := items[0].(map[string]any)
-			_, documented := first["doc"]
-			assert.False(t, documented, "documentation goes before any declaration does")
+			got := outlined(t, `{"scope":"a.fx","detail":"docs"}`, documented)
+			assert.Equal(t, got.Items[0].Doc, "F does a thing.", "the documentation of F")
 		})
 
-		t.Run("carries documentation when asked and affordable", func(t *testing.T) {
+		t.Run("drops the documentation before the declaration under a budget", func(t *testing.T) {
 			t.Parallel()
-			got := call(t, outlineTool(t, declared), `{"scope":"a.fx","detail":"docs"}`)
-			first := got["items"].([]any)[0].(map[string]any)
-			assert.Equal(t, first["doc"], "F does a thing.", "docs is the level that carries documentation")
+			got := outlined(t, `{"scope":"a.fx","detail":"source","max_tokens":1}`, documented)
+			assert.Length(t, got.Items, 1, "the declarations of a.fx")
+			assert.Empty(t, got.Items[0].Doc, "the documentation of F")
 		})
 
-		t.Run("refuses an absolute path", func(t *testing.T) {
+		t.Run("narrows the answer to each kind word", func(t *testing.T) {
 			t.Parallel()
-			// An absolute path leaks the machine's layout into an
-			// agent's context and makes the answer useless elsewhere.
-			_, err := outlineTool(t).Execute(t.Context(), json.RawMessage(`{"scope":"/etc/passwd"}`))
-			assert.HasError(t, err, "a path outside the workspace is refused rather than answered")
+			var found []sema.Symbol
+			for _, kind := range sema.Kinds() {
+				one := function(kind.String(), "")
+				one.Kind = kind
+				one.Span.Start.Offset = len(found) * 10
+				one.Span.End.Offset = len(found)*10 + 5
+				found = append(found, one)
+			}
+			for _, kind := range sema.Kinds() {
+				got := outlined(t, `{"scope":"a.fx","include":["all"],"kind":"`+kind.String()+`"}`, found...)
+				assert.Equal(t, names(got.Items), []string{kind.String()}, "the declarations of kind "+kind.String())
+			}
+		})
+
+		t.Run("names the language of an answer of one language", func(t *testing.T) {
+			t.Parallel()
+			got := outlined(t, `{"scope":"a.fx"}`, documented)
+			assert.Equal(t, got.Scope.Language, string(fixture), "the language of the scope")
+		})
+
+		t.Run("names no language for an answer of two languages", func(t *testing.T) {
+			t.Parallel()
+			other := function("G", "")
+			other.Language, other.Span.Start.Offset, other.Span.End.Offset = "other", 10, 20
+			got := outlined(t, `{"scope":"a.fx"}`, documented, other)
+			assert.Empty(t, got.Scope.Language, "the language of the scope")
+		})
+
+		t.Run("accepts a backslash inside a path", func(t *testing.T) {
+			t.Parallel()
+			_, err := outlining(t).Execute(t.Context(), json.RawMessage(`{"scope":"dir\\a.fx"}`))
+			assert.NoError(t, err, "the error of Execute for dir\\a.fx")
+		})
+
+		t.Run("refuses an absolute path of each platform", func(t *testing.T) {
+			t.Parallel()
+			for _, absolute := range []string{`/etc/passwd`, `C:\\Windows`, `c:/Windows`, `\\\\server\\share`, `//server/share`} {
+				_, err := outlining(t).Execute(t.Context(), json.RawMessage(`{"scope":"`+absolute+`"}`))
+				assert.HasError(t, err, "the error of Execute for "+absolute)
+			}
+		})
+
+		t.Run("refuses a path that leaves the workspace", func(t *testing.T) {
+			t.Parallel()
+			_, err := outlining(t).Execute(t.Context(), json.RawMessage(`{"scope":"a/../../b.fx"}`))
+			assert.HasError(t, err, "the error of Execute for a/../../b.fx")
 		})
 	})
 }

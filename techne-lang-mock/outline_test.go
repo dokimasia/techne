@@ -226,5 +226,33 @@ func TestOutline(t *testing.T) {
 			assert.Empty(t, got.Items, "the matches of Absent")
 			assert.False(t, got.Skipped, "the skip of src")
 		})
+
+		t.Run("leaves out a local declaration without BindLocals", func(t *testing.T) {
+			t.Parallel()
+			fsys := fstest.MapFS{"a.mock": {Data: []byte("func Fetch\n  var Found\n")}}
+			got, err := over(t, fsys).Search(t.Context(), engine.Request{Scope: "."},
+				engine.Query{Text: "f", Private: true})
+			assert.NoError(t, err, "Search of f")
+			assert.Equal(t, names(got.Items), []string{"Fetch"}, "the matches of f without locals")
+		})
+
+		t.Run("returns a local declaration with BindLocals", func(t *testing.T) {
+			t.Parallel()
+			fsys := fstest.MapFS{"a.mock": {Data: []byte("func Fetch\n  var Found\n")}}
+			got, err := over(t, fsys).Search(t.Context(), engine.Request{Scope: "."},
+				engine.Query{Text: "f", Private: true, Include: engine.BindLocals})
+			assert.NoError(t, err, "Search of f")
+			assert.Equal(t, names(got.Items), []string{"Fetch", "Found"}, "the matches of f with locals")
+		})
+
+		t.Run("applies Include before the limit", func(t *testing.T) {
+			t.Parallel()
+			fsys := fstest.MapFS{"a.mock": {Data: []byte("func Getter\n  var get\n")}}
+			got, err := over(t, fsys).Search(t.Context(), engine.Request{Scope: "."},
+				engine.Query{Text: "get", Private: true, Limit: 1})
+			assert.NoError(t, err, "Search of get")
+			assert.Equal(t, names(got.Items), []string{"Getter"}, "the match within the limit")
+			assert.NotContains(t, codes(got.Caveats), trust.CaveatTruncated, "the caveats of one match")
+		})
 	})
 }

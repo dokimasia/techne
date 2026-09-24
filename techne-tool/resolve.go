@@ -8,26 +8,25 @@ import (
 	"fmt"
 
 	"go.dokimi.dev/techne/core/engine"
+	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 )
 
-// ResolveInput is what an agent sends to the resolve tool.
-//
-// Line and Column count from one, as an editor reports them and as every
-// other answer here prints them. A caller pasting a position out of a
-// stack trace or a compiler message should not have to subtract one.
+// ResolveInput is the input of the resolve tool. Line and Column count from one, as an editor
+// and a compiler report a position.
 type ResolveInput struct {
-	Scope     string   `json:"scope"                        jsonschema:"the file the position is in"`
-	Line      int      `json:"line"                         jsonschema:"line, counting from one"`
-	Column    int      `json:"column"                       jsonschema:"column in bytes, counting from one"`
-	Language  string   `json:"language,omitempty"           jsonschema:"language to assume"`
-	Detail    string   `json:"detail,omitempty"             jsonschema:"names|signatures|docs|source"`
-	Include   []string `json:"include,omitempty"            jsonschema:"import|parameter|local|all"`
-	MaxTokens int      `json:"max_tokens,omitempty"         jsonschema:"estimated answer ceiling"`
-	Preferred string   `json:"preferred_fidelity,omitempty" jsonschema:"syntactic|indexed|resolved"`
+	Scope     string       `json:"scope"                        jsonschema:"the file of the position, relative to the workspace root"`
+	Line      int          `json:"line"                         jsonschema:"line, counted from one"`
+	Column    int          `json:"column"                       jsonschema:"column in bytes, counted from one"`
+	Language  string       `json:"language,omitempty"           jsonschema:"the language to ask, in place of the language of the file"`
+	Detail    Detail       `json:"detail,omitempty"             jsonschema:"the fields of each declaration: signatures when omitted"`
+	Include   []Include    `json:"include,omitempty"            jsonschema:"bindings to add beside the declarations that the files offer"`
+	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"ceiling of the answer in tokens, 6000 when omitted"`
+	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence the caller wants: a weaker answer is degraded, not refused"`
 }
 
-// Resolve builds the tool that reports what a name denotes.
+// Resolve returns the tool that reports the declarations that the name at a position
+// denotes.
 func Resolve(reads Resolver) (Tool, error) {
 	return New("resolve", resolveDescription,
 		func(ctx context.Context, in ResolveInput) (Answer, error) {
@@ -39,28 +38,30 @@ func Resolve(reads Resolver) (Tool, error) {
 			if err != nil {
 				return Answer{}, err
 			}
+			detail, byDetail := levelOf(in.Detail, scope)
+			include, byInclude := bindingsOf(in.Include)
+			preferred, byFidelity := fidelityOf(in.Preferred)
+			if failure := first(byDetail, byInclude, byFidelity); failure != nil {
+				return failed(about(scope, in.Language, engine.Answer[sema.Symbol]{}), failure), nil
+			}
 
 			answered, err := reads.Resolve(ctx, engine.Request{
 				Scope:     scope,
 				Language:  source.Language(in.Language),
-				Preferred: fidelity(in.Preferred),
+				Preferred: preferred,
 			}, at)
 			if err != nil {
 				return Answer{}, err
 			}
 
-			out := published(answered, about(scope, in.Language, answered),
-				level(in.Detail, scope), in.Include)
+			out := published(answered, about(scope, in.Language, answered), detail, include)
 			return Fit(out, Budget{MaxTokens: in.MaxTokens}), nil
 		})
 }
 
-// position turns the coordinates a caller reads off an editor into the
-// ones the vocabulary counts in.
-//
-// The offset is left unset. Counting bytes needs the file, which only an
-// engine has, and a wrong offset would name a different place with no
-// sign that it had.
+// position returns the position of a line and a column counted from one, as the vocabulary
+// counts them from zero. It leaves the offset unset, because only an engine reads the file
+// that the offset needs. It returns an error for a line or a column below one.
 func position(line, column int) (source.Position, error) {
 	if line < 1 {
 		return source.Position{}, fmt.Errorf("tool: line %d: lines count from one", line)
@@ -72,7 +73,7 @@ func position(line, column int) (source.Position, error) {
 }
 
 const resolveDescription = "PREFER OVER guessing what a name refers to from the text around it. " +
-	"Reports which declaration the name at one position denotes, with the evidence behind " +
-	"it: a type checker binding the name is a different answer from a parser matching it, " +
-	"and the answer says which it was. Two items mean the name is ambiguous and the caller " +
-	"chooses."
+	"It returns the declaration that the name at one position denotes, with the evidence " +
+	"behind it: a type checker that binds the name gives a different answer from a parser that " +
+	"matches it, and the answer states which it was. Two declarations mean that the name is " +
+	"ambiguous, and the caller chooses."

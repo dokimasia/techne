@@ -10,22 +10,23 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// ApplyInput is what an agent sends to the apply.change tool.
-//
-// Handle is what a preview returned. The changes themselves stay where
-// they were computed: a rename over thirty sites is several kilobytes,
-// and a caller that had to send them back exactly would sometimes not.
+// ApplyInput is the input of the apply.change tool. Handle is the handle of a preview. The
+// write path keeps the changes of the preview, so a caller sends the handle and not the
+// changes.
 type ApplyInput struct {
-	Handle string `json:"handle" jsonschema:"the handle a preview returned"`
+	Handle string `json:"handle" jsonschema:"the handle that a preview returned"`
 }
 
-// Apply builds the tool that applies a change a preview computed.
+// Apply returns the tool that writes the change of a preview without planning it again. The
+// output names the operation of the preview, and its target and its path are the first file
+// that the change wrote. The output of a change that wrote no file has the handle as its
+// target and no path.
 func Apply(writes Committer) (Tool, error) {
 	return New(string(applyChange), applyDescription,
 		func(ctx context.Context, in ApplyInput) (Written, error) {
 			if in.Handle == "" {
 				return declined(applyChange, Scope{}, "", trust.Refused.String(),
-					"there is nothing to apply: handle is what a preview returned"), nil
+					"handle is empty: handle is the handle that a preview returned"), nil
 			}
 
 			done, err := writes.Commit(ctx, in.Handle)
@@ -33,15 +34,12 @@ func Apply(writes Committer) (Tool, error) {
 				return Written{}, err
 			}
 
-			// The operation and the file it touched, rather than the
-			// handle: a caller reading a result wants to know what
-			// changed, and the handle is how it asked rather than what
-			// it asked about.
-			target := in.Handle
+			target, scope := in.Handle, Scope{}
 			if len(done.Changed) > 0 {
 				target = string(done.Changed[0])
+				scope.Path = target
 			}
-			out := reported(done.Operation, Scope{Path: target}, target, done)
+			out := reported(done.Operation, scope, target, done)
 			if out.Operation == "" {
 				out.Operation = string(applyChange)
 			}
@@ -49,12 +47,11 @@ func Apply(writes Committer) (Tool, error) {
 		})
 }
 
-// applyChange is the one operation with no planner: it applies what
-// another operation planned, so it is a tool without being a row in the
-// catalogue.
+// applyChange is the operation of the apply.change tool. It writes what another operation
+// planned, so it has no planner and no row in the catalogue of operations.
 const applyChange edit.Operation = "apply.change"
 
 const applyDescription = "PREFER OVER previewing a change and then asking for it again. " +
-	"Applies the change a preview returned a handle for, without planning it a second " +
-	"time. Refused when the files have moved on since, because byte ranges over other " +
-	"bytes describe other code and usually still compile."
+	"It writes the change of the preview that returned the handle, without planning it again. " +
+	"It refuses the change when a file changed after the preview, because byte ranges over " +
+	"other bytes describe other code and usually still compile."

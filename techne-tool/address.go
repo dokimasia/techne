@@ -14,12 +14,14 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// addressed outlines a scope and picks the single declaration a name and a
-// kind address.
+// addressed returns the declaration that a name and a kind address in the outline of scope,
+// with the test files of the scope. The document.symbol, rename.symbol and relations tools
+// call it, so a name addresses the same declaration in each of them.
 //
-// Every tool that names a declaration addresses it the same way, so the
-// rule lives here rather than once per tool. A tool holding its own copy
-// would be a tool where a name means something slightly different.
+// It returns a refused [Failure] when the name addresses no declaration or more than one, and
+// an unsupported Failure when no engine outlines the scope. A name that addresses nothing in a
+// scope with a file larger than an engine reads is refused with the name of that file, because
+// the declaration can be in it.
 func addressed(
 	ctx context.Context,
 	reads Outliner,
@@ -39,31 +41,26 @@ func addressed(
 	}
 	if !answered.Status.Answered() {
 		return sema.Symbol{}, &Failure{
-			Code: trust.Unsupported.String(),
-			Reason: fmt.Sprintf(
-				"nothing outlines %q, so no declaration could be found in it", scope),
+			Code:   trust.Unsupported.String(),
+			Reason: fmt.Sprintf("no engine outlines %q, so no declaration in it can be found", scope),
 		}
 	}
-	held, failed := pick(answered.Items, scope, name, kind)
-	if failed != nil && len(matching(answered.Items, name, kind)) == 0 {
-		// "declares nothing called x" over a scope holding a file
-		// nothing opened is a claim the outline did not make. A caller
-		// acts on it by believing the declaration is not there, when
-		// what happened is that nobody looked.
-		if why, unread := passedOver(answered.Provenance); unread {
+	found, failure := pick(answered.Items, scope, name, kind)
+	if failure != nil && len(matching(answered.Items, name, kind)) == 0 {
+		if unread, skipped := passedOver(answered.Provenance); skipped {
 			return sema.Symbol{}, &Failure{
 				Code: trust.Refused.String(),
 				Reason: fmt.Sprintf(
-					"%q was not read in full: %s is past the size an engine reads, "+
+					"%q was not read in full: %s is larger than an engine reads, "+
 						"so %q was not looked for there",
-					scope, why, name),
+					scope, unread, name),
 			}
 		}
 	}
-	return held, failed
+	return found, failure
 }
 
-// passedOver reports what a scope holds that was not read, if anything.
+// passedOver returns the files of the unread caveat of p, and reports whether p has one.
 func passedOver(p trust.Provenance) (string, bool) {
 	for _, one := range p.Caveats {
 		if one.Code == trust.CaveatUnread {
@@ -73,28 +70,24 @@ func passedOver(p trust.Provenance) (string, bool) {
 	return "", false
 }
 
-// paths renders the files a caveat names.
-func paths(of []source.Path) []string {
-	out := make([]string, 0, len(of))
-	for _, p := range of {
+// paths returns each path of list as a string.
+func paths(list []source.Path) []string {
+	out := make([]string, 0, len(list))
+	for _, p := range list {
 		out = append(out, string(p))
 	}
 	return out
 }
 
-// pick is the half of addressed that needs no service, so a tool that already
-// has an outline does not fetch a second.
+// pick returns the declaration of items that a name and a kind address, for a tool that has
+// the outline already. The declarations that [matching] selects address one declaration when
+// there is one of them, or when [together] reports that they are one subject. Any other count
+// is refused with the reason of [ambiguous].
 func pick(items []sema.Symbol, scope source.Path, name string, kind sema.Kind) (sema.Symbol, *Failure) {
 	found := matching(items, name, kind)
 	if len(found) == 1 {
 		return found[0], nil
 	}
-	// An import is declared once per file that brings the name into
-	// scope, so a workspace importing one package from eleven files
-	// declares it eleven times. They are eleven sites and one subject:
-	// what the name identifies is the thing imported, which is the same
-	// for all of them. Refusing them as ambiguous would leave the
-	// question unaskable anywhere the answer is worth having.
 	if one, same := together(found); same {
 		return one, nil
 	}
@@ -104,57 +97,78 @@ func pick(items []sema.Symbol, scope source.Path, name string, kind sema.Kind) (
 	}
 }
 
-// together reports whether several declarations name one thing, and
-// which to answer about.
+// together returns the declaration that two or more declarations of one name address, and
+// reports whether they address one. They do in these cases:
 //
-// Only imports do. Two functions of one name are two functions and the
-// caller has to say which; two imports of one name are one package
-// brought in twice, and there is nothing to choose between them.
+//   - They are imports of one name, which bring one thing into scope in each of their files.
+//     The first import is the declaration.
+//   - One of them is a type and the others are constructors that the type contains, as Java
+//     and C# name a constructor after its type. The type is the declaration.
+//   - They share one ID, as the prototype and the definition of a C function do and the
+//     overload signatures of a TypeScript function do. The first in the order of the outline
+//     is the declaration.
 func together(found []sema.Symbol) (sema.Symbol, bool) {
 	if len(found) < 2 {
 		return sema.Symbol{}, false
 	}
-	for _, one := range found {
-		if one.Kind != sema.KindImport || one.Name != found[0].Name {
-			return sema.Symbol{}, false
-		}
+	if every(found, func(s sema.Symbol) bool { return s.Kind == sema.KindImport && s.Name == found[0].Name }) {
+		return found[0], true
 	}
-	return found[0], true
+	if built, is := constructed(found); is {
+		return built, true
+	}
+	if every(found, func(s sema.Symbol) bool { return s.ID == found[0].ID }) {
+		return found[0], true
+	}
+	return sema.Symbol{}, false
 }
 
-// matching keeps the declarations a name and a kind pick out.
-//
-// A name matches as the language writes it, so Kind.Declares finds the
-// method and Declares finds it too. A kind narrows what the name leaves
-// ambiguous, and no kind matches every one.
-func matching(found []sema.Symbol, name string, kind sema.Kind) []sema.Symbol {
-	named := map[sema.ID]string{}
+// constructed returns the one declaration of found that is not a constructor, and reports
+// whether every other declaration is a constructor that it contains.
+func constructed(found []sema.Symbol) (sema.Symbol, bool) {
+	var built []sema.Symbol
 	for _, s := range found {
-		named[s.ID] = s.Name
+		if s.Kind != sema.KindConstructor {
+			built = append(built, s)
+		}
 	}
+	if len(built) != 1 {
+		return sema.Symbol{}, false
+	}
+	return built[0], every(found, func(s sema.Symbol) bool {
+		return s.Kind != sema.KindConstructor || s.Parent == built[0].ID
+	})
+}
 
+// every reports whether rule reports true for each declaration of found.
+func every(found []sema.Symbol, rule func(sema.Symbol) bool) bool {
+	for _, s := range found {
+		if !rule(s) {
+			return false
+		}
+	}
+	return true
+}
+
+// matching returns the declarations of found that name and kind select. A name selects a
+// declaration of that name, or of that qualified name in its ID, such as Store.Get for the
+// method Get of Store. [sema.KindUnknown] selects every kind.
+func matching(found []sema.Symbol, name string, kind sema.Kind) []sema.Symbol {
 	var out []sema.Symbol
 	for _, s := range found {
 		if kind != sema.KindUnknown && s.Kind != kind {
 			continue
 		}
-		qualified := s.Name
-		if parent, held := named[s.Parent]; held && s.Parent != "" {
-			qualified = parent + "." + s.Name
-		}
-		if s.Name == name || qualified == name {
+		if s.Name == name || s.ID.Name() == name {
 			out = append(out, s)
 		}
 	}
 	return out
 }
 
-// ambiguous says why a name did not pick out one declaration.
-//
-// A name nothing matches is answered with what is nearby, and a name
-// several match is answered with all of them: an agent that is told only
-// "not found" retries with the same word, and one told the ten names in
-// the file corrects itself in the same turn.
+// ambiguous returns the reason that a name addresses no declaration or more than one. The
+// reason for more than one lists the kind and the site of each. The reason for none lists the
+// names of scope that [similar] returns.
 func ambiguous(name string, scope source.Path, found, all []sema.Symbol) string {
 	if len(found) > 1 {
 		return fmt.Sprintf("%q names %d declarations in %q: %s — narrow it with kind, "+
@@ -169,8 +183,8 @@ func ambiguous(name string, scope source.Path, found, all []sema.Symbol) string 
 		scope, name, strings.Join(near, ", "))
 }
 
-// sites lists where declarations were found, so a caller can tell them
-// apart.
+// sites returns the kind, the path and the line of each declaration of found, the line counted
+// from one.
 func sites(found []sema.Symbol) []string {
 	out := make([]string, 0, len(found))
 	for _, s := range found {
@@ -179,15 +193,9 @@ func sites(found []sema.Symbol) []string {
 	return out
 }
 
-// similar names the declarations a mistyped name was probably meant to
-// be, and caps the list so a wrong name in a large scope does not answer
-// with the whole scope.
-//
-// A name is offered back when it holds the one asked for, or when the
-// two agree for their first few characters. Offering back every name the
-// query happens to contain would answer a typo in normalizeBody with
-// every one-letter local in the file, which is worse than answering
-// nothing.
+// similar returns up to [nearLimit] names of all that name can be a misspelling of: a name
+// that contains name, or that starts with the same [nearPrefix] bytes, both without regard to
+// case. It returns only names that [sema.Kind.Declares] allows.
 func similar(all []sema.Symbol, name string) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -209,7 +217,7 @@ func similar(all []sema.Symbol, name string) []string {
 	return out
 }
 
-// agree returns how many leading bytes two names have in common.
+// agree returns the number of leading bytes that a and b have in common.
 func agree(a, b string) int {
 	n := min(len(a), len(b))
 	for i := range n {
@@ -221,10 +229,9 @@ func agree(a, b string) int {
 }
 
 const (
-	// nearLimit caps the names offered back for one that matched
-	// nothing.
+	// nearLimit is the largest number of names that [similar] returns.
 	nearLimit = 8
-	// nearPrefix is how much of a name has to agree with the one asked
-	// for before it is worth offering back.
+	// nearPrefix is the number of leading bytes that a name shares with the name asked for,
+	// for [similar] to return it.
 	nearPrefix = 4
 )

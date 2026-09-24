@@ -35,6 +35,8 @@ import (
 type Engine struct {
 	declared lang.Declaration
 	server   Server
+	// outliner reads the declarations of a file without the server, or is nil.
+	outliner engine.Outliner
 	// root is the absolute workspace root with symbolic links resolved. given is the absolute
 	// root as the caller named it. A server path under either root maps into the workspace.
 	root, given string
@@ -54,10 +56,15 @@ type Engine struct {
 // New returns an engine over the workspace at root for the language that d declares, served
 // by s.
 //
+// outliner is the outline engine of the language, such as the tree-sitter engine, or nil. The
+// engine reads through it the declaration that contains the site of a relation and the
+// declaration at a definition, so the server does not open the file of each. With nil the
+// engine reads them from the document symbols of the server.
+//
 // It returns an error when d names no language, when s is not valid, and when root is not a
 // directory on disk. A language server opens files itself, so the workspace cannot be an
 // [io/fs.FS].
-func New(root string, d lang.Declaration, s Server) (*Engine, error) {
+func New(root string, d lang.Declaration, s Server, outliner engine.Outliner) (*Engine, error) {
 	switch {
 	case d.Language == "":
 		return nil, errors.New("lsp: the declaration names no language")
@@ -78,7 +85,7 @@ func New(root string, d lang.Declaration, s Server) (*Engine, error) {
 	if info, err := os.Stat(resolved); err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("lsp: %s: workspace root %s is not a directory", d.Language, given)
 	}
-	return &Engine{declared: d, server: s, root: resolved, given: given}, nil
+	return &Engine{declared: d, server: s, outliner: outliner, root: resolved, given: given}, nil
 }
 
 // Name returns the name of the server, such as gopls, which names the program to install or

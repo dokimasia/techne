@@ -185,6 +185,53 @@ func TestSymbol(t *testing.T) {
 			}
 		})
 	})
+
+	t.Run("Locals", func(t *testing.T) {
+		t.Parallel()
+
+		// nested is a file with a type holding a method, a function holding a variable,
+		// and a constant holding a struct literal with a field.
+		nested := []sema.Symbol{
+			kinded(sema.KindStruct, 0, 100), kinded(sema.KindMethod, 10, 90),
+			kinded(sema.KindFunction, 200, 300), kinded(sema.KindVariable, 210, 290),
+			kinded(sema.KindConstant, 400, 500), kinded(sema.KindStruct, 410, 490),
+			kinded(sema.KindField, 420, 480),
+		}
+		locals := sema.Locals(nested, sema.Containers(nested))
+
+		t.Run("returns false for a declaration at the top level", func(t *testing.T) {
+			t.Parallel()
+			assert.False(t, locals[0], "the struct")
+		})
+
+		t.Run("returns false for a member of a type", func(t *testing.T) {
+			t.Parallel()
+			assert.False(t, locals[1], "the method of the struct")
+		})
+
+		t.Run("returns true for a variable inside a function", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, locals[3], "the variable of the function")
+		})
+
+		t.Run("returns true for a declaration two levels inside a value", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, locals[6], "the field of the struct inside the constant")
+		})
+
+		t.Run("returns false for every symbol without a container", func(t *testing.T) {
+			t.Parallel()
+			alone := []sema.Symbol{kinded(sema.KindFunction, 0, 10), kinded(sema.KindVariable, 20, 30)}
+			assert.Equal(t, sema.Locals(alone, sema.Containers(alone)), []bool{false, false}, "locals")
+		})
+	})
+}
+
+// kinded returns a symbol of kind that spans from and to in a.go.
+func kinded(kind sema.Kind, from, to int) sema.Symbol {
+	s := spanning("a.go", from, to)
+	s.Kind = kind
+	return s
 }
 
 func spanning(path source.Path, from, to int) sema.Symbol {

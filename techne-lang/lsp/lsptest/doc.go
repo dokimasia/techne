@@ -36,6 +36,12 @@
 // a workspace with [Workspace].
 // [Declaration] declares [Language], which claims files with the [Extension] suffix.
 //
+// # Engines
+//
+// [Engine] returns an engine that reads every declaration from the scripted server. [Parsing]
+// returns an engine that reads the declarations of a file through [Parser], the outline engine
+// of [Language], as a language module passes its tree-sitter engine.
+//
 // # Dependency position
 //
 // Imports the standard library, core/engine, core/sema, core/source, core/trust, lang,

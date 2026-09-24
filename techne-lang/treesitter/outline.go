@@ -59,11 +59,13 @@ func (e *Engine) walk(req engine.Request) (lang.Files, error) {
 type keep func(d named) bool
 
 // named is what a keep reads of one declaration: its name, its qualified
-// name, its kind and its visibility.
+// name, its kind, its visibility, and whether it is local as [sema.Locals]
+// reports.
 type named struct {
 	name, qualified string
 	kind            sema.Kind
 	visibility      sema.Visibility
+	local           bool
 }
 
 // scan is the record of one parse of a file: the size and the modification
@@ -255,9 +257,10 @@ func (e *Engine) declarations(p source.Path, content []byte, selected keep) ([]s
 
 	linked := make([]sema.Symbol, len(found))
 	for i, d := range found {
-		linked[i] = sema.Symbol{Span: d.span}
+		linked[i] = sema.Symbol{Kind: d.kind, Span: d.span}
 	}
 	containers := sema.Containers(linked)
+	locals := sema.Locals(linked, containers)
 	qualified := qualify(found, containers)
 	statements := map[uint]int{}
 	for i, d := range found {
@@ -275,6 +278,7 @@ func (e *Engine) declarations(p source.Path, content []byte, selected keep) ([]s
 			qualified:  qualified[i],
 			kind:       d.kind,
 			visibility: e.visibility(found, containers, i),
+			local:      locals[i],
 		}
 		if !distinct[one] {
 			distinct[one] = true

@@ -12,34 +12,26 @@ import (
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
-	"go.dokimi.dev/techne/core/trust"
 )
 
-// OutlineInput is what an agent sends to the outline tool.
-//
-// Scope is a file or a directory, relative to the workspace root.
-// Language overrides what the path would say, so a caller that knows
-// need not wait for a suffix to be recognised. Detail selects what each
-// item carries and MaxTokens caps the answer; both take a default when
-// left empty. Names, Kind and Prefix narrow the answer to what the
-// caller meant, which is what makes the levels carrying documentation
-// and source text worth asking for. Preferred is the weakest evidence
-// worth having, and an engine below it still answers.
+// OutlineInput is the input of the outline tool.
 type OutlineInput struct {
-	Scope     string   `json:"scope"                        jsonschema:"file or directory, workspace-relative"`
-	Language  string   `json:"language,omitempty"           jsonschema:"language to assume"`
-	Detail    string   `json:"detail,omitempty"             jsonschema:"names|signatures|docs|source"`
-	Names     []string `json:"names,omitempty"              jsonschema:"limit the answer to these declarations"`
-	Kind      string   `json:"kind,omitempty"               jsonschema:"limit the answer to one kind"`
-	Prefix    string   `json:"prefix,omitempty"             jsonschema:"limit to names starting with this"`
-	Private   bool     `json:"private,omitempty"            jsonschema:"include declarations not visible outside their unit"`
-	Include   []string `json:"include,omitempty"            jsonschema:"import|parameter|local|all"`
-	Tests     bool     `json:"tests,omitempty"              jsonschema:"include the files this language calls tests"`
-	MaxTokens int      `json:"max_tokens,omitempty"         jsonschema:"estimated answer ceiling"`
-	Preferred string   `json:"preferred_fidelity,omitempty" jsonschema:"syntactic|indexed|resolved"`
+	Scope     string       `json:"scope"                        jsonschema:"file or directory, relative to the workspace root"`
+	Language  string       `json:"language,omitempty"           jsonschema:"the language to ask, in place of the languages of the scope"`
+	Detail    Detail       `json:"detail,omitempty"             jsonschema:"the fields of each declaration: signatures for a file and names for a directory when omitted"`
+	Names     []string     `json:"names,omitempty"              jsonschema:"keep the declarations of these names"`
+	Kind      KindWord     `json:"kind,omitempty"               jsonschema:"keep the declarations of one kind"`
+	Prefix    string       `json:"prefix,omitempty"             jsonschema:"keep the declarations whose names start with this"`
+	Private   bool         `json:"private,omitempty"            jsonschema:"keep the declarations that are not visible outside their unit"`
+	Include   []Include    `json:"include,omitempty"            jsonschema:"bindings to add beside the declarations that the files offer"`
+	Tests     bool         `json:"tests,omitempty"              jsonschema:"read the files that the language treats as tests"`
+	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"ceiling of the answer in tokens, 6000 when omitted"`
+	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence the caller wants: a weaker answer is degraded, not refused"`
 }
 
-// Outline builds the tool that reports what a scope declares.
+// Outline returns the tool that lists the declarations of a scope. It narrows the answer by
+// the names, the kind, the prefix and the visibility of the input, and fits it to the budget
+// with [Fit].
 func Outline(reads Outliner) (Tool, error) {
 	return New("outline", outlineDescription,
 		func(ctx context.Context, in OutlineInput) (Answer, error) {
@@ -47,86 +39,80 @@ func Outline(reads Outliner) (Tool, error) {
 			if err != nil {
 				return Answer{}, err
 			}
+			kind, byKind := kindOf(in.Kind)
+			detail, byDetail := levelOf(in.Detail, scope)
+			include, byInclude := bindingsOf(in.Include)
+			preferred, byFidelity := fidelityOf(in.Preferred)
+			if failure := first(byKind, byDetail, byInclude, byFidelity); failure != nil {
+				return failed(about(scope, in.Language, engine.Answer[sema.Symbol]{}), failure), nil
+			}
 
 			answered, err := reads.Outline(ctx, engine.Request{
 				Scope:     scope,
 				Language:  source.Language(in.Language),
-				Preferred: fidelity(in.Preferred),
+				Preferred: preferred,
 				Tests:     in.Tests,
 			})
 			if err != nil {
 				return Answer{}, err
 			}
 
-			detail := level(in.Detail, scope)
-			out := published(answered, about(scope, in.Language, answered), detail, in.Include)
+			out := published(answered, about(scope, in.Language, answered), detail, include)
 			out.Items = Narrow{
-				Names: in.Names, Kind: kindOf(in.Kind),
+				Names: in.Names, Kind: kind,
 				Prefix: in.Prefix, Private: in.Private,
 			}.Apply(out.Items)
 			return Fit(out, Budget{MaxTokens: in.MaxTokens}), nil
 		})
 }
 
-const outlineDescription = "PREFER OVER read for finding what a file or directory declares: " +
-	"about a quarter of the tokens, measured on real files in Go, Python, Java and TypeScript. " +
-	"Returns declarations rather than lines, and states the evidence behind them, so an empty " +
-	"answer says whether it means there are none or only that none were found. " +
+const outlineDescription = "PREFER OVER read for finding what a file or directory declares. " +
+	"An outline takes about a quarter of the tokens of the file, measured on real files in Go, " +
+	"Python, Java and TypeScript. It returns declarations, not lines, and states the evidence " +
+	"behind them, so an empty answer states whether there are none or none were found. " +
 	"The docs and source levels return whole comments and whole bodies, so over a whole file " +
 	"they cost more than reading it: narrow them with names, kind or prefix."
 
-// about names what an answer is about, so no item has to.
-//
-// The language is what the engine answered as, which is what a caller
-// asked about only when it said so. A scope naming a file states the
-// file; a directory leaves it to the items, which come from several.
+// about returns the scope of an answer about scope. The language is the language of the
+// declarations of a when they share one, empty when they are of more than one language, and
+// asked when there are none. A scope that names a file states the file and its unit, and a
+// directory is the unit.
 func about(scope source.Path, asked string, a engine.Answer[sema.Symbol]) Scope {
-	held := Scope{Language: asked}
-	if len(a.Items) > 0 {
-		held.Language = string(a.Items[0].Language)
+	out := Scope{Language: asked}
+	for i, s := range a.Items {
+		if i == 0 {
+			out.Language = string(s.Language)
+		} else if string(s.Language) != out.Language {
+			out.Language = ""
+			break
+		}
 	}
 	if names(scope) {
-		held.Path = string(scope)
-		held.Unit = path.Dir(string(scope))
-		return held
+		out.Path = string(scope)
+		out.Unit = path.Dir(string(scope))
+		return out
 	}
-	held.Unit = string(scope)
-	return held
+	out.Unit = string(scope)
+	return out
 }
 
-// names reports whether a scope names one file.
-//
-// The suffix is not enough on its own: path.Ext reads "." as an
-// extension of ".", so the workspace root would be taken for a file and
-// answered at the level a file is answered at.
+// names reports whether scope names one file: its last element has an extension and is more
+// than the extension. path.Ext returns "." for ".", so the workspace root names no file.
 func names(scope source.Path) bool {
 	base := path.Base(string(scope))
 	suffix := path.Ext(base)
 	return suffix != "" && suffix != base
 }
 
-// level reads the detail a caller asked for, and falls back to what the
-// scope implies rather than to one answer for every scope.
-func level(named string, scope source.Path) Detail {
-	for _, d := range Levels() {
-		if string(d) == named {
-			return d
-		}
-	}
-	return DefaultDetail(scope)
-}
-
-// relative refuses a path that would leave the workspace.
-//
-// An absolute path leaks the machine's directory layout into an agent's
-// context and makes the answer useless anywhere else. A path climbing
-// out of the root is refused for the same reason.
+// relative returns p as a path of the workspace, and the root for the empty path. It refuses
+// a path that leaves the workspace: an absolute path of any platform, and a path that climbs
+// out of the root. A backslash inside a path is a character of a file name.
 func relative(p string) (source.Path, error) {
 	if p == "" {
-		return ".", nil
+		return engine.Root, nil
 	}
-	if path.IsAbs(p) || strings.HasPrefix(p, "/") || strings.Contains(p, "\\") {
-		return "", fmt.Errorf("tool: %q is absolute; paths are relative to the workspace root", p)
+	if absolute(p) {
+		return "", fmt.Errorf("tool: %q is absolute, not relative to the workspace root", p)
 	}
 	clean := path.Clean(p)
 	if clean == ".." || strings.HasPrefix(clean, "../") {
@@ -135,17 +121,15 @@ func relative(p string) (source.Path, error) {
 	return source.Path(clean), nil
 }
 
-// fidelity reads the tier a caller asked for, and treats a name it does
-// not know as no preference rather than as an error.
-func fidelity(name string) trust.Fidelity {
-	switch name {
-	case "syntactic":
-		return trust.Syntactic
-	case "indexed":
-		return trust.Indexed
-	case "resolved":
-		return trust.Resolved
-	default:
-		return trust.None
+// absolute reports whether p is absolute on some platform: it starts with a slash or a
+// backslash, as a Unix path and a Windows UNC path do, or with a drive letter and a colon.
+func absolute(p string) bool {
+	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`) {
+		return true
 	}
+	if len(p) < 2 || p[1] != ':' {
+		return false
+	}
+	letter := p[0] | 0x20
+	return letter >= 'a' && letter <= 'z'
 }

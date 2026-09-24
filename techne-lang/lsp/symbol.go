@@ -254,58 +254,115 @@ func innermost(symbols []sema.Symbol, offset int) (sema.Symbol, bool) {
 // size returns the number of bytes that s covers.
 func size(s source.Span) int { return s.End.Offset - s.Start.Offset }
 
-// finder returns the declaration at a location that a server returned. It reads the symbols
-// of each file once per call and keeps them for that call only, because the answers of a
-// server change with the workspace.
+// finder returns the declaration at a location that a server returned. It reads the
+// declarations of each file once per call and keeps them for that call only, because the
+// answers of a server change with the workspace.
+//
+// The declaration that a question is about comes from the document symbols of the server,
+// because a request names the position of a name that the server reported. The declaration at
+// a site or at a definition comes from the outline engine of the language when the engine has
+// one, so the server does not open the file. A file outside the workspace has no outline of
+// that engine, and its declarations come from the server.
 type finder struct {
-	engine   *Engine
-	session  *session
-	outlines map[source.Path]outline
+	engine  *Engine
+	session *session
+	// served are the outlines from the document symbols of the server, and parsed the
+	// outlines from the outline engine of the language.
+	served, parsed map[source.Path]outline
 }
 
 // outline is the document of one file and its declarations, both empty for a file that the
 // engine does not read.
 type outline struct {
 	symbols []sema.Symbol
+	// offered are the declarations of symbols that the file offers to the rest of a program:
+	// no import, parameter, label or local declaration.
+	offered []sema.Symbol
 	doc     document
+}
+
+// outlined returns the outline of doc with symbols.
+func outlined(doc document, symbols []sema.Symbol) outline {
+	locals := sema.Locals(symbols, sema.Containers(symbols))
+	var offered []sema.Symbol
+	for i, one := range symbols {
+		if engine.Bindings(0).Keeps(one.Kind, locals[i]) {
+			offered = append(offered, one)
+		}
+	}
+	return outline{symbols: symbols, offered: offered, doc: doc}
 }
 
 // newFinder returns a finder for one call on held.
 func newFinder(e *Engine, held *session) *finder {
-	return &finder{engine: e, session: held, outlines: map[source.Path]outline{}}
+	return &finder{
+		engine: e, session: held,
+		served: map[source.Path]outline{}, parsed: map[source.Path]outline{},
+	}
 }
 
-// file returns the outline of the file at p. A file of another language, a file that
-// [lang.Readable] refuses and a file outside the workspace larger than [lang.Largest] have an
-// empty outline. Any other failure to read p is returned: the server named p, so the file must
-// be readable.
+// file returns the outline of the file at p, from the outline engine of the language when the
+// engine has one and p is in the workspace, and from the server otherwise. A file of another
+// language, a file that [lang.Readable] refuses and a file outside the workspace larger than
+// [lang.Largest] have an empty outline. Any other failure to read p is returned: the server
+// named p, so the file must be readable.
 func (f *finder) file(ctx context.Context, p source.Path) (outline, error) {
-	return f.outlined(ctx, p, f.engine.open)
+	if f.engine.outliner == nil || outside(p) {
+		return f.opened(ctx, p)
+	}
+	if kept, known := f.parsed[p]; known {
+		return kept, nil
+	}
+	if !lang.Claims(string(p), f.engine.declared.Extensions) {
+		f.parsed[p] = outline{}
+		return outline{}, nil
+	}
+	doc, err := f.engine.read(p)
+	if refused(err) {
+		f.parsed[p] = outline{}
+		return outline{}, nil
+	}
+	if err != nil {
+		return outline{}, err
+	}
+	answered, err := f.engine.outliner.Outline(ctx, engine.Request{Scope: p, Tests: true})
+	if err != nil {
+		return outline{}, fmt.Errorf("lsp: %s: the declarations of %s: %w", f.engine.server.Name, p, err)
+	}
+	kept := outlined(doc, answered.Items)
+	f.parsed[p] = kept
+	return kept, nil
 }
 
-// walked returns the outline of the file at p, a path from [Engine.walk], which [lang.Walk]
-// has checked.
+// opened returns the outline of the file at p from the server, and checks p with
+// [lang.Readable] before the server opens it.
+func (f *finder) opened(ctx context.Context, p source.Path) (outline, error) {
+	return f.symbolised(ctx, p, f.engine.open)
+}
+
+// walked returns the outline of the file at p from the server. p is a path from
+// [Engine.walk], which [lang.Walk] has checked.
 func (f *finder) walked(ctx context.Context, p source.Path) (outline, error) {
-	return f.outlined(ctx, p, f.engine.load)
+	return f.symbolised(ctx, p, f.engine.load)
 }
 
-// outlined returns the kept outline of the file at p, or reads the file with read, asks the
-// server for its symbols and keeps the outline for the call.
-func (f *finder) outlined(
+// symbolised returns the kept outline of the file at p from the server, or reads the file
+// with read, asks the server for its symbols and keeps the outline for the call.
+func (f *finder) symbolised(
 	ctx context.Context,
 	p source.Path,
 	read func(context.Context, *session, source.Path) (document, error),
 ) (outline, error) {
-	if kept, known := f.outlines[p]; known {
+	if kept, known := f.served[p]; known {
 		return kept, nil
 	}
 	if !lang.Claims(string(p), f.engine.declared.Extensions) {
-		f.outlines[p] = outline{}
+		f.served[p] = outline{}
 		return outline{}, nil
 	}
 	doc, err := read(ctx, f.session, p)
 	if refused(err) {
-		f.outlines[p] = outline{}
+		f.served[p] = outline{}
 		return outline{}, nil
 	}
 	if err != nil {
@@ -315,8 +372,8 @@ func (f *finder) outlined(
 	if err != nil {
 		return outline{}, err
 	}
-	kept := outline{symbols: symbols, doc: doc}
-	f.outlines[p] = kept
+	kept := outlined(doc, symbols)
+	f.served[p] = kept
 	return kept, nil
 }
 
@@ -331,6 +388,19 @@ func (f *finder) at(ctx context.Context, p source.Path, at protocol.Position) (s
 	return found, known, nil
 }
 
+// within returns the innermost declaration of the file at p that contains the protocol
+// position at and that the file offers to the rest of a program, and reports whether one does.
+// A use inside the body of a function belongs to the function, not to a local variable that
+// the body declares.
+func (f *finder) within(ctx context.Context, p source.Path, at protocol.Position) (sema.Symbol, bool, error) {
+	kept, err := f.file(ctx, p)
+	if err != nil || len(kept.offered) == 0 {
+		return sema.Symbol{}, false, err
+	}
+	found, known := innermost(kept.offered, kept.doc.position(at).Offset)
+	return found, known, nil
+}
+
 // refused reports whether err is a [lang.LargeError] or a [lang.GeneratedError]: a file that
 // no engine reads.
 func refused(err error) bool {
@@ -340,23 +410,31 @@ func refused(err error) bool {
 }
 
 // declaring returns the declaration that an ID identifies, the document of the file it is in,
-// and whether a declaration matches. It reads the symbols of each file in paths through found,
-// which keeps them for the rest of the call, and skips a test file unless req includes tests.
+// and whether a declaration matches. It reads the symbols of each file through found, which
+// keeps them for the rest of the call.
 //
-// A declaration with the ID is the match. Without one, the following steps apply in order, and
-// a step that selects exactly one declaration returns it:
+// The files are the file of [engine.Request.Declared] when req names one, and otherwise the
+// files in paths without a test file unless req includes tests.
 //
-//   - A declaration with the qualified name of the ID, because a parser and a server can
-//     classify one declaration under different kinds: metals reports a method of a Scala
-//     object where the parser reports a function.
+// A declaration with the ID is the match. Without one, the following steps apply in order. A
+// step that selects exactly one declaration returns it:
+//
+//   - A declaration with the qualified name of the ID. A parser and a server can classify one
+//     declaration under different kinds: metals reports a method of a Scala object where the
+//     parser reports a function.
 //   - A declaration of the kind of the ID whose qualified name and the qualified name of the ID
-//     end in one another at a dot, because a server can nest a declaration in a namespace or a
-//     package that the parser does not qualify it by: csharp-ls nests a class in a file-scoped
+//     end in one another at a dot. A server can nest a declaration in a namespace or a package
+//     that the parser does not qualify it by: csharp-ls nests a class in a file-scoped
 //     namespace, and metals nests it in the packages of the package clause.
-//   - A declaration whose name is the base of the qualified name of the ID, because a parser
-//     and a server can nest one declaration under different containers.
+//   - A declaration whose name is the base of the qualified name of the ID. A parser and a
+//     server can nest one declaration under different containers.
 //
-// A step that selects two or more declarations ends the search without a match.
+// Of two or more declarations with the ID, the match is the one whose span overlaps the
+// declared span. Without an overlap it is the first. A step that selects two or more
+// declarations returns the one whose span overlaps the declared span. Without an overlap the
+// search ends without a match. When no step matches, the match is the declaration at the
+// declared span. clangd lists no macro among its symbols and classifies a typedef of a struct
+// as the struct.
 func (e *Engine) declaring(
 	ctx context.Context,
 	found *finder,
@@ -364,7 +442,12 @@ func (e *Engine) declaring(
 	of sema.ID,
 	paths []source.Path,
 ) (sema.Symbol, document, bool, error) {
-	var qualified, nested, based candidates
+	declared := req.Declared
+	if declared.Path != "" && lang.Claims(string(declared.Path), e.declared.Extensions) {
+		return e.declaredAt(ctx, found, of, declared)
+	}
+
+	var exact, qualified, nested, based candidates
 	for _, p := range paths {
 		if err := ctx.Err(); err != nil {
 			return sema.Symbol{}, document{}, false, err
@@ -376,30 +459,78 @@ func (e *Engine) declaring(
 		if err != nil {
 			return sema.Symbol{}, document{}, false, err
 		}
-		unit := source.Path(e.declared.Namespace(string(p)))
-		for _, one := range kept.symbols {
-			switch {
-			case one.ID == of:
-				return one, kept.doc, true, nil
-			case one.ID.Name() == of.Name():
-				qualified.add(one, kept.doc)
-			case sema.NewID(e.declared.Language, unit, of.Name(), one.Kind) == of &&
-				dotted(one.ID.Name(), of.Name()):
-				nested.add(one, kept.doc)
-			case one.Name == of.Base():
-				based.add(one, kept.doc)
-			}
+		e.candidates(kept, of, &exact, &qualified, &nested, &based)
+		// The first declaration with the ID is the match, and no file after it is opened.
+		if len(exact.symbols) > 0 {
+			return exact.symbols[0], exact.docs[0], true, nil
 		}
 	}
-	for _, step := range []candidates{qualified, nested, based} {
+	one, doc, known := matched(source.Span{}, exact, qualified, nested, based)
+	return one, doc, known, nil
+}
+
+// declaredAt is [Engine.declaring] for a request that names the span of the declaration. It
+// reads the symbols of the file of declared alone, and returns the declaration at declared
+// when no symbol matches of.
+func (e *Engine) declaredAt(
+	ctx context.Context,
+	found *finder,
+	of sema.ID,
+	declared source.Span,
+) (sema.Symbol, document, bool, error) {
+	kept, err := found.opened(ctx, declared.Path)
+	if err != nil {
+		return sema.Symbol{}, document{}, false, err
+	}
+	if len(kept.doc.content) == 0 {
+		return sema.Symbol{}, document{}, false, nil
+	}
+	var exact, qualified, nested, based candidates
+	e.candidates(kept, of, &exact, &qualified, &nested, &based)
+	if one, doc, known := matched(declared, exact, qualified, nested, based); known {
+		return one, doc, true, nil
+	}
+	return sema.Symbol{ID: of, Name: of.Base(), Span: declared}, kept.doc, true, nil
+}
+
+// candidates adds each declaration of kept to the step of [Engine.declaring] that selects it
+// for of.
+func (e *Engine) candidates(kept outline, of sema.ID, exact, qualified, nested, based *candidates) {
+	unit := source.Path(e.declared.Namespace(string(kept.doc.path)))
+	for _, one := range kept.symbols {
+		switch {
+		case one.ID == of:
+			exact.add(one, kept.doc)
+		case one.ID.Name() == of.Name():
+			qualified.add(one, kept.doc)
+		case sema.NewID(e.declared.Language, unit, of.Name(), one.Kind) == of &&
+			dotted(one.ID.Name(), of.Name()):
+			nested.add(one, kept.doc)
+		case one.Name == of.Base():
+			based.add(one, kept.doc)
+		}
+	}
+}
+
+// matched returns the declaration that the steps of [Engine.declaring] select, in order, with
+// the document of its file, and reports whether a step selects one. declared is the span that
+// the request names, or the zero span.
+func matched(declared source.Span, exact candidates, steps ...candidates) (sema.Symbol, document, bool) {
+	if one, doc, known := exact.pick(declared); known {
+		return one, doc, true
+	}
+	if len(exact.symbols) > 0 {
+		return exact.symbols[0], exact.docs[0], true
+	}
+	for _, step := range steps {
+		if one, doc, known := step.pick(declared); known {
+			return one, doc, true
+		}
 		if len(step.symbols) > 1 {
 			break
 		}
-		if len(step.symbols) == 1 {
-			return step.symbols[0], step.docs[0], true, nil
-		}
 	}
-	return sema.Symbol{}, document{}, false, nil
+	return sema.Symbol{}, document{}, false
 }
 
 // candidates are the declarations that one step of [Engine.declaring] selects, with the
@@ -412,6 +543,34 @@ type candidates struct {
 // add appends one declaration and the document of its file.
 func (c *candidates) add(one sema.Symbol, doc document) {
 	c.symbols, c.docs = append(c.symbols, one), append(c.docs, doc)
+}
+
+// pick returns the only declaration of c, or the only one whose span overlaps declared, and
+// reports whether there is one.
+func (c candidates) pick(declared source.Span) (sema.Symbol, document, bool) {
+	if len(c.symbols) == 1 {
+		return c.symbols[0], c.docs[0], true
+	}
+	at := -1
+	for i, one := range c.symbols {
+		if !overlaps(one.Span, declared) {
+			continue
+		}
+		if at >= 0 {
+			return sema.Symbol{}, document{}, false
+		}
+		at = i
+	}
+	if at < 0 {
+		return sema.Symbol{}, document{}, false
+	}
+	return c.symbols[at], c.docs[at], true
+}
+
+// overlaps reports whether two spans of one file share a byte. The zero span overlaps nothing.
+func overlaps(a, b source.Span) bool {
+	return a.Path != "" && a.Path == b.Path &&
+		a.Start.Offset < b.End.Offset && b.Start.Offset < a.End.Offset
 }
 
 // dotted reports whether one of two qualified names ends in the other at a dot, as

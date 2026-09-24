@@ -45,7 +45,9 @@
 // # Nesting
 //
 // [Containers] computes the enclosing declaration of every symbol from its
-// span.
+// span. [Locals] reads the containers to report which declarations are inside
+// the body of a callable or the value of a binding. No kind separates a
+// variable at the top level of a file from a variable inside a function.
 //
 // # Dependency position
 //

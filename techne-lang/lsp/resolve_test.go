@@ -4,6 +4,7 @@
 package lsp_test
 
 import (
+	"path/filepath"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -36,6 +37,17 @@ func TestResolve(t *testing.T) {
 				assert.Equal(t, got.Items[0].Kind, sema.KindStruct, "the kind of Store")
 			})
 		}
+
+		t.Run("reads the declaration at a definition through the outline engine", func(t *testing.T) {
+			t.Parallel()
+			log := filepath.Join(t.TempDir(), "requests")
+			e := lsptest.Parsing(t, lsptest.Workspace(t, sample()),
+				lsptest.Server(lsptest.Default, lsptest.RecordRequests(log)))
+			got, err := e.Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
+			assert.NoError(t, err, "Resolve of Store")
+			assert.Equal(t, names(got.Items), []string{"Store"}, "the declarations that Store denotes")
+			assert.Equal(t, requested(t, log, "textDocument/documentSymbol"), 0, "the requests for symbols")
+		})
 
 		t.Run("returns nothing for a name without a definition", func(t *testing.T) {
 			t.Parallel()

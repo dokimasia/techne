@@ -83,14 +83,14 @@ func TestEngine(t *testing.T) {
 
 		t.Run("refuses a declaration without a language", func(t *testing.T) {
 			t.Parallel()
-			_, err := lsp.New(t.TempDir(), lang.Declaration{}, lsptest.Server(lsptest.Default))
+			_, err := lsp.New(t.TempDir(), lang.Declaration{}, lsptest.Server(lsptest.Default), nil)
 			assert.HasError(t, err, "New returns an error for an empty lang.Declaration")
 		})
 
 		t.Run("refuses a root that is a file", func(t *testing.T) {
 			t.Parallel()
 			file := filepath.Join(lsptest.Workspace(t, sample()), "a.fake")
-			_, err := lsp.New(file, lsptest.Declaration(), lsptest.Server(lsptest.Default))
+			_, err := lsp.New(file, lsptest.Declaration(), lsptest.Server(lsptest.Default), nil)
 			assert.HasError(t, err, "New returns an error for the root "+file)
 		})
 
@@ -98,7 +98,7 @@ func TestEngine(t *testing.T) {
 			t.Parallel()
 			server := lsptest.Server(lsptest.Default)
 			server.LanguageID = ""
-			_, err := lsp.New(t.TempDir(), lsptest.Declaration(), server)
+			_, err := lsp.New(t.TempDir(), lsptest.Declaration(), server, nil)
 			assert.HasError(t, err, "New returns the error of Server.Valid")
 		})
 
@@ -170,7 +170,7 @@ func TestEngine(t *testing.T) {
 
 		t.Run("names a program that is not on PATH", func(t *testing.T) {
 			t.Parallel()
-			e, err := lsp.New(t.TempDir(), lsptest.Declaration(), missing())
+			e, err := lsp.New(t.TempDir(), lsptest.Declaration(), missing(), nil)
 			assert.NoError(t, err, "New accepts a server that is not installed")
 			err = e.Available(t.Context())
 			assert.HasError(t, err, "Available for a missing program")

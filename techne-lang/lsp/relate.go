@@ -36,16 +36,21 @@ import (
 // Imports and their inverse have no request. Relate returns [engine.ErrDecline] for them, so
 // the tree-sitter engine reads them from the source.
 //
-// Relate finds the declaration in the files of the scope. For a scope without a file of the
-// language the result is skipped. A declaration that no file of the scope declares returns
-// [engine.ErrDecline]. A server that does not answer within [Server.Answering] returns
-// [engine.ErrDecline].
+// Relate finds the declaration in the file of [engine.Request.Declared] when the request names
+// one, and asks the server about the name in that span when no symbol of the server matches
+// the ID. Without a declared span it searches the files of the scope, and a declaration that no
+// file of the scope declares returns [engine.ErrDecline]. For a scope without a file of the
+// language the result is skipped. A server that does not answer within [Server.Answering]
+// returns [engine.ErrDecline].
 //
-// Relate reads the declarations of the files of the first [engine.Request.Limit] sites that
-// the server names, by path and position, and returns their relations. A caveat of
-// [trust.CaveatTruncated] counts the sites that the answer leaves out. An error lowers the
-// answer when it is on a line that writes the name of the declaration outside every site that
-// the server named.
+// Relate reads the declaration that contains each of the first [engine.Request.Limit] sites
+// that the server names, by path and position, and returns their relations. The outline engine
+// of the language reads those declarations when the engine has one, so the server opens only
+// the file of the declaration that the question is about. A site at the name of another
+// declaration with the ID is left out, such as the definition of a C function whose prototype
+// the question is about. A caveat of [trust.CaveatTruncated] counts the sites that the answer
+// leaves out. An error lowers the answer when it is on a line that writes the name of the
+// declaration outside every site that the server named.
 func (e *Engine) Relate(
 	ctx context.Context,
 	req engine.Request,
@@ -118,11 +123,13 @@ func (e *Engine) relating(
 	kept, left := limited(named, req.Limit)
 	out := make([]sema.Relation, 0, len(kept))
 	for _, one := range kept {
-		edge, err := e.relation(ctx, found, kind, one)
+		edge, declares, err := e.relation(ctx, found, kind, one, of)
 		if err != nil {
 			return engine.Result[sema.Relation]{}, err
 		}
-		out = append(out, edge)
+		if !declares {
+			out = append(out, edge)
+		}
 	}
 	slices.SortFunc(out, order)
 
@@ -212,45 +219,74 @@ func limited(sites []site, limit int) (kept, left []site) {
 	return sites[:limit], sites[limit:]
 }
 
-// relation returns the relation of kind that s names.
+// relation returns the relation of kind that s names, and reports whether s is a declaration
+// of subject in place of a use.
 //
 // The far end of a site with an item is the declaration at the selection range of the item,
 // or a declaration built from the item when its file has none there. The far end of a site
-// without an item is the innermost declaration that contains the site, or the file of the site
-// when no declaration contains it, as for an import.
-func (e *Engine) relation(ctx context.Context, found *finder, kind sema.RelationKind, s site) (sema.Relation, error) {
+// without an item is the innermost declaration that contains the site and that its file offers
+// to the rest of a program, or the file of the site when no such declaration contains it, as
+// for an import. The finder reads each file of a site without the server when the engine has
+// an outline engine.
+//
+// A reference at the name of a declaration with the ID subject is a declaration: a server
+// reports the definition of a C function among the references of its prototype.
+func (e *Engine) relation(
+	ctx context.Context,
+	found *finder,
+	kind sema.RelationKind,
+	s site,
+	subject sema.ID,
+) (sema.Relation, bool, error) {
 	var to sema.Symbol
 	if s.far != nil {
 		farPath := e.pathOf(s.far.URI)
 		declared, known, err := found.at(ctx, farPath, s.far.SelectionRange.Start)
 		if err != nil {
-			return sema.Relation{}, err
+			return sema.Relation{}, false, err
 		}
 		to = declared
 		if !known {
 			to = e.itemised(*s.far, farPath)
 		}
 		if !s.placed {
-			return sema.Relation{Kind: kind, To: to}, nil
+			return sema.Relation{Kind: kind, To: to}, false, nil
 		}
 	}
 
 	kept, err := found.file(ctx, s.path)
 	if err != nil {
-		return sema.Relation{}, err
+		return sema.Relation{}, false, err
 	}
 	at, via := siteOf(kept.doc, s.path, s.at)
+	declares := false
 	if s.far == nil {
-		within, known, err := found.at(ctx, s.path, s.at.Start)
+		inside, known, err := found.within(ctx, s.path, s.at.Start)
 		if err != nil {
-			return sema.Relation{}, err
+			return sema.Relation{}, false, err
 		}
-		to = within
+		to = inside
 		if !known {
 			to = e.fileOf(kept.doc, s.path, at)
 		}
+		declares = referencing(kind) && known && inside.ID == subject && named(kept.doc, inside) == at.Start.Offset
 	}
-	return sema.Relation{Kind: kind, To: to, At: at, Via: via}, nil
+	return sema.Relation{Kind: kind, To: to, At: at, Via: via}, declares, nil
+}
+
+// referencing reports whether kind is a direction of textDocument/references.
+func referencing(kind sema.RelationKind) bool {
+	return kind == sema.ReferencedBy || kind == sema.References
+}
+
+// named returns the offset in doc of the first occurrence of the name of d as a word in the
+// source of d, or -1 when the source does not contain it.
+func named(doc document, d sema.Symbol) int {
+	at := lang.Worded(doc.text(d.Span), d.Name)
+	if at < 0 {
+		return -1
+	}
+	return d.Span.Start.Offset + at
 }
 
 // located returns the site of a location whose far end is the declaration that contains it.

@@ -1,30 +1,25 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: MIT
 
-// Package engines builds the engines one language is served by.
+// Package engines builds the engines of one language from the declaration, the grammar and the
+// server that its module states.
 //
-// A language module states what it is — its declaration, its grammar,
-// its language server — and this assembles the engines that follow from
-// it. Ten modules would otherwise each carry the same eight lines, and a
-// rule in ten places is nine chances for them to disagree about which
-// engines a workspace supports.
+// A language module calls [Register] from its own Register function, so the rule that decides
+// the engines of a workspace is in one place for the ten modules.
 //
-// # What a workspace supports
+// # Engines of a workspace
 //
-// A parser, always: it reads through an [io/fs.FS] and needs nothing
-// installed.
+//   - The tree-sitter engine, over every workspace. It reads through an [io/fs.FS] and needs
+//     nothing installed.
+//   - The server engine, when the module declares a server and the workspace is on disk. A
+//     server opens files by name, so a workspace in memory has no server engine. The server
+//     engine reads the declarations of a file through the tree-sitter engine.
+//   - The engines that a module passes of its own, such as the type checker of Go.
 //
-// A language server, when the workspace is on disk and the module
-// declared one. A server is a process that opens files by name, so a
-// tree that was never written to disk has none. A server that is not
-// installed is still registered, and reports why through
-// [go.dokimi.dev/techne/lang/lsp.Engine.Available] — a language that
-// vanished with its server would read as a language techne cannot serve
-// at all.
+// A server that is not on PATH still has an engine. Its
+// [go.dokimi.dev/techne/lang/lsp.Engine.Available] names the program to install.
 //
 // # Dependency position
 //
-// Imports core, lang, and both engine packages. It is the one place that
-// names all of them, which is what keeps a language module from naming
-// any.
+// Imports the standard library, core/engine, lang, lang/lsp and lang/treesitter.
 package engines

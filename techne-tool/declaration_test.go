@@ -7,13 +7,14 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/tool"
 )
 
-// covering builds one symbol over a byte range of one file, which is
-// what decides where it sits in the tree.
+// covering returns an exported declaration of pkg/a.fx named name, of kind, whose span covers
+// the bytes from start to end, with a signature, documentation and source text.
 func covering(name string, kind sema.Kind, start, end int) sema.Symbol {
 	return sema.Symbol{
 		Name: name, Kind: kind, Language: "fixture",
@@ -29,240 +30,218 @@ func covering(name string, kind sema.Kind, start, end int) sema.Symbol {
 	}
 }
 
-// held finds one declaration by name at the top of an answer.
-func held(t *testing.T, in []tool.Declaration, name string) tool.Declaration {
+// hidden returns the declaration of [covering] as unexported.
+func hidden(name string, kind sema.Kind, start, end int) sema.Symbol {
+	out := covering(name, kind, start, end)
+	out.Visibility = sema.Unexported
+	return out
+}
+
+// getOf returns the declaration of in named Get, and fails the test when none is.
+func getOf(t *testing.T, in []tool.Declaration) tool.Declaration {
 	t.Helper()
 	for _, d := range in {
-		if d.Name == name {
+		if d.Name == "Get" {
 			return d
 		}
 	}
-	t.Fatalf("no declaration named %q", name)
+	t.Fatal("no declaration named Get")
 	return tool.Declaration{}
 }
 
-func TestDeclared(t *testing.T) {
-	t.Parallel()
-
-	t.Run("nesting", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("puts a declaration inside the one whose bytes cover it", func(t *testing.T) {
-			t.Parallel()
-			// Containment is read off the spans, so it holds for a
-			// grammar nobody has written a pattern for.
-			got := tool.Declared([]sema.Symbol{
-				covering("Store", sema.KindStruct, 0, 100),
-				covering("Name", sema.KindField, 10, 20),
-			}, tool.Names, nil)
-
-			assert.Length(t, got, 1, "a declaration inside another is not also beside it")
-			assert.Length(t, got[0].Members, 1, "what a declaration covers, it holds")
-			assert.Equal(t, got[0].Members[0].Name, "Name",
-				"the field is reached through the struct rather than pointed at from it")
-		})
-
-		t.Run("nests to any depth", func(t *testing.T) {
-			t.Parallel()
-			got := tool.Declared([]sema.Symbol{
-				covering("Outer", sema.KindStruct, 0, 100),
-				covering("Inner", sema.KindStruct, 10, 60),
-				covering("Leaf", sema.KindField, 20, 30),
-			}, tool.Names, nil)
-
-			assert.Length(t, got, 1, "only the outermost declaration is at the top")
-			assert.Equal(t, got[0].Members[0].Name, "Inner", "each sits in the nearest that covers it")
-			assert.Equal(t, got[0].Members[0].Members[0].Name, "Leaf",
-				"each sits in the nearest that covers it")
-		})
-
-		t.Run("leaves two declarations that only overlap side by side", func(t *testing.T) {
-			t.Parallel()
-			// Overlap is not nesting, and a tree built from it would not
-			// be one the source has.
-			got := tool.Declared([]sema.Symbol{
-				covering("First", sema.KindFunction, 0, 50),
-				covering("Second", sema.KindFunction, 40, 90),
-			}, tool.Names, nil)
-			assert.Length(t, got, 2, "containment is nesting; overlap is not")
-		})
-
-		t.Run("does not nest across files", func(t *testing.T) {
-			t.Parallel()
-			wide := covering("Wide", sema.KindStruct, 0, 100)
-			narrow := covering("Narrow", sema.KindStruct, 10, 20)
-			narrow.Span.Path = "pkg/b.fx"
-
-			got := tool.Declared([]sema.Symbol{wide, narrow}, tool.Names, nil)
-			assert.Length(t, got, 2, "an offset means nothing across two files")
-		})
-	})
-
-	t.Run("include", func(t *testing.T) {
-		t.Parallel()
-
-		binding := []sema.Symbol{
-			covering("Get", sema.KindFunction, 0, 100),
-			covering("id", sema.KindParameter, 5, 10),
-			covering("local", sema.KindVariable, 20, 30),
-			covering("fmt", sema.KindImport, 200, 210),
-			covering("Store", sema.KindStruct, 300, 400),
-		}
-
-		t.Run("holds what a file offers and nothing scoped inside a body", func(t *testing.T) {
-			t.Parallel()
-			// An outline answers what a file offers. A parameter belongs
-			// to a signature and a local binding leaves no scope, so
-			// reporting either as a peer of the function costs a caller
-			// context for a question it did not ask.
-			got := tool.Declared(binding, tool.Names, nil)
-			assert.Length(t, got, 2, "a function and a struct are what this file offers")
-			assert.Empty(t, held(t, got, "Get").Members,
-				"a parameter and a local are not members a caller can name")
-		})
-
-		t.Run("adds the imports when a caller asks", func(t *testing.T) {
-			t.Parallel()
-			got := tool.Declared(binding, tool.Names, []string{string(tool.IncludeImport)})
-			assert.Length(t, got, 3, "what a file brings into scope is a question of its own")
-			assert.Equal(t, held(t, got, "fmt").Kind, sema.KindImport,
-				"an import is asked for by name and comes back as one")
-		})
-
-		t.Run("adds the bindings in a signature when a caller asks", func(t *testing.T) {
-			t.Parallel()
-			got := tool.Declared(binding, tool.Names, []string{string(tool.IncludeParameter)})
-			assert.Length(t, held(t, got, "Get").Members, 1, "a parameter sits inside its callable")
-		})
-
-		t.Run("adds what is written inside a body when a caller asks", func(t *testing.T) {
-			t.Parallel()
-			got := tool.Declared(binding, tool.Names, []string{string(tool.IncludeLocal)})
-			assert.Length(t, held(t, got, "Get").Members, 1, "a local sits inside its callable")
-		})
-
-		t.Run("adds every binding at once", func(t *testing.T) {
-			t.Parallel()
-			got := tool.Declared(binding, tool.Names, []string{string(tool.IncludeAll)})
-			assert.Length(t, got, 3, "all is every name the file binds")
-			assert.Length(t, held(t, got, "Get").Members, 2, "all is every name the file binds")
-		})
-	})
-
-	t.Run("levels", func(t *testing.T) {
-		t.Parallel()
-		one := []sema.Symbol{covering("Store", sema.KindStruct, 0, 100)}
-
-		t.Run("names carry where a declaration is and no more", func(t *testing.T) {
-			t.Parallel()
-			got := tool.Declared(one, tool.Names, nil)[0]
-			assert.NotEmpty(t, got.Name, "a level a caller navigates by carries the line")
-			assert.True(t, got.Line > 0, "a line is counted from one, as an editor counts")
-			assert.Empty(t, got.Signature, "names is the level below signatures")
-			assert.Empty(t, got.Doc, "names is the level below docs")
-			assert.Nil(t, got.Span, "a span is what the write path slices, not what a reader navigates by")
-		})
-
-		t.Run("signatures carry how to call it and nothing of how it works", func(t *testing.T) {
-			t.Parallel()
-			got := tool.Declared(one, tool.Signatures, nil)[0]
-			assert.NotEmpty(t, got.Signature, "this is the level an outline replaces reading the file at")
-			assert.Empty(t, got.Doc, "signatures is the level below docs")
-			assert.Empty(t, got.Snippet, "signatures holds nothing of how a declaration works")
-		})
-
-		t.Run("docs adds the documentation", func(t *testing.T) {
-			t.Parallel()
-			got := tool.Declared(one, tool.Docs, nil)[0]
-			assert.NotEmpty(t, got.Doc, "docs is the level that answers what a declaration is for")
-			assert.Empty(t, got.Snippet, "docs is the level below source")
-		})
-
-		t.Run("source adds the text and the bytes it covers", func(t *testing.T) {
-			t.Parallel()
-			got := tool.Declared(one, tool.Source, nil)[0]
-			assert.NotEmpty(t, got.Snippet, "source is the level that answers what a declaration does")
-			assert.NotNil(t, got.Span, "a caller slicing bytes needs the offsets, and only there")
-		})
-
-		t.Run("state a visibility only where it is not the common answer", func(t *testing.T) {
-			t.Parallel()
-			// A request returns exported declarations unless it asked
-			// otherwise, so saying so on each is a word carrying nothing.
-			exported := tool.Declared(one, tool.Signatures, nil)[0]
-			assert.Equal(t, exported.Visibility, sema.VisibilityUnknown,
-				"the common answer is left to the scope rather than repeated per item")
-
-			hidden := covering("store", sema.KindStruct, 0, 100)
-			hidden.Visibility = sema.Unexported
-			got := tool.Declared([]sema.Symbol{hidden}, tool.Signatures, nil)[0]
-			assert.Equal(t, got.Visibility, sema.Unexported,
-				"a declaration that does not leave its unit says so")
-		})
-	})
-
-	t.Run("an answer that found nothing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("is an empty list rather than nothing at all", func(t *testing.T) {
-			t.Parallel()
-			got := tool.Declared(nil, tool.Names, nil)
-			assert.NotNil(t, got, "a caller reads an absent list and an empty one the same way only by accident")
-			assert.Length(t, got, 0, "nothing was found")
-		})
-	})
-}
-
-// hidden is a declaration not visible outside its unit.
-func hidden(name string, kind sema.Kind, start, end int) sema.Symbol {
-	held := covering(name, kind, start, end)
-	held.Visibility = sema.Unexported
-	return held
-}
-
-func TestNarrowAcrossDetail(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Private", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("is honoured at every level, including the cheapest", func(t *testing.T) {
-			t.Parallel()
-			// Visibility is what the filter reads, and the cheapest level
-			// once returned before setting it: every other level narrowed
-			// and that one answered with the declarations a caller had
-			// asked it to leave out. The level an agent reaches for first
-			// was the one that leaked.
-			items := []sema.Symbol{
-				covering("Store", sema.KindStruct, 0, 100),
-				hidden("helper", sema.KindFunction, 200, 300),
-			}
-			for _, level := range tool.Levels() {
-				got := tool.Narrow{}.Apply(tool.Declared(items, level, nil))
-				assert.Equal(t, names(got), []string{"Store"},
-					"the unexported declaration is left out at "+string(level))
-			}
-		})
-
-		t.Run("keeps what it was asked for at every level", func(t *testing.T) {
-			t.Parallel()
-			items := []sema.Symbol{
-				covering("Store", sema.KindStruct, 0, 100),
-				hidden("helper", sema.KindFunction, 200, 300),
-			}
-			for _, level := range tool.Levels() {
-				got := tool.Narrow{Private: true}.Apply(tool.Declared(items, level, nil))
-				assert.Length(t, got, 2, "asked for both, at "+string(level))
-			}
-		})
-	})
-}
-
-// names is what an answer declared, at the top level.
+// names returns the name of each declaration of in, in order.
 func names(in []tool.Declaration) []string {
 	out := make([]string, 0, len(in))
 	for _, one := range in {
 		out = append(out, one.Name)
 	}
 	return out
+}
+
+func TestDeclaration(t *testing.T) {
+	t.Parallel()
+
+	bindings := []sema.Symbol{
+		covering("Get", sema.KindFunction, 0, 100),
+		covering("id", sema.KindParameter, 5, 10),
+		covering("local", sema.KindVariable, 20, 30),
+		covering("fmt", sema.KindImport, 200, 210),
+		covering("Store", sema.KindStruct, 300, 400),
+	}
+	one := []sema.Symbol{covering("Store", sema.KindStruct, 0, 100)}
+
+	t.Run("Declared", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("nests a declaration under the declaration that covers it", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Declared([]sema.Symbol{
+				covering("Store", sema.KindStruct, 0, 100),
+				covering("Name", sema.KindField, 10, 20),
+			}, tool.Names, 0)
+			assert.Equal(t, names(got), []string{"Store"}, "the declarations at the top level")
+			assert.Equal(t, names(got[0].Members), []string{"Name"}, "the members of Store")
+		})
+
+		t.Run("nests a declaration under the smallest declaration that covers it", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Declared([]sema.Symbol{
+				covering("Outer", sema.KindStruct, 0, 100),
+				covering("Inner", sema.KindStruct, 10, 60),
+				covering("Leaf", sema.KindField, 20, 30),
+			}, tool.Names, 0)
+			assert.Equal(t, names(got[0].Members), []string{"Inner"}, "the members of Outer")
+			assert.Equal(t, names(got[0].Members[0].Members), []string{"Leaf"}, "the members of Inner")
+		})
+
+		t.Run("leaves two overlapping declarations at one level", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Declared([]sema.Symbol{
+				covering("First", sema.KindFunction, 0, 50),
+				covering("Second", sema.KindFunction, 40, 90),
+			}, tool.Names, 0)
+			assert.Equal(t, names(got), []string{"First", "Second"}, "the declarations at the top level")
+		})
+
+		t.Run("nests no declaration under a declaration of another file", func(t *testing.T) {
+			t.Parallel()
+			narrow := covering("Narrow", sema.KindStruct, 10, 20)
+			narrow.Span.Path = "pkg/b.fx"
+			got := tool.Declared([]sema.Symbol{covering("Wide", sema.KindStruct, 0, 100), narrow}, tool.Names, 0)
+			assert.Equal(t, names(got), []string{"Wide", "Narrow"}, "the declarations at the top level")
+		})
+
+		t.Run("leaves out the bindings without include", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Declared(bindings, tool.Names, 0)
+			assert.Equal(t, names(got), []string{"Get", "Store"}, "the declarations at the top level")
+			assert.Empty(t, getOf(t, got).Members, "the members of Get")
+		})
+
+		t.Run("returns the imports with BindImports", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Declared(bindings, tool.Names, engine.BindImports)
+			assert.Equal(t, names(got), []string{"Get", "fmt", "Store"}, "the declarations at the top level")
+		})
+
+		t.Run("returns the parameters with BindParameters", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Declared(bindings, tool.Names, engine.BindParameters)
+			assert.Equal(t, names(getOf(t, got).Members), []string{"id"}, "the members of Get")
+		})
+
+		t.Run("returns the local declarations with BindLocals", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Declared(bindings, tool.Names, engine.BindLocals)
+			assert.Equal(t, names(getOf(t, got).Members), []string{"local"}, "the members of Get")
+		})
+
+		t.Run("returns every binding with BindAll", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Declared(bindings, tool.Names, engine.BindAll)
+			assert.Equal(t, names(got), []string{"Get", "fmt", "Store"}, "the declarations at the top level")
+			assert.Equal(t, names(getOf(t, got).Members), []string{"id", "local"}, "the members of Get")
+		})
+
+		t.Run("returns the name and the line at Names", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Declared(one, tool.Names, 0)[0]
+			assert.Equal(t, got.Name, "Store", "the name")
+			assert.Equal(t, got.Line, 1, "the line counted from one")
+			assert.Empty(t, got.Signature, "the signature")
+			assert.Nil(t, got.Span, "the span")
+		})
+
+		t.Run("adds the signature at Signatures", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Declared(one, tool.Signatures, 0)[0]
+			assert.Equal(t, got.Signature, "signature of Store", "the signature")
+			assert.Empty(t, got.Doc, "the documentation")
+		})
+
+		t.Run("adds the documentation at Docs", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Declared(one, tool.Docs, 0)[0]
+			assert.Equal(t, got.Doc, "what Store is for.", "the documentation")
+			assert.Empty(t, got.Snippet, "the source text")
+		})
+
+		t.Run("adds the source text and the span at Source", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Declared(one, tool.Source, 0)[0]
+			assert.Equal(t, got.Snippet, "the whole of Store", "the source text")
+			assert.NotNil(t, got.Span, "the span")
+		})
+
+		t.Run("states the visibility of an unexported declaration alone", func(t *testing.T) {
+			t.Parallel()
+			exported := tool.Declared(one, tool.Signatures, 0)[0]
+			assert.Equal(t, exported.Visibility, sema.VisibilityUnknown, "the visibility of an exported declaration")
+			unexported := tool.Declared([]sema.Symbol{hidden("store", sema.KindStruct, 0, 100)}, tool.Signatures, 0)[0]
+			assert.Equal(t, unexported.Visibility, sema.Unexported, "the visibility of an unexported declaration")
+		})
+
+		t.Run("returns an empty list for no declarations", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Declared(nil, tool.Names, 0)
+			assert.NotNil(t, got, "the list of declarations")
+			assert.Length(t, got, 0, "the declarations")
+		})
+	})
+
+	t.Run("Apply", func(t *testing.T) {
+		t.Parallel()
+
+		mixed := []sema.Symbol{
+			covering("Store", sema.KindStruct, 0, 100),
+			hidden("helper", sema.KindFunction, 200, 300),
+		}
+
+		t.Run("leaves out an unexported declaration at every level", func(t *testing.T) {
+			t.Parallel()
+			for _, level := range tool.Levels() {
+				got := tool.Narrow{}.Apply(tool.Declared(mixed, level, 0))
+				assert.Equal(t, names(got), []string{"Store"}, "the declarations at "+string(level))
+			}
+		})
+
+		t.Run("keeps an unexported declaration with Private at every level", func(t *testing.T) {
+			t.Parallel()
+			for _, level := range tool.Levels() {
+				got := tool.Narrow{Private: true}.Apply(tool.Declared(mixed, level, 0))
+				assert.Equal(t, names(got), []string{"Store", "helper"}, "the declarations at "+string(level))
+			}
+		})
+
+		t.Run("keeps a member of a declaration that it leaves out", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Narrow{Kind: sema.KindField}.Apply(tool.Declared([]sema.Symbol{
+				covering("Store", sema.KindStruct, 0, 100),
+				covering("size", sema.KindField, 10, 20),
+				covering("Get", sema.KindMethod, 30, 40),
+			}, tool.Names, 0))
+			assert.Equal(t, names(got), []string{"Store"}, "the declarations at the top level")
+			assert.Equal(t, names(got[0].Members), []string{"size"}, "the members of Store")
+		})
+
+		t.Run("keeps a declaration by its name with all its members", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Narrow{Names: []string{"Store"}}.Apply(tool.Declared([]sema.Symbol{
+				covering("Store", sema.KindStruct, 0, 100),
+				covering("size", sema.KindField, 10, 20),
+				covering("Other", sema.KindStruct, 200, 300),
+			}, tool.Names, 0))
+			assert.Equal(t, names(got), []string{"Store"}, "the declarations at the top level")
+			assert.Equal(t, names(got[0].Members), []string{"size"}, "the members of Store")
+		})
+
+		t.Run("keeps the declarations of a prefix", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Narrow{Prefix: "Sto"}.Apply(tool.Declared([]sema.Symbol{
+				covering("Store", sema.KindStruct, 0, 100),
+				covering("Other", sema.KindStruct, 200, 300),
+			}, tool.Names, 0))
+			assert.Equal(t, names(got), []string{"Store"}, "the declarations that start with Sto")
+		})
+	})
 }

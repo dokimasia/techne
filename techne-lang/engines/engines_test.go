@@ -19,15 +19,10 @@ import (
 	"go.dokimi.dev/techne/lang/treesitter"
 )
 
-// A grammar belongs to one language and lives in that language's module,
-// so this one cannot build a parser and cannot reach the paths that need
-// one. What it settles is the decision this package exists to make —
-// which server a workspace supports — and every way building refuses.
-// That a real parser and a real server register together is pinned by
-// each language module, over its own grammar.
+// The grammar of a language is in the module of that language, so these tests build no
+// tree-sitter engine. Each language module tests its engines over its own grammar.
 
-// declared is a language with one extension and nothing surprising about
-// it.
+// declared returns the declaration of a language fake with the extension .fake.
 func declared() lang.Declaration {
 	return lang.Declaration{
 		Language:   "fake",
@@ -39,8 +34,7 @@ func declared() lang.Declaration {
 	}
 }
 
-// served is a declaration for a server that is not on this machine,
-// which is the case every language module has to work in.
+// served returns the declaration of a server whose program is not on PATH.
 func served() lsp.Server {
 	return lsp.Server{
 		Name:       "fake-server",
@@ -50,125 +44,97 @@ func served() lsp.Server {
 	}
 }
 
-// onDisk is a workspace a process can open files in.
+// onDisk returns a workspace in a new temporary directory with the file a.fake.
 func onDisk(t *testing.T) lang.Workspace {
 	t.Helper()
 	dir := t.TempDir()
 	assert.NoError(t, os.WriteFile(filepath.Join(dir, "a.fake"), []byte("{}"), 0o644),
-		"the case can prepare the workspace")
+		"the test writes a.fake")
 	return lang.Workspace{FS: os.DirFS(dir), Root: dir}
 }
 
-// nowhere is a workspace that was never written to disk.
-func nowhere() lang.Workspace { return lang.Workspace{FS: fstest.MapFS{}} }
+// inMemory returns a workspace that is not on disk.
+func inMemory() lang.Workspace { return lang.Workspace{FS: fstest.MapFS{}} }
 
-func TestServing(t *testing.T) {
+func TestEngines(t *testing.T) {
 	t.Parallel()
 
 	t.Run("Serving", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("builds a server for a workspace on disk", func(t *testing.T) {
+		t.Run("returns the server engine of a workspace on disk", func(t *testing.T) {
 			t.Parallel()
-			built, has, err := engines.Serving(onDisk(t), declared(), served())
-
-			assert.NoError(t, err, "a declared server builds over a directory")
-			assert.True(t, has, "and the workspace supports one")
-			assert.Equal(t, built.Name(), "fake-server", "named as the module declared it")
-			assert.Equal(t, string(built.Language()), "fake", "answering about that language")
+			built, has, err := engines.Serving(onDisk(t), declared(), served(), nil)
+			assert.NoError(t, err, "the error of Serving")
+			assert.True(t, has, "the report of a server engine")
+			assert.Equal(t, built.Name(), "fake-server", "the name of the engine")
+			assert.Equal(t, string(built.Language()), "fake", "the language of the engine")
 		})
 
-		t.Run("builds one that is not installed", func(t *testing.T) {
+		t.Run("returns an engine for a server that is not on PATH", func(t *testing.T) {
 			t.Parallel()
-			// Told nothing, a caller concludes the language cannot be
-			// served at all. Told the server is missing, it knows what to
-			// install, which is a different problem and a fixable one.
-			built, has, err := engines.Serving(onDisk(t), declared(), served())
-			assert.NoError(t, err, "a missing server is still declared")
-			assert.True(t, has, "and still registered")
-
-			gate, reports := built.(engine.Available)
-			assert.True(t, reports, "it reports on itself")
-			assert.HasError(t, gate.Available(t.Context()), "saying it cannot run")
+			built, has, err := engines.Serving(onDisk(t), declared(), served(), nil)
+			assert.NoError(t, err, "the error of Serving")
+			assert.True(t, has, "the report of a server engine")
+			reported, available := built.(engine.Available)
+			assert.True(t, available, "the engine implements engine.Available")
+			err = reported.Available(t.Context())
+			assert.HasError(t, err, "the error of Available")
+			assert.Contains(t, err.Error(), "techne-no-such-language-server", "the error of Available")
 		})
 
-		t.Run("builds none where nothing can open a file by name", func(t *testing.T) {
+		t.Run("returns no engine for a workspace in memory", func(t *testing.T) {
 			t.Parallel()
-			// A server pointed at a tree that was never written opens
-			// nothing and is answered about nothing, and being answered
-			// about nothing is what this project must never report as an
-			// answer.
-			_, has, err := engines.Serving(nowhere(), declared(), served())
-
-			assert.NoError(t, err, "a workspace that is nowhere is not a fault")
-			assert.False(t, has, "it simply supports no server")
+			_, has, err := engines.Serving(inMemory(), declared(), served(), nil)
+			assert.NoError(t, err, "the error of Serving")
+			assert.False(t, has, "the report of a server engine")
 		})
 
-		t.Run("builds none for a language that declared none", func(t *testing.T) {
+		t.Run("returns no engine for a declaration without a server", func(t *testing.T) {
 			t.Parallel()
-			_, has, err := engines.Serving(onDisk(t), declared(), lsp.Server{})
-
-			assert.NoError(t, err, "a language with no server declaration is not a fault")
-			assert.False(t, has, "and gets no server engine")
+			_, has, err := engines.Serving(onDisk(t), declared(), lsp.Server{}, nil)
+			assert.NoError(t, err, "the error of Serving")
+			assert.False(t, has, "the report of a server engine")
 		})
 
-		t.Run("refuses a declaration a server cannot be run from", func(t *testing.T) {
+		t.Run("refuses a server without a language identifier", func(t *testing.T) {
 			t.Parallel()
-			// Caught where a module registers rather than on the first
-			// call: a document opened under an empty identity is answered
-			// about nothing, and the answer reads like an empty file.
 			broken := served()
 			broken.LanguageID = ""
-
-			_, _, err := engines.Serving(onDisk(t), declared(), broken)
-			assert.HasError(t, err, "an incomplete declaration is refused at registration")
-			assert.Contains(t, err.Error(), "language id", "and the reason names what is missing")
+			_, _, err := engines.Serving(onDisk(t), declared(), broken, nil)
+			assert.HasError(t, err, "the error of Serving")
+			assert.Contains(t, err.Error(), "language id", "the error of Serving")
 		})
 	})
-}
-
-func TestFor(t *testing.T) {
-	t.Parallel()
 
 	t.Run("For", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("refuses a declaration the parser cannot serve", func(t *testing.T) {
+		t.Run("refuses a declaration without an extension", func(t *testing.T) {
 			t.Parallel()
-			// Nothing is registered when any part fails, so a language
-			// cannot end up in a catalogue with half its engines.
 			broken := declared()
 			broken.Extensions = nil
-
 			_, err := engines.For(onDisk(t), broken, treesitter.Grammar{}, served())
-			assert.HasError(t, err, "a declaration with no extension routes no path")
+			assert.HasError(t, err, "the error of For")
 		})
 
-		t.Run("refuses a language with no grammar", func(t *testing.T) {
+		t.Run("refuses a language without a grammar", func(t *testing.T) {
 			t.Parallel()
-			_, err := engines.For(nowhere(), declared(), treesitter.Grammar{}, lsp.Server{})
-			assert.HasError(t, err, "a parser is what every workspace gets and needs a grammar")
+			_, err := engines.For(inMemory(), declared(), treesitter.Grammar{}, lsp.Server{})
+			assert.HasError(t, err, "the error of For")
 		})
 	})
-}
-
-func TestRegister(t *testing.T) {
-	t.Parallel()
 
 	t.Run("Register", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("registers nothing when building refuses", func(t *testing.T) {
+		t.Run("registers nothing when an engine fails to build", func(t *testing.T) {
 			t.Parallel()
-			// A rejected module must leave no engines behind, or a
-			// catalogue holds one for a language nothing routes to.
 			r, c := lang.NewRegistry(), engine.NewCatalog()
-			assert.HasError(t,
-				engines.Register(onDisk(t), r, c, declared(), treesitter.Grammar{}, served()),
-				"a language with no grammar has no parser and is refused")
-
-			assert.Empty(t, r.Languages(), "the registry is untouched")
-			assert.Empty(t, c.Capabilities(t.Context()), "as is the catalogue")
+			err := engines.Register(onDisk(t), r, c, declared(), treesitter.Grammar{}, served())
+			assert.HasError(t, err, "the error of Register")
+			assert.Empty(t, r.Languages(), "the languages of the registry")
+			assert.Empty(t, c.Capabilities(t.Context()), "the capabilities of the catalogue")
 		})
 	})
 }

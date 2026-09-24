@@ -25,7 +25,8 @@ import (
 // [engine.ErrDecline], because a position belongs to one file.
 //
 // A location contains no name and no kind. Resolve reads the declarations of each file that a
-// location names and returns the innermost declaration at the location. An error on the line of
+// location names, through the outline engine of the language when the engine has one, and
+// returns the innermost declaration at the location. An error on the line of
 // the position lowers the answer, and so does any error of the project when the answer is
 // empty. An empty answer is partial, because a server binds nothing inside a macro, for
 // dynamic dispatch and for a name that nothing declares alike. A server that does not answer

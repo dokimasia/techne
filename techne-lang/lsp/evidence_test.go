@@ -25,7 +25,7 @@ func projects(t *testing.T) *lsp.Engine {
 	})
 	d := lsptest.Declaration()
 	d.Manifests = []string{"x.manifest"}
-	e, err := lsp.New(root, d, lsptest.Server(lsptest.PushesOne))
+	e, err := lsp.New(root, d, lsptest.Server(lsptest.PushesOne), nil)
 	assert.NoError(t, err, "New over two projects")
 	lsptest.Cleanup(t, e)
 	return e

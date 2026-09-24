@@ -12,36 +12,29 @@ import (
 	"go.dokimi.dev/techne/core/source"
 )
 
-// The services a tool is given, one interface per question asked.
+// The services that the tools take, one interface per question. A tool takes the interfaces
+// that it calls and no other, and the package that implements them does not export them.
 //
-// A tool takes only what it uses, so a change to the read service that
-// no tool calls cannot break a tool's tests. They are declared here, in
-// the package that consumes them, rather than exported by the packages
-// that implement them: what a consumer needs is the consumer's to state.
-//
-// The names mirror core/engine's ports because they are the same
-// questions one level up. What tells them apart is the answer: an engine
-// returns a [engine.Result], which carries what it found and nothing it
-// could use to overstate itself, and a service returns an
-// [engine.Answer], which carries the evidence a service stamped on it.
+// The read interfaces return an [engine.Answer], which a service publishes with the evidence
+// of the engine that served it. The ports of core/engine have the same names and return an
+// [engine.Result].
 type (
-	// Outliner reports what a scope declares.
+	// Outliner returns the declarations of a scope.
 	Outliner interface {
 		Outline(ctx context.Context, req engine.Request) (engine.Answer[sema.Symbol], error)
 	}
 
-	// Searcher reports which declarations match a query.
+	// Searcher returns the declarations of a scope that match a query.
 	Searcher interface {
 		Search(ctx context.Context, req engine.Request, q engine.Query) (engine.Answer[sema.Symbol], error)
 	}
 
-	// Resolver reports what the name at a position denotes.
+	// Resolver returns the declarations that the name at a position denotes.
 	Resolver interface {
 		Resolve(ctx context.Context, req engine.Request, at source.Position) (engine.Answer[sema.Symbol], error)
 	}
 
-	// Relator reports how a declaration connects to the rest, in one
-	// direction.
+	// Relator returns the relations of one kind from the declaration with the ID of.
 	Relator interface {
 		Relate(
 			ctx context.Context,
@@ -51,24 +44,22 @@ type (
 		) (engine.Answer[sema.Relation], error)
 	}
 
-	// Verifier reports what a language's own gate says about a scope.
+	// Verifier returns the findings of the checks of a language over a scope.
 	Verifier interface {
 		Verify(ctx context.Context, req engine.Request, suites []string) (engine.Answer[edit.Finding], error)
 	}
 
-	// Catalogue reports what the system can answer, per language and
-	// role.
+	// Catalogue returns the roles that each engine serves.
 	Catalogue interface {
 		Capabilities(ctx context.Context) []engine.Capability
 	}
 
-	// Writer applies an operation to the workspace, or reports what
-	// applying it would do.
+	// Writer plans, checks and writes an operation, or plans and checks it for a dry run.
 	Writer interface {
 		Apply(ctx context.Context, req edit.Request) (edit.Outcome, error)
 	}
 
-	// Committer applies a change a preview already computed.
+	// Committer writes the change of a preview.
 	Committer interface {
 		Commit(ctx context.Context, handle string) (edit.Outcome, error)
 	}

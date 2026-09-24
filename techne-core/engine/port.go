@@ -34,6 +34,7 @@ type Resolver interface {
 // Relator returns the relations of one kind from a declaration. The engine
 // returns them in the direction that kind names, whichever direction it
 // stores, and may stop at the [Request.Limit] of the caller.
+// [Request.Declared] is the span at which the caller found the declaration.
 type Relator interface {
 	Relate(ctx context.Context, req Request, of sema.ID, kind sema.RelationKind) (Result[sema.Relation], error)
 }

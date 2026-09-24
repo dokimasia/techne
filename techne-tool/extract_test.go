@@ -13,90 +13,70 @@ import (
 	"go.dokimi.dev/techne/tool"
 )
 
+// extracted runs the extract.function tool over writer with input, and decodes the output.
+func extracted(t *testing.T, writer *recorder, input string) tool.Written {
+	t.Helper()
+	built, err := tool.Extract(writer)
+	assert.NoError(t, err, "the error of Extract")
+	result, err := built.Execute(t.Context(), json.RawMessage(input))
+	assert.NoError(t, err, "the error of Execute")
+	var out tool.Written
+	assert.NoError(t, json.Unmarshal(result.Payload, &out), "the decoding of the output")
+	return out
+}
+
 func TestExtract(t *testing.T) {
 	t.Parallel()
 
 	t.Run("Extract", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("names the built-in it replaces", func(t *testing.T) {
+		t.Run("starts its description with PREFER OVER", func(t *testing.T) {
 			t.Parallel()
-			assert.HasPrefix(t, extracting(t, &recorder{}).Description(), "PREFER OVER ",
-				"an agent cuts the lines out by hand unless told why not to")
+			built, err := tool.Extract(&recorder{})
+			assert.NoError(t, err, "the error of Extract")
+			assert.HasPrefix(t, built.Description(), "PREFER OVER ", "the description")
 		})
 
-		t.Run("takes the lines as an editor numbers them", func(t *testing.T) {
+		t.Run("points the write path at the lines counted from zero", func(t *testing.T) {
 			t.Parallel()
-			// Counting from one, and including the last: a caller
-			// selecting lines 10 to 12 means three lines.
 			writer := &recorder{}
-			got := extracted(t, writer,
-				`{"path":"a.fx","first_line":10,"last_line":12,"new_name":"parsed"}`)
-
-			assert.False(t, got.Failed(), "a selection an editor could make is served")
-			assert.Equal(t, writer.asked.Target.Kind, edit.TargetSpan, "the target is the selection")
-			assert.Equal(t, writer.asked.Target.Span.Start.Line, 9, "counted from zero inside")
-			assert.Equal(t, writer.asked.Target.Span.End.Line, 11, "at both ends")
+			got := extracted(t, writer, `{"path":"a.fx","first_line":10,"last_line":12,"new_name":"parsed"}`)
+			assert.False(t, got.Failed(), "the failure of the output")
+			assert.Equal(t, writer.asked.Target.Kind, edit.TargetSpan, "the kind of the target")
+			assert.Equal(t, writer.asked.Target.Span.Start.Line, 9, "the first line of the target")
+			assert.Equal(t, writer.asked.Target.Span.End.Line, 11, "the last line of the target")
 		})
 
-		t.Run("sends only what the operation declares", func(t *testing.T) {
+		t.Run("sends only the arguments that the operation declares", func(t *testing.T) {
 			t.Parallel()
-			// An argument the spec does not declare is refused before
-			// any language is consulted, so a tool that offers a field
-			// and passes it on advertises something that always fails.
-			// extract.function took a receiver this way, and every call
-			// naming one was refused for naming it.
 			writer := &recorder{}
 			extracted(t, writer, `{"path":"a.fx","first_line":1,"last_line":2,"new_name":"parsed"}`)
-
 			spec, declared := edit.SpecFor(edit.ExtractFunction)
-			assert.True(t, declared, "the operation is in the catalogue")
+			assert.True(t, declared, "the spec of extract.function")
 			for key := range writer.asked.Args {
-				assert.True(t,
-					slices.Contains(spec.Required, key) || slices.Contains(spec.Optional, key),
-					"every argument sent is one the operation reads: "+string(key))
+				assert.True(t, slices.Contains(spec.Required, key) || slices.Contains(spec.Optional, key),
+					"the argument "+string(key))
 			}
 		})
 
-		t.Run("refuses a selection counted from zero", func(t *testing.T) {
+		t.Run("refuses a first line of zero", func(t *testing.T) {
 			t.Parallel()
-			got := extracted(t, &recorder{},
-				`{"path":"a.fx","first_line":0,"last_line":2,"new_name":"parsed"}`)
-			assert.True(t, got.Failed(), "lines count from one")
-			assert.Contains(t, got.Error.Reason, "count from one", "and the caller is told which way")
+			got := extracted(t, &recorder{}, `{"path":"a.fx","first_line":0,"last_line":2,"new_name":"parsed"}`)
+			assert.True(t, got.Failed(), "the failure of the output")
+			assert.Contains(t, got.Error.Reason, "count from one", "the reason of the failure")
 		})
 
-		t.Run("refuses a selection that ends before it starts", func(t *testing.T) {
+		t.Run("refuses a last line before the first line", func(t *testing.T) {
 			t.Parallel()
-			got := extracted(t, &recorder{},
-				`{"path":"a.fx","first_line":12,"last_line":10,"new_name":"parsed"}`)
-			assert.True(t, got.Failed(), "an empty selection holds nothing to extract")
+			got := extracted(t, &recorder{}, `{"path":"a.fx","first_line":12,"last_line":10,"new_name":"parsed"}`)
+			assert.True(t, got.Failed(), "the failure of the output")
 		})
 
-		t.Run("refuses a call with nothing to call the function", func(t *testing.T) {
+		t.Run("refuses an empty name", func(t *testing.T) {
 			t.Parallel()
-			got := extracted(t, &recorder{},
-				`{"path":"a.fx","first_line":1,"last_line":2,"new_name":""}`)
-			assert.True(t, got.Failed(), "a function needs a name")
+			got := extracted(t, &recorder{}, `{"path":"a.fx","first_line":1,"last_line":2,"new_name":""}`)
+			assert.True(t, got.Failed(), "the failure of the output")
 		})
 	})
-}
-
-// extracting builds the extract tool.
-func extracting(t *testing.T, writer *recorder) tool.Tool {
-	t.Helper()
-	built, err := tool.Extract(writer)
-	assert.NoError(t, err, "the extract tool builds from a write path alone")
-	return built
-}
-
-// extracted runs it and decodes what came back.
-func extracted(t *testing.T, writer *recorder, input string) tool.Written {
-	t.Helper()
-	result, err := extracting(t, writer).Execute(t.Context(), json.RawMessage(input))
-	assert.NoError(t, err, "a well-formed call reaches the service")
-
-	var out tool.Written
-	assert.NoError(t, json.Unmarshal(result.Payload, &out), "the answer is JSON a caller can read")
-	return out
 }

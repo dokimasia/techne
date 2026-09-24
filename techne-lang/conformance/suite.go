@@ -393,7 +393,7 @@ func Run(t *testing.T, s Suite) {
 				t.Skip("the fixture declares nothing")
 			}
 			wanted := s.Declares[0]
-			got := search(t, e, engine.Query{Text: wanted.Name, Private: true})
+			got := search(t, e, engine.Query{Text: wanted.Name, Private: true, Include: engine.BindAll})
 			assert.True(t, found(got.Items, wanted), wanted.Name)
 		})
 
@@ -403,7 +403,7 @@ func Run(t *testing.T, s Suite) {
 				t.Skip("the fixture declares nothing")
 			}
 			wanted := s.Declares[0]
-			got := search(t, e, engine.Query{Text: wanted.Name, Private: true})
+			got := search(t, e, engine.Query{Text: wanted.Name, Private: true, Include: engine.BindAll})
 			assert.NotEmpty(t, got.Items, "items")
 			assert.Equal(t, got.Items[0].Name, wanted.Name, "first item")
 		})
@@ -415,8 +415,36 @@ func Run(t *testing.T, s Suite) {
 				t.Skip("the fixture declares nothing unexported")
 			}
 			wanted := s.Declares[hidden]
-			got := search(t, e, engine.Query{Text: wanted.Name})
+			got := search(t, e, engine.Query{Text: wanted.Name, Include: engine.BindAll})
 			assert.Empty(t, every(got.Items, wanted), "the unexported "+wanted.Kind.String()+" "+wanted.Name)
+		})
+
+		offered := offering(everything.Items)
+
+		t.Run("returns the declarations that a file offers without Include", func(t *testing.T) {
+			t.Parallel()
+			got := search(t, e, engine.Query{Private: true})
+			assert.Equal(t, places(got.Items), places(offered), "the declarations that the files offer")
+		})
+
+		t.Run("returns every declaration with BindAll", func(t *testing.T) {
+			t.Parallel()
+			got := search(t, e, engine.Query{Private: true, Include: engine.BindAll})
+			assert.Equal(t, places(got.Items), places(everything.Items), "the declarations of the fixture")
+		})
+
+		t.Run("applies Include before the limit", func(t *testing.T) {
+			t.Parallel()
+			if len(offered) == len(everything.Items) || len(offered) < 2 {
+				t.Skip("the fixture needs a binding and two declarations that a file offers")
+			}
+			got := search(t, e, engine.Query{Private: true, Limit: 1})
+			assert.Length(t, got.Items, 1, "items")
+			assert.Contains(t, places(offered), places(got.Items)[0], "the declaration returned")
+			assert.Contains(t, got.Caveats, trust.Caveat{
+				Code: trust.CaveatTruncated,
+				Note: fmt.Sprintf("1 of %d matches returned", len(offered)),
+			}, "caveats")
 		})
 
 		t.Run("returns no items for a name no declaration has", func(t *testing.T) {
@@ -438,7 +466,7 @@ func Run(t *testing.T, s Suite) {
 			if len(everything.Items) < 2 {
 				t.Skip("the fixture declares fewer than two declarations")
 			}
-			got := search(t, e, engine.Query{Private: true, Limit: 1})
+			got := search(t, e, engine.Query{Private: true, Include: engine.BindAll, Limit: 1})
 			assert.Length(t, got.Items, 1, "items")
 			assert.Contains(t, got.Caveats, trust.Caveat{
 				Code: trust.CaveatTruncated,
@@ -881,6 +909,31 @@ func encloses(outer, inner source.Span) bool {
 
 // width returns the number of bytes a span covers.
 func width(s source.Span) int { return s.End.Offset - s.Start.Offset }
+
+// offering returns the declarations of symbols that an answer without
+// bindings contains, as [engine.Bindings.Keeps] decides over the containers
+// of every symbol.
+func offering(symbols []sema.Symbol) []sema.Symbol {
+	locals := sema.Locals(symbols, sema.Containers(symbols))
+	var out []sema.Symbol
+	for i, sym := range symbols {
+		if engine.Bindings(0).Keeps(sym.Kind, locals[i]) {
+			out = append(out, sym)
+		}
+	}
+	return out
+}
+
+// places returns the path, the offset, the kind and the name of each symbol,
+// sorted, which tells two declarations of one name apart.
+func places(found []sema.Symbol) []string {
+	out := make([]string, 0, len(found))
+	for _, sym := range found {
+		out = append(out, fmt.Sprintf("%s:%d %s %s", sym.Span.Path, sym.Span.Start.Offset, sym.Kind, sym.Name))
+	}
+	slices.Sort(out)
+	return out
+}
 
 // summarise returns the kind, name and visibility of each symbol, sorted,
 // so a failure shows both sets side by side.

@@ -15,9 +15,11 @@ import (
 )
 
 // Largest is the size in bytes above which an engine does not read a file.
-// Outlining a minified 1 MiB TypeScript bundle takes 1.3s, and the time
-// grows faster than the size: 4.2s at 2 MiB.
-const Largest = 1 << 20
+// An outline call through the outline tool of a JavaScript file of 69,000
+// declarations per MiB takes 0.75s at 1 MiB, 1.50s at 2 MiB and 2.21s at
+// 3 MiB, so 2 MiB is the largest size of the three that answers within 2
+// seconds.
+const Largest = 2 << 20
 
 // LargeError reports a file larger than [Largest].
 type LargeError struct {

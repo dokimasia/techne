@@ -12,55 +12,55 @@ import (
 	"go.dokimi.dev/techne/tool"
 )
 
+// namedTool returns a tool named name whose handler returns a zero output.
+func namedTool(t *testing.T, name string) tool.Tool {
+	t.Helper()
+	built, err := tool.New(name, "PREFER OVER nothing.",
+		func(context.Context, greetIn) (greetOut, error) { return greetOut{}, nil })
+	assert.NoError(t, err, "the error of New")
+	return built
+}
+
 func TestRegistry(t *testing.T) {
 	t.Parallel()
 
 	t.Run("Add", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("refuses two tools with one name", func(t *testing.T) {
+		t.Run("refuses a second tool of one name", func(t *testing.T) {
 			t.Parallel()
-			// A name is what an agent routes on, so two tools sharing one
-			// make the choice undefined.
 			r := tool.NewRegistry()
-			assert.NoError(t, r.Add(greeter(t)), "the first tool registers")
-			assert.HasError(t, r.Add(greeter(t)), "a second tool cannot take a name already used")
+			assert.NoError(t, r.Add(greeter(t)), "the error of the first Add")
+			assert.HasError(t, r.Add(greeter(t)), "the error of the second Add")
 		})
 
-		t.Run("refuses a name the protocol does not allow", func(t *testing.T) {
+		t.Run("refuses a name that the protocol does not allow", func(t *testing.T) {
 			t.Parallel()
-			// A client that rejects the name drops the tool, and the
-			// server looks like it never offered it.
 			for _, bad := range []string{"", "has space", "has/slash", strings.Repeat("n", 129)} {
-				built, err := tool.New(bad, "PREFER OVER nothing.",
-					func(_ context.Context, in greetIn) (greetOut, error) { return greetOut{}, nil })
-				assert.NoError(t, err, "the handler is fine; the name is what is wrong")
-				assert.HasError(t, tool.NewRegistry().Add(built),
-					"a name outside the protocol's character set or length is refused here, not by a client")
+				assert.HasError(t, tool.NewRegistry().Add(namedTool(t, bad)), "the error of Add for "+bad)
 			}
 		})
 
-		t.Run("accepts a dotted name", func(t *testing.T) {
+		t.Run("accepts a name with a dot", func(t *testing.T) {
 			t.Parallel()
-			// The specification allows dots and gives admin.tools.list
-			// as an example, which is what family.subject relies on.
-			built, err := tool.New("rename.symbol", "PREFER OVER edit and grep.",
-				func(_ context.Context, in greetIn) (greetOut, error) { return greetOut{}, nil })
-			assert.NoError(t, err, "a handler over serialisable types produces a tool")
-			assert.NoError(t, tool.NewRegistry().Add(built), "family.subject is a valid tool name")
+			assert.NoError(t, tool.NewRegistry().Add(namedTool(t, "rename.symbol")), "the error of Add")
 		})
 	})
 
 	t.Run("Tools", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("answers in a stable order", func(t *testing.T) {
+		t.Run("returns the tools in the order of Add", func(t *testing.T) {
 			t.Parallel()
-			// A client caches the tool list, and a list that reorders
-			// itself invalidates that cache for no reason.
 			r := tool.NewRegistry()
-			assert.NoError(t, r.Add(greeter(t)), "the case needs a tool registered")
-			assert.Equal(t, r.Tools()[0].Name(), r.Tools()[0].Name(), "two reads answer identically")
+			for _, name := range []string{"b.tool", "a.tool", "c.tool"} {
+				assert.NoError(t, r.Add(namedTool(t, name)), "the error of Add for "+name)
+			}
+			var got []string
+			for _, one := range r.Tools() {
+				got = append(got, one.Name())
+			}
+			assert.Equal(t, got, []string{"b.tool", "a.tool", "c.tool"}, "the names of the tools")
 		})
 	})
 }

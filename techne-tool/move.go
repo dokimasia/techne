@@ -11,18 +11,17 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// MoveInput is what an agent sends to the move.file tool.
+// MoveInput is the input of the move.file tool.
 type MoveInput struct {
-	Path     string `json:"path"               jsonschema:"the file to move, workspace-relative"`
-	To       string `json:"to"                 jsonschema:"where it goes, workspace-relative"`
-	Language string `json:"language,omitempty" jsonschema:"language to assume"`
-	DryRun   *bool  `json:"dry_run,omitempty"  jsonschema:"preview without writing; true when omitted"`
+	Path     string `json:"path"               jsonschema:"the file to move, relative to the workspace root"`
+	To       string `json:"to"                 jsonschema:"the destination, relative to the workspace root"`
+	Language string `json:"language,omitempty" jsonschema:"the language to ask, in place of the language of the file"`
+	DryRun   *bool  `json:"dry_run,omitempty"  jsonschema:"preview the change without writing it, true when omitted"`
 }
 
-// Move builds the tool that moves a file and mends what referred to it.
-//
-// It needs no declaration looked up: a file names itself, which is why
-// this is the one write tool that takes no read service.
+// Move returns the tool that moves a file and rewrites the references to it. A file is its
+// own target, so the tool needs no read service. It refuses an empty destination and a
+// destination that is the file itself.
 func Move(writes Writer) (Tool, error) {
 	return New(string(edit.MoveFile), moveDescription,
 		func(ctx context.Context, in MoveInput) (Written, error) {
@@ -38,11 +37,11 @@ func Move(writes Writer) (Tool, error) {
 			held := writing(from, in.Language)
 			if in.To == "" {
 				return declined(edit.MoveFile, held, string(from), trust.Refused.String(),
-					"there is nowhere to move it to: to is the path it takes"), nil
+					"to is empty: to is the destination of the file"), nil
 			}
 			if from == to {
 				return declined(edit.MoveFile, held, string(from), trust.Refused.String(),
-					"the file is already there"), nil
+					"the file is already at "+string(to)), nil
 			}
 
 			return asked(ctx, writes, edit.MoveFile, held, string(from), edit.Request{
@@ -57,5 +56,6 @@ func Move(writes Writer) (Tool, error) {
 }
 
 const moveDescription = "PREFER OVER moving a file and fixing the imports by hand. " +
-	"Moves the file and rewrites what referred to it, or refuses when the evidence cannot " +
-	"support the claim that every reference was found. Previews by default."
+	"It moves the file and rewrites the references to it, and refuses the move when the " +
+	"evidence does not show that it found every reference. It previews the change unless " +
+	"dry_run is false."

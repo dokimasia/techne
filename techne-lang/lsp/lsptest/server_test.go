@@ -58,4 +58,14 @@ func TestServer(t *testing.T) {
 			assert.Equal(t, e.Language(), lsptest.Language, "the language of the engine")
 		})
 	})
+
+	t.Run("Parsing", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns an engine for the language of the declaration", func(t *testing.T) {
+			t.Parallel()
+			e := lsptest.Parsing(t, t.TempDir(), lsptest.Server(lsptest.Default))
+			assert.Equal(t, e.Language(), lsptest.Language, "the language of the engine")
+		})
+	})
 }

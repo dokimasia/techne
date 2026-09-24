@@ -12,6 +12,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/sema"
+	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/tool"
 )
 
@@ -24,6 +25,8 @@ type greetOut struct {
 	Greeting string `json:"greeting"`
 }
 
+// greeter returns a tool named greet that returns a greeting of the name of its input, and
+// returns an error for an empty name.
 func greeter(t *testing.T) tool.Tool {
 	t.Helper()
 	built, err := tool.New("greet", "PREFER OVER saying hello by hand.",
@@ -33,69 +36,27 @@ func greeter(t *testing.T) tool.Tool {
 			}
 			return greetOut{Greeting: "hello " + in.Name}, nil
 		})
-	assert.NoError(t, err, "a handler over serialisable types produces a tool")
+	assert.NoError(t, err, "the error of New")
 	return built
 }
 
-// symbolProperties reaches the schema of one item in a read tool's
-// answer, which is where a type that marshals as a word rather than as
-// its Go type shows up.
-func symbolProperties(t *testing.T, out *jsonschema.Schema) map[string]*jsonschema.Schema {
-	t.Helper()
-	items, held := out.Properties["items"]
-	assert.True(t, held, "a read tool answers with items")
-	assert.NotNil(t, items.Items, "the items are a list of symbols")
-	return items.Items.Properties
+// enum returns the words of the enum of a schema.
+func enum(s *jsonschema.Schema) []string {
+	out := make([]string, 0, len(s.Enum))
+	for _, one := range s.Enum {
+		word, _ := one.(string)
+		out = append(out, word)
+	}
+	return out
 }
 
-func TestSchema(t *testing.T) {
-	t.Parallel()
-
-	t.Run("OutputSchema", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("describes a kind as the word it marshals to", func(t *testing.T) {
-			t.Parallel()
-			// The Go type is a uint8 and the wire form is a word. A
-			// schema derived from the Go type alone would say integer,
-			// and a caller validating an answer against it would reject
-			// every answer it got.
-			built, err := tool.New("t", "d",
-				func(context.Context, struct{}) (tool.Answer, error) { return tool.Answer{}, nil })
-			assert.NoError(t, err, "a tool over the shared answer type builds")
-
-			properties := symbolProperties(t, built.OutputSchema())
-			kind, held := properties["kind"]
-			assert.True(t, held, "every symbol states its kind")
-			assert.Equal(t, kind.Type, "string", "a kind reaches a caller as a word")
-
-			want := make([]any, 0, len(sema.Kinds()))
-			for _, k := range sema.Kinds() {
-				want = append(want, k.String())
-			}
-			assert.Equal(t, kind.Enum, want,
-				"the schema names the vocabulary itself, so a kind added there needs no second edit")
-		})
-
-		t.Run("describes a visibility as the word it marshals to", func(t *testing.T) {
-			t.Parallel()
-			built, err := tool.New("t", "d",
-				func(context.Context, struct{}) (tool.Answer, error) { return tool.Answer{}, nil })
-			assert.NoError(t, err, "a tool over the shared answer type builds")
-
-			properties := symbolProperties(t, built.OutputSchema())
-			visibility, held := properties["visibility"]
-			assert.True(t, held, "every symbol states its visibility")
-			assert.Equal(t, visibility.Type, "string", "a visibility reaches a caller as a word")
-
-			want := make([]any, 0, len(sema.Visibilities()))
-			for _, v := range sema.Visibilities() {
-				want = append(want, v.String())
-			}
-			assert.Equal(t, visibility.Enum, want,
-				"unknown is one of the answers, so it is in the set a caller may see")
-		})
-	})
+// itemOf returns the schema of one declaration of the output of a read tool.
+func itemOf(t *testing.T, out *jsonschema.Schema) map[string]*jsonschema.Schema {
+	t.Helper()
+	items, has := out.Properties["items"]
+	assert.True(t, has, "the items of the output schema")
+	assert.NotNil(t, items.Items, "the schema of an item")
+	return items.Items.Properties
 }
 
 func TestTool(t *testing.T) {
@@ -104,58 +65,114 @@ func TestTool(t *testing.T) {
 	t.Run("New", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("derives the input schema from the handler's own type", func(t *testing.T) {
-			t.Parallel()
-			// The schema is the agent-facing contract. Deriving it means
-			// a field added to the Go type cannot go undocumented.
-			schema := greeter(t).InputSchema()
-			assert.NotNil(t, schema, "a tool an agent calls declares what it takes")
-			encoded, err := json.Marshal(schema)
-			assert.NoError(t, err, "a schema that cannot be sent cannot be advertised")
-			assert.Contains(t, string(encoded), "name", "every field of the input type reaches the schema")
-			assert.Contains(t, string(encoded), "who to greet", "the field's own tag carries its description")
-		})
-
-		t.Run("derives the output schema too", func(t *testing.T) {
-			t.Parallel()
-			encoded, err := json.Marshal(greeter(t).OutputSchema())
-			assert.NoError(t, err, "a schema that cannot be sent cannot be advertised")
-			assert.Contains(t, string(encoded), "greeting", "a caller validates the result against this")
-		})
-
-		t.Run("keeps the name and description it was given", func(t *testing.T) {
+		t.Run("returns the name and the description", func(t *testing.T) {
 			t.Parallel()
 			built := greeter(t)
-			assert.Equal(t, built.Name(), "greet", "the name is what an agent routes on")
-			assert.HasPrefix(t, built.Description(), "PREFER OVER ",
-				"a description that does not name the built-in it replaces leaves the tool unchosen")
+			assert.Equal(t, built.Name(), "greet", "the name")
+			assert.Equal(t, built.Description(), "PREFER OVER saying hello by hand.", "the description")
+		})
+	})
+
+	t.Run("InputSchema", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("describes each field of the input with its tag", func(t *testing.T) {
+			t.Parallel()
+			got := greeter(t).InputSchema()
+			assert.Equal(t, got.Properties["name"].Description, "who to greet", "the description of name")
+			assert.Equal(t, got.Required, []string{"name"}, "the required fields")
+		})
+
+		t.Run("lists the words of each word field", func(t *testing.T) {
+			t.Parallel()
+			outline, err := tool.Outline(serving())
+			assert.NoError(t, err, "the error of Outline")
+			relations, err := tool.Relations(serving(), serving())
+			assert.NoError(t, err, "the error of Relations")
+			in := outline.InputSchema().Properties
+			assert.Equal(t, enum(in["kind"]), words(sema.Kinds()), "the enum of kind")
+			assert.Equal(t, enum(in["detail"]), words(tool.Levels()), "the enum of detail")
+			assert.Equal(t, enum(in["include"].Items), words(tool.Includes()), "the enum of include")
+			assert.Equal(t, enum(in["preferred_fidelity"]), words(trust.Fidelities()), "the enum of preferred_fidelity")
+			assert.Equal(t, enum(relations.InputSchema().Properties["relation"]), words(sema.RelationKinds()),
+				"the enum of relation")
+		})
+
+		t.Run("keeps the description of a word field", func(t *testing.T) {
+			t.Parallel()
+			outline, err := tool.Outline(serving())
+			assert.NoError(t, err, "the error of Outline")
+			assert.Equal(t, outline.InputSchema().Properties["kind"].Description, "keep the declarations of one kind",
+				"the description of kind")
+		})
+	})
+
+	t.Run("OutputSchema", func(t *testing.T) {
+		t.Parallel()
+
+		answering := func(t *testing.T) tool.Tool {
+			t.Helper()
+			built, err := tool.New("t", "d",
+				func(context.Context, struct{}) (tool.Answer, error) { return tool.Answer{}, nil })
+			assert.NoError(t, err, "the error of New")
+			return built
+		}
+
+		t.Run("describes a kind as a word of sema.Kinds", func(t *testing.T) {
+			t.Parallel()
+			kind := itemOf(t, answering(t).OutputSchema())["kind"]
+			assert.Equal(t, kind.Type, "string", "the type of kind")
+			assert.Equal(t, enum(kind), words(sema.Kinds()), "the enum of kind")
+		})
+
+		t.Run("describes a visibility as a word of sema.Visibilities", func(t *testing.T) {
+			t.Parallel()
+			visibility := itemOf(t, answering(t).OutputSchema())["visibility"]
+			assert.Equal(t, visibility.Type, "string", "the type of visibility")
+			assert.Equal(t, enum(visibility), words(sema.Visibilities()), "the enum of visibility")
+		})
+
+		t.Run("describes the members by a reference to the schema of an item", func(t *testing.T) {
+			t.Parallel()
+			members := itemOf(t, answering(t).OutputSchema())["members"]
+			assert.Equal(t, members.Items.Ref, "#/properties/items/items", "the reference of members")
 		})
 	})
 
 	t.Run("Execute", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("decodes, runs and encodes", func(t *testing.T) {
+		t.Run("returns the output of the handler", func(t *testing.T) {
 			t.Parallel()
 			got, err := greeter(t).Execute(t.Context(), json.RawMessage(`{"name":"world"}`))
-			assert.NoError(t, err, "a well-formed call reaches the handler")
-			assert.Contains(t, string(got.Payload), "hello world", "the handler's result is what comes back")
-			assert.False(t, got.Failed, "an operation that did what was asked is not a failure")
+			assert.NoError(t, err, "the error of Execute")
+			assert.Equal(t, string(got.Payload), `{"greeting":"hello world"}`, "the payload")
+			assert.False(t, got.Failed, "Failed of the result")
 		})
 
-		t.Run("refuses input it cannot decode", func(t *testing.T) {
+		t.Run("returns an error for input that does not decode", func(t *testing.T) {
 			t.Parallel()
-			// Calling the handler with a zero value would run the
-			// operation on arguments nobody sent.
 			_, err := greeter(t).Execute(t.Context(), json.RawMessage(`{"name":`))
-			assert.HasError(t, err, "malformed input is refused rather than defaulted")
-			assert.HasPrefix(t, err.Error(), "tool: ", "an error names the package that refused")
+			assert.HasError(t, err, "the error of Execute")
+			assert.HasPrefix(t, err.Error(), "tool: ", "the error of Execute")
 		})
 
-		t.Run("passes a handler's own failure back", func(t *testing.T) {
+		t.Run("returns the error of the handler", func(t *testing.T) {
 			t.Parallel()
 			_, err := greeter(t).Execute(t.Context(), json.RawMessage(`{}`))
-			assert.HasError(t, err, "a handler that refuses is not reported as success")
+			assert.HasError(t, err, "the error of Execute")
+		})
+
+		t.Run("returns a failed result for an output that reports a failure", func(t *testing.T) {
+			t.Parallel()
+			built, err := tool.New("t", "d", func(context.Context, struct{}) (tool.Answer, error) {
+				return tool.Answer{Error: &tool.Failure{Code: "refused", Reason: "no"}}, nil
+			})
+			assert.NoError(t, err, "the error of New")
+			got, err := built.Execute(t.Context(), json.RawMessage(`{}`))
+			assert.NoError(t, err, "the error of Execute")
+			assert.True(t, got.Failed, "Failed of the result")
+			assert.Equal(t, got.Rendered, "refused: no\n", "the render of the result")
 		})
 	})
 }

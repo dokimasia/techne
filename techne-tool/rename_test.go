@@ -12,68 +12,60 @@ import (
 	"go.dokimi.dev/techne/tool"
 )
 
+// renamed runs the rename.symbol tool over [addressable] and writer with input, and decodes
+// the output.
+func renamed(t *testing.T, writer *recorder, input string) tool.Written {
+	t.Helper()
+	built, err := tool.Rename(addressable(), writer)
+	assert.NoError(t, err, "the error of Rename")
+	result, err := built.Execute(t.Context(), json.RawMessage(input))
+	assert.NoError(t, err, "the error of Execute")
+	var out tool.Written
+	assert.NoError(t, json.Unmarshal(result.Payload, &out), "the decoding of the output")
+	return out
+}
+
 func TestRename(t *testing.T) {
 	t.Parallel()
 
 	t.Run("Rename", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("names the built-in it replaces", func(t *testing.T) {
+		t.Run("starts its description with PREFER OVER", func(t *testing.T) {
 			t.Parallel()
-			assert.HasPrefix(t, renaming(t, &recorder{}).Description(), "PREFER OVER ",
-				"an agent reaches for find-and-replace unless told why not to")
+			built, err := tool.Rename(addressable(), &recorder{})
+			assert.NoError(t, err, "the error of Rename")
+			assert.HasPrefix(t, built.Description(), "PREFER OVER ", "the description")
 		})
 
-		t.Run("points the planner at one declaration", func(t *testing.T) {
+		t.Run("points the write path at the span with the new name", func(t *testing.T) {
 			t.Parallel()
-			// A name and a kind do not pick out one declaration, so the
-			// tool resolves it and says which by position.
 			writer := &recorder{}
 			got := renamed(t, writer, `{"scope":"a.fx","name":"Store","new_name":"Vault"}`)
-
-			assert.False(t, got.Failed(), "a name one declaration answers to is served")
-			assert.Equal(t, writer.asked.Target.Kind, edit.TargetSpan, "by position")
-			assert.Equal(t, writer.asked.Args[edit.ArgNewName], "Vault", "and carries the new name")
+			assert.False(t, got.Failed(), "the failure of the output")
+			assert.Equal(t, writer.asked.Target.Kind, edit.TargetSpan, "the kind of the target")
+			assert.Equal(t, writer.asked.Args[edit.ArgNewName], "Vault", "the new name of the request")
 		})
 
-		t.Run("refuses a call with nothing to rename it to", func(t *testing.T) {
+		t.Run("refuses an empty new name", func(t *testing.T) {
 			t.Parallel()
 			got := renamed(t, &recorder{}, `{"scope":"a.fx","name":"Store","new_name":""}`)
-			assert.True(t, got.Failed(), "a rename to nothing is not a rename")
-			assert.Equal(t, got.Error.Code, "refused", "which the caller can correct")
+			assert.True(t, got.Failed(), "the failure of the output")
+			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
 		})
 
-		t.Run("answers an ambiguous name with the candidates", func(t *testing.T) {
+		t.Run("refuses an ambiguous name with the site of each declaration", func(t *testing.T) {
 			t.Parallel()
 			got := renamed(t, &recorder{}, `{"scope":"a.fx","name":"Get","new_name":"Fetch"}`)
-			assert.True(t, got.Failed(), "two candidates are not one declaration")
-			assert.Contains(t, got.Error.Reason, "a.fx:4", "and the refusal says where they are")
+			assert.True(t, got.Failed(), "the failure of the output")
+			assert.Contains(t, got.Error.Reason, "a.fx:4", "the reason of the failure")
 		})
 
-		t.Run("previews when the caller says nothing", func(t *testing.T) {
+		t.Run("previews a request without dry_run", func(t *testing.T) {
 			t.Parallel()
 			writer := &recorder{}
 			renamed(t, writer, `{"scope":"a.fx","name":"Store","new_name":"Vault"}`)
-			assert.True(t, writer.asked.DryRun, "writing by default would make a typo a change")
+			assert.True(t, writer.asked.DryRun, "DryRun of the request")
 		})
 	})
-}
-
-// renaming builds the rename tool over the fixture.
-func renaming(t *testing.T, writer *recorder) tool.Tool {
-	t.Helper()
-	built, err := tool.Rename(addressable(), writer)
-	assert.NoError(t, err, "the rename tool builds from a read service and a write path")
-	return built
-}
-
-// renamed runs it and decodes what came back.
-func renamed(t *testing.T, writer *recorder, input string) tool.Written {
-	t.Helper()
-	result, err := renaming(t, writer).Execute(t.Context(), json.RawMessage(input))
-	assert.NoError(t, err, "a well-formed call reaches the service")
-
-	var out tool.Written
-	assert.NoError(t, json.Unmarshal(result.Payload, &out), "the answer is JSON a caller can read")
-	return out
 }

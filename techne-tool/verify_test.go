@@ -14,92 +14,9 @@ import (
 	"go.dokimi.dev/techne/tool"
 )
 
-func TestVerify(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Verify", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("names the built-in it replaces", func(t *testing.T) {
-			t.Parallel()
-			assert.HasPrefix(t, verifying(t).Description(), "PREFER OVER ",
-				"an agent runs the build in a shell unless told why not to")
-		})
-
-		t.Run("reports what the gate said", func(t *testing.T) {
-			t.Parallel()
-			got := verified(t, `{"scope":"a.fx"}`)
-			assert.False(t, got.Failed(), "a gate that ran answered the question")
-			assert.Length(t, got.Items, 2, "both findings reach the caller")
-			assert.Equal(t, got.Items[0].Severity, "warning", "the severity is a word")
-			assert.Equal(t, got.Items[0].Message, "prefer FieldsSeq", "with what was said")
-		})
-
-		t.Run("does not read issues as a failure", func(t *testing.T) {
-			t.Parallel()
-			// A gate that ran and found twelve problems answered the
-			// question. A caller that treats that as a fault cannot act
-			// on the twelve.
-			result, err := verifying(t).Execute(t.Context(), json.RawMessage(`{"scope":"a.fx"}`))
-			assert.NoError(t, err, "running a gate succeeds")
-			assert.False(t, result.Failed, "finding issues is an answer")
-		})
-
-		t.Run("carries the line a diagnostic is about", func(t *testing.T) {
-			t.Parallel()
-			// Whoever reads this has no filesystem, so a message without
-			// its line costs a read each.
-			got := verified(t, `{"scope":"a.fx"}`)
-			assert.Equal(t, got.Items[0].At, "for part := range strings.Fields(x) {",
-				"the code the complaint is about comes with it")
-			assert.Equal(t, got.Items[0].Line, 228, "counting from one")
-		})
-
-		t.Run("carries a remedy where there is one obvious one", func(t *testing.T) {
-			t.Parallel()
-			got := verified(t, `{"scope":"a.fx"}`)
-			assert.Length(t, got.Items[0].Fix, 1, "the one obvious change comes with the complaint")
-			assert.Equal(t, got.Items[0].Fix[0].Now, "for part := range strings.FieldsSeq(x) {",
-				"so a lint, fix and verify cycle is two round trips rather than five")
-			assert.Empty(t, got.Items[1].Fix,
-				"and a complaint with no obvious change carries none")
-		})
-
-		t.Run("caps the issues when asked", func(t *testing.T) {
-			t.Parallel()
-			got := verified(t, `{"scope":"a.fx","max_issues":1}`)
-			assert.Length(t, got.Items, 1, "a caller that asked for one gets one")
-		})
-
-		t.Run("says a language is not served rather than reporting it clean", func(t *testing.T) {
-			t.Parallel()
-			// Reporting no issues for a language nothing gates is the
-			// worst answer available: it reads as a pass.
-			got := verified(t, `{"scope":"notes.md"}`)
-			assert.True(t, got.Failed(), "nothing gates a markdown file")
-			assert.Equal(t, got.Error.Code, "unsupported",
-				"a capability gap is something a caller routes around")
-		})
-	})
-
-	t.Run("Render", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("writes each issue with its code and its line", func(t *testing.T) {
-			t.Parallel()
-			got := verified(t, `{"scope":"a.fx"}`)
-			assert.ContainsInOrder(t, got.Render(), []string{
-				"a.fx — 2 issues", "a.fx:228", "warning", "modernize.stringsseq",
-				"prefer FieldsSeq", "strings.Fields(x)", "fix available",
-			}, "a reader gets where, how much it matters, what is wrong and whether it is fixable")
-		})
-	})
-}
-
-// verifying builds the verify tool over two findings, one with an
-// obvious remedy and one without.
-func verifying(t *testing.T) tool.Tool {
-	t.Helper()
+// gating returns [addressable] with two findings: a warning with one obvious fix, and an error
+// without one.
+func gating() *reads {
 	over := addressable()
 	over.found = []edit.Finding{
 		{
@@ -121,18 +38,93 @@ func verifying(t *testing.T) tool.Tool {
 			},
 		},
 	}
-	built, err := tool.Verify(over)
-	assert.NoError(t, err, "the verify tool builds from a read service")
-	return built
+	return over
 }
 
-// verified runs it and decodes what came back.
+// verified runs the verify tool over [gating] with input, and decodes the output.
 func verified(t *testing.T, input string) tool.VerifyOutput {
 	t.Helper()
-	result, err := verifying(t).Execute(t.Context(), json.RawMessage(input))
-	assert.NoError(t, err, "a well-formed call reaches the service")
-
+	built, err := tool.Verify(gating())
+	assert.NoError(t, err, "the error of Verify")
+	result, err := built.Execute(t.Context(), json.RawMessage(input))
+	assert.NoError(t, err, "the error of Execute")
 	var out tool.VerifyOutput
-	assert.NoError(t, json.Unmarshal(result.Payload, &out), "the answer is JSON a caller can read")
+	assert.NoError(t, json.Unmarshal(result.Payload, &out), "the decoding of the output")
 	return out
+}
+
+func TestVerify(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Verify", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("starts its description with PREFER OVER", func(t *testing.T) {
+			t.Parallel()
+			built, err := tool.Verify(gating())
+			assert.NoError(t, err, "the error of Verify")
+			assert.HasPrefix(t, built.Description(), "PREFER OVER ", "the description")
+		})
+
+		t.Run("returns each issue with its severity and its message", func(t *testing.T) {
+			t.Parallel()
+			got := verified(t, `{"scope":"a.fx"}`)
+			assert.False(t, got.Failed(), "the failure of the output")
+			assert.Length(t, got.Items, 2, "the issues")
+			assert.Equal(t, got.Items[0].Severity, "warning", "the severity of the first issue")
+			assert.Equal(t, got.Items[0].Message, "prefer FieldsSeq", "the message of the first issue")
+		})
+
+		t.Run("marks no result with issues as failed", func(t *testing.T) {
+			t.Parallel()
+			built, err := tool.Verify(gating())
+			assert.NoError(t, err, "the error of Verify")
+			result, err := built.Execute(t.Context(), json.RawMessage(`{"scope":"a.fx"}`))
+			assert.NoError(t, err, "the error of Execute")
+			assert.False(t, result.Failed, "Failed of the result")
+		})
+
+		t.Run("returns the source line of an issue and its line counted from one", func(t *testing.T) {
+			t.Parallel()
+			got := verified(t, `{"scope":"a.fx"}`)
+			assert.Equal(t, got.Items[0].At, "for part := range strings.Fields(x) {", "the source line")
+			assert.Equal(t, got.Items[0].Line, 228, "the line")
+		})
+
+		t.Run("returns the text of the one obvious fix", func(t *testing.T) {
+			t.Parallel()
+			got := verified(t, `{"scope":"a.fx"}`)
+			assert.Length(t, got.Items[0].Fix, 1, "the fixes of the warning")
+			assert.Equal(t, got.Items[0].Fix[0].Now, "for part := range strings.FieldsSeq(x) {", "the text of the fix")
+			assert.Empty(t, got.Items[1].Fix, "the fixes of the error")
+		})
+
+		t.Run("returns the first issues up to max_issues with a truncation caveat", func(t *testing.T) {
+			t.Parallel()
+			got := verified(t, `{"scope":"a.fx","max_issues":1}`)
+			assert.Length(t, got.Items, 1, "the issues")
+			assert.Equal(t, truncations(got.Provenance), []string{"1 of 2 issues returned"},
+				"the notes of the truncation caveats")
+		})
+
+		t.Run("returns an unsupported failure for a scope that no engine serves", func(t *testing.T) {
+			t.Parallel()
+			got := verified(t, `{"scope":"notes.md"}`)
+			assert.True(t, got.Failed(), "the failure of the output")
+			assert.Equal(t, got.Error.Code, "unsupported", "the code of the failure")
+		})
+	})
+
+	t.Run("Render", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("writes each issue with its site, its code and its fix", func(t *testing.T) {
+			t.Parallel()
+			got := verified(t, `{"scope":"a.fx"}`)
+			assert.ContainsInOrder(t, got.Render(), []string{
+				"a.fx — 2 issues", "a.fx:228", "warning", "modernize.stringsseq",
+				"prefer FieldsSeq", "strings.Fields(x)", "fix available",
+			}, "the render")
+		})
+	})
 }

@@ -20,6 +20,43 @@ import (
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
 
+// limitLine is the line that [limited] appends to [lsptest.Content] as line 9. The scripted
+// server lists no symbol for it.
+const limitLine = "const Limit = 8\n"
+
+// limited returns a workspace with [lsptest.Content] and [limitLine] in a.fake.
+func limited() map[string]string {
+	return map[string]string{"a.fake": lsptest.Content + limitLine}
+}
+
+// limit returns the span of the declaration of Limit in the a.fake of [limited].
+func limit() source.Span {
+	start := len(lsptest.Content)
+	return source.Span{
+		Path:  "a.fake",
+		Start: source.Position{Offset: start, Line: 9},
+		End:   source.Position{Offset: start + len(limitLine) - 1, Line: 9, Column: len(limitLine) - 1},
+	}
+}
+
+// used returns a workspace with a bundle of three functions in a.fake, and a function Use in
+// b.fake whose local variable held calls F0.
+func used() map[string]string {
+	return map[string]string{
+		"a.fake": lsptest.Bundle(3),
+		"b.fake": "package a\nfunc Use() int {\n\tvar held = F0()\n\treturn held\n}\n",
+	}
+}
+
+// requested returns how many requests of method the file log of [lsptest.RecordRequests]
+// records.
+func requested(t *testing.T, log, method string) int {
+	t.Helper()
+	recorded, err := os.ReadFile(log)
+	assert.NoError(t, err, "the log of the requests")
+	return strings.Count(string(recorded), method+"\n")
+}
+
 func TestRelate(t *testing.T) {
 	t.Parallel()
 
@@ -199,6 +236,58 @@ func TestRelate(t *testing.T) {
 			_, err := serving(t, lsptest.Default, sample()).Relate(t.Context(), request,
 				declared("Missing", sema.KindStruct), sema.ReferencedBy)
 			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Relate")
+		})
+
+		t.Run("asks the server at the declared span when no symbol matches the ID", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.Default, limited()).Relate(t.Context(),
+				engine.Request{Scope: "a.fake", Declared: limit()},
+				declared("Limit", sema.KindConstant), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of the uses of Limit")
+			assert.Equal(t, edges(got.Items), []string{"Get", "After"}, "the declarations that the server names")
+		})
+
+		t.Run("reads the symbols of the declared file alone", func(t *testing.T) {
+			t.Parallel()
+			log := filepath.Join(t.TempDir(), "requests")
+			files := limited()
+			files["b.fake"], files["c.fake"] = lsptest.Content, lsptest.Content
+			e := serving(t, lsptest.Default, files, lsptest.RecordRequests(log))
+			_, err := e.Relate(t.Context(), engine.Request{Scope: ".", Declared: limit()},
+				declared("Limit", sema.KindConstant), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of the uses of Limit")
+			assert.Equal(t, requested(t, log, "textDocument/documentSymbol"), 1, "the requests for symbols")
+		})
+
+		t.Run("reads the declaration at a site through the outline engine", func(t *testing.T) {
+			t.Parallel()
+			log := filepath.Join(t.TempDir(), "requests")
+			e := lsptest.Parsing(t, lsptest.Workspace(t, used()),
+				lsptest.Server(lsptest.Minified, lsptest.RecordRequests(log)))
+			_, err := e.Relate(t.Context(), request, declared("F0", sema.KindFunction), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of the uses of F0")
+			assert.Equal(t, requested(t, log, "textDocument/documentSymbol"), 1,
+				"the requests for symbols, of a.fake only")
+		})
+
+		t.Run("leaves out a second declaration of the declaration", func(t *testing.T) {
+			t.Parallel()
+			files := map[string]string{
+				"a.fake": lsptest.Bundle(3), "c.fake": "package a\nfunc F0() int { return 1 }\n",
+			}
+			e := lsptest.Parsing(t, lsptest.Workspace(t, files), lsptest.Server(lsptest.Minified))
+			got, err := e.Relate(t.Context(), engine.Request{Scope: "."}, declared("F0", sema.KindFunction),
+				sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of the uses of F0")
+			assert.Equal(t, edges(got.Items), []string{"After"}, "the declarations that use F0")
+		})
+
+		t.Run("relates a use inside a local declaration to the function", func(t *testing.T) {
+			t.Parallel()
+			e := lsptest.Parsing(t, lsptest.Workspace(t, used()), lsptest.Server(lsptest.Minified))
+			got, err := e.Relate(t.Context(), request, declared("F0", sema.KindFunction), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of the uses of F0")
+			assert.Equal(t, edges(got.Items), []string{"After", "Use"}, "the declarations that use F0")
 		})
 
 		t.Run("skips a scope without a file of the language", func(t *testing.T) {

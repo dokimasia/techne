@@ -122,6 +122,44 @@ func Containers(symbols []Symbol) []int {
 	return out
 }
 
+// Locals reports, for each symbol, whether it is declared inside the body of
+// a callable or the value of a binding: whether a symbol that contains it, at
+// any depth, is a function, a method, a constructor, a property, a field, a
+// variable or a constant. containers are the indexes that [Containers]
+// returns for symbols.
+//
+// Locals runs in O(n) time.
+func Locals(symbols []Symbol, containers []int) []bool {
+	out := make([]bool, len(symbols))
+	seen := make([]bool, len(symbols))
+	var local func(i int) bool
+	local = func(i int) bool {
+		if !seen[i] {
+			seen[i] = true
+			if up := containers[i]; up >= 0 {
+				out[i] = holdsLocals(symbols[up].Kind) || local(up)
+			}
+		}
+		return out[i]
+	}
+	for i := range symbols {
+		local(i)
+	}
+	return out
+}
+
+// holdsLocals reports whether a declaration of kind has a body or a value in
+// which a language declares names.
+func holdsLocals(kind Kind) bool {
+	switch kind {
+	case KindFunction, KindMethod, KindConstructor, KindProperty,
+		KindField, KindVariable, KindConstant:
+		return true
+	default:
+		return false
+	}
+}
+
 func contains(outer, inner source.Span) bool {
 	return outer.Path == inner.Path &&
 		outer.Start.Offset <= inner.Start.Offset &&

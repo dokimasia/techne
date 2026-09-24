@@ -27,8 +27,8 @@ type Answer[T any] struct {
 	Skipped bool
 }
 
-// Request is the scope of one question, and the number of relations that the
-// caller keeps from the answer.
+// Request is the scope of one question. Limit and Declared apply to
+// [Relator.Relate] alone.
 type Request struct {
 	// Scope is a file or a directory, relative to the workspace root.
 	Scope source.Path
@@ -51,6 +51,12 @@ type Request struct {
 	// then adds a [trust.CaveatTruncated] caveat that counts the relations it
 	// found.
 	Limit int
+
+	// Declared is the span of the declaration that [Relator.Relate] starts
+	// from, as the outline of the caller reports it, or the zero span. An
+	// engine whose own declarations do not match the ID can find the
+	// declaration at this span.
+	Declared source.Span
 }
 
 // Query is a search for declarations.
@@ -66,6 +72,51 @@ type Query struct {
 	// unit.
 	Private bool
 
+	// Include selects the bindings that the search returns beside the
+	// declarations that a file offers to the rest of a program. The engine
+	// applies it before Limit.
+	Include Bindings
+
 	// Limit caps the number of items. Zero selects the engine's default.
 	Limit int
+}
+
+// Bindings are the bindings that an answer contains beside the declarations
+// that a file offers to the rest of a program. The zero value contains none
+// of them.
+type Bindings uint8
+
+const (
+	// BindImports contains what a file brings into scope.
+	BindImports Bindings = 1 << iota
+	// BindParameters contains the parameters and the type parameters of each
+	// signature.
+	BindParameters
+	// BindLocals contains the declarations inside the body of a callable or
+	// the value of a binding, which [sema.Locals] reports.
+	BindLocals
+	// BindLabels contains the labels of statements.
+	BindLabels
+
+	// BindAll contains every binding.
+	BindAll = BindImports | BindParameters | BindLocals | BindLabels
+)
+
+// Keeps reports whether an answer with the bindings b contains a declaration
+// of kind. local reports that the declaration is inside the body of a
+// callable or the value of a binding. An import, a parameter, a type
+// parameter and a label take their own binding before local applies.
+func (b Bindings) Keeps(kind sema.Kind, local bool) bool {
+	switch {
+	case kind == sema.KindImport:
+		return b&BindImports != 0
+	case kind == sema.KindParameter, kind == sema.KindTypeParameter:
+		return b&BindParameters != 0
+	case kind == sema.KindLabel:
+		return b&BindLabels != 0
+	case local:
+		return b&BindLocals != 0
+	default:
+		return true
+	}
 }

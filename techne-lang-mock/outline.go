@@ -36,9 +36,9 @@ func (e *Engine) Outline(ctx context.Context, req engine.Request) (engine.Result
 
 // Search returns the declarations in the scope of req that match q. The exact names come
 // first, then the names that start with the text of q, then the names and the documentation
-// that contain it, each group in outline order and each match without regard to case. q.Kind
-// and q.Private filter the declarations. An answer cut at q.Limit has a
-// [trust.CaveatTruncated] caveat with the number of matches returned and found.
+// that contain it, each group in outline order and each match without regard to case. q.Kind,
+// q.Private and q.Include filter the declarations before q.Limit cuts them. An answer cut at
+// q.Limit has a [trust.CaveatTruncated] caveat with the number of matches returned and found.
 func (e *Engine) Search(
 	ctx context.Context,
 	req engine.Request,
@@ -50,9 +50,11 @@ func (e *Engine) Search(
 	}
 
 	wanted := strings.ToLower(q.Text)
+	locals := sema.Locals(w.symbols, sema.Containers(w.symbols))
 	var exact, prefixed, loose []sema.Symbol
-	for _, one := range w.symbols {
-		if q.Kind != sema.KindUnknown && one.Kind != q.Kind || !q.Private && one.Visibility == sema.Unexported {
+	for i, one := range w.symbols {
+		if q.Kind != sema.KindUnknown && one.Kind != q.Kind || !q.Private && one.Visibility == sema.Unexported ||
+			!q.Include.Keeps(one.Kind, locals[i]) {
 			continue
 		}
 		name := strings.ToLower(one.Name)

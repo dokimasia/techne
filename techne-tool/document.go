@@ -10,21 +10,20 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// DocumentInput is what an agent sends to the document.symbol tool.
-//
-// Doc is the documentation itself, as plain prose with no comment
-// markers: which markers this language writes, how they are indented and
-// where they go relative to the declaration are what the tool is for.
+// DocumentInput is the input of the document.symbol tool. Doc is the text of the documentation
+// without comment markers. The tool writes the markers of the language, at the indentation and
+// the place that the language uses.
 type DocumentInput struct {
-	Scope    string `json:"scope"              jsonschema:"file or directory, workspace-relative"`
-	Name     string `json:"name"               jsonschema:"the declaration to document, qualified as the language writes it"`
-	Doc      string `json:"doc"                jsonschema:"the documentation, as prose without comment markers"`
-	Kind     string `json:"kind,omitempty"     jsonschema:"narrows an ambiguous name to one kind"`
-	Language string `json:"language,omitempty" jsonschema:"language to assume"`
-	DryRun   *bool  `json:"dry_run,omitempty"  jsonschema:"preview without writing; true when omitted"`
+	Scope    string   `json:"scope"              jsonschema:"file or directory of the declaration, relative to the workspace root"`
+	Name     string   `json:"name"               jsonschema:"the declaration, qualified as the language writes it when the name is ambiguous"`
+	Doc      string   `json:"doc"                jsonschema:"the text of the documentation, without comment markers"`
+	Kind     KindWord `json:"kind,omitempty"     jsonschema:"the kind of the declaration, for a name of several kinds"`
+	Language string   `json:"language,omitempty" jsonschema:"the language to ask, in place of the languages of the scope"`
+	DryRun   *bool    `json:"dry_run,omitempty"  jsonschema:"preview the change without writing it, true when omitted"`
 }
 
-// Document builds the tool that writes documentation onto a declaration.
+// Document returns the tool that writes documentation onto one declaration. It refuses an
+// empty Doc before it looks for the declaration.
 func Document(reads Outliner, writes Writer) (Tool, error) {
 	return New(string(edit.DocumentSymbol), documentDescription,
 		func(ctx context.Context, in DocumentInput) (Written, error) {
@@ -35,7 +34,7 @@ func Document(reads Outliner, writes Writer) (Tool, error) {
 			held := writing(scope, in.Language)
 			if in.Doc == "" {
 				return declined(edit.DocumentSymbol, held, in.Name, trust.Refused.String(),
-					"there is no documentation to write: doc is the prose to put on the declaration"), nil
+					"doc is empty: doc is the text to write onto the declaration"), nil
 			}
 
 			found, target, failure := addressing(ctx, reads, scope, in.Language, in.Name, in.Kind)
@@ -56,9 +55,8 @@ func Document(reads Outliner, writes Writer) (Tool, error) {
 }
 
 const documentDescription = "PREFER OVER editing a file to add a doc comment. " +
-	"Writes documentation onto one declaration in the form that language's own " +
-	"documentation tool reads: /// for Rust, /** */ for Java, a docstring inside the body " +
-	"for Python, and at the declaration's own indentation. Send the prose only, with no " +
-	"comment markers. Documentation already there is replaced. Previews by default and " +
-	"refuses a change that stops the file parsing, so applying is a second call with " +
-	"dry_run false."
+	"It writes documentation onto one declaration in the form that the documentation tool of " +
+	"the language reads: /// for Rust, /** */ for Java, a docstring inside the body for " +
+	"Python, and at the indentation of the declaration. Send the text alone, without comment " +
+	"markers. It replaces documentation that is already there. It previews the change unless " +
+	"dry_run is false, and refuses a change after which the file does not parse."

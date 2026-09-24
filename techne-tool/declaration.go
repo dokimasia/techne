@@ -5,63 +5,28 @@ package tool
 
 import (
 	"slices"
-	"sort"
 	"strings"
 
+	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 )
 
-// Include names what an answer holds beyond the declarations a file
-// offers to the rest of a program.
-//
-// The default is those declarations alone. A parameter belongs to a
-// signature and the signature is on the declaration that owns it; a
-// binding local to a body is not something the file offers. Reporting
-// either as a peer of the function it sits in is what makes an outline
-// cost more than the file.
-type Include string
-
-const (
-	// IncludeImport adds what the file brings into scope.
-	IncludeImport Include = "import"
-	// IncludeParameter adds the bindings in each signature.
-	IncludeParameter Include = "parameter"
-	// IncludeLocal adds the declarations inside a callable's body.
-	IncludeLocal Include = "local"
-	// IncludeAll adds every name the file binds.
-	IncludeAll Include = "all"
-)
-
-// asks reports whether a caller named one of these.
-func asks(named []string, what Include) bool {
-	for _, one := range named {
-		if Include(one) == what || Include(one) == IncludeAll {
-			return true
-		}
-	}
-	return false
-}
-
-// Narrow limits an answer to the declarations a caller named.
-//
-// It is what makes the levels that carry documentation and source text
-// worth calling. Over a whole file those levels cost more than reading
-// the file, because the source text of every declaration is the file;
-// over a handful of named declarations they cost a fraction of it.
+// Narrow limits an answer to the declarations that a caller names. Over a whole file the
+// levels [Docs] and [Source] cost more than the file, and over a few named declarations they
+// cost a fraction of it.
 type Narrow struct {
-	// Names limits the answer to these declarations. A qualified name
-	// matches the declaration it names, whatever holds it.
+	// Names keeps the declarations of these names.
 	Names []string
-	// Kind limits it to one kind. The zero value matches any.
+	// Kind keeps the declarations of one kind. [sema.KindUnknown] keeps every kind.
 	Kind sema.Kind
-	// Prefix limits it to names starting with this.
+	// Prefix keeps the declarations whose names start with it.
 	Prefix string
-	// Private includes declarations not visible outside their unit.
+	// Private keeps the declarations that are not visible outside their unit.
 	Private bool
 }
 
-// wanted reports whether one declaration is what the caller asked for.
+// wanted reports whether d is a declaration that n keeps.
 func (n Narrow) wanted(d Declaration) bool {
 	if !n.Private && d.Visibility == sema.Unexported {
 		return false
@@ -72,18 +37,12 @@ func (n Narrow) wanted(d Declaration) bool {
 	if n.Prefix != "" && !strings.HasPrefix(d.Name, n.Prefix) {
 		return false
 	}
-	if len(n.Names) == 0 {
-		return true
-	}
-	return slices.Contains(n.Names, d.Name)
+	return len(n.Names) == 0 || slices.Contains(n.Names, d.Name)
 }
 
-// Apply keeps what a caller asked for, and what it holds.
-//
-// A declaration that matches is kept whole, because asking for a struct
-// means asking for its fields. One that does not match survives only to
-// carry a match below it, and then holds nothing else: asking for every
-// method is not asking for the fields beside them.
+// Apply returns the declarations of items that n keeps. A declaration that n keeps comes with
+// all its members. A declaration that n does not keep comes with the members that n keeps
+// under it, and is left out when it has none.
 func (n Narrow) Apply(items []Declaration) []Declaration {
 	out := []Declaration{}
 	for _, item := range items {
@@ -91,109 +50,70 @@ func (n Narrow) Apply(items []Declaration) []Declaration {
 			out = append(out, item)
 			continue
 		}
-		if held := n.Apply(item.Members); len(held) > 0 {
-			item.Members = held
+		if kept := n.Apply(item.Members); len(kept) > 0 {
+			item.Members = kept
 			out = append(out, item)
 		}
 	}
 	return out
 }
 
-// Members are the declarations one declaration holds.
-//
-// It is a type of its own so a schema can describe it by pointing at the
-// description of a declaration rather than by containing one, which does
-// not terminate.
+// Members are the declarations that a declaration contains, in a type whose schema refers to
+// the schema of a declaration, because a schema that contains itself does not terminate.
 type Members []Declaration
 
-// Declaration is one item of an answer, in the form a caller reads.
-//
-// It is not the engine's record. An engine returns what it found, in a
-// shape sized for an index; this is what the question asked for, with
-// the facts an answer states once left in [Scope] and the fields a
-// caller does not act on left out.
+// Declaration is one item of an answer: the fields of a [sema.Symbol] that the level of
+// [Detail] selects. The facts of the whole answer are in [Scope].
 type Declaration struct {
 	Name string    `json:"name"`
 	Kind sema.Kind `json:"kind"`
-	// Line is where the declaration begins, counted from one, because
-	// that is how an editor and a reader count.
+	// Line is the line on which the declaration starts, counted from one.
 	Line int `json:"line"`
-	// Path is carried only where an answer spans more than one file.
-	// Otherwise the scope names it.
+	// Path is the file of the declaration in an answer about more than one file.
 	Path string `json:"path,omitempty"`
-	// Signature is the declaration without its body.
+	// Signature is the declaration without its body, from [Signatures] on.
 	Signature string `json:"signature,omitempty"`
-	// Doc is the documentation comment, in whichever form the language
-	// writes one.
+	// Doc is the documentation comment, from [Docs] on.
 	Doc string `json:"doc,omitempty"`
-	// Visibility is carried when it is not [sema.Exported], because a
-	// request returns exported declarations unless it asked otherwise
-	// and repeating the common answer costs a word per item.
+	// Visibility is the visibility of a declaration that is not [sema.Exported].
 	Visibility sema.Visibility `json:"visibility,omitempty"`
-	Modifiers  []string        `json:"modifiers,omitempty"`
-	// Annotations are the names of what is written onto the declaration.
-	// The whole text of one is what a rewriting tool needs, and reaches
-	// a caller at [Source].
+	// Modifiers are the keywords on the declaration, from [Signatures] on.
+	Modifiers []string `json:"modifiers,omitempty"`
+	// Annotations are the names of the annotations of the declaration, from [Signatures] on.
 	Annotations []string `json:"annotations,omitempty"`
-	// Snippet is the declaration's own source, at [Source] alone.
+	// Snippet is the source text of the declaration, at [Source].
 	Snippet string `json:"snippet,omitempty"`
-	// Span is the bytes the declaration covers, at [Source] alone,
-	// because slicing them is what the write path does and reading does
-	// not.
+	// Span is the span that the declaration covers, at [Source].
 	Span *source.Span `json:"span,omitempty"`
-	// Members are the declarations this one holds: a struct's fields, a
-	// class's methods. Nesting is what tells a package-level binding
-	// from one local to a body, which no kind distinguishes.
+	// Members are the declarations that this one contains, such as the fields of a struct.
 	Members Members `json:"members,omitempty"`
 }
 
-// Declared turns what an engine found into what a caller reads, nesting
-// each declaration inside the one that contains it.
+// Declared returns the declarations of items at the level d, each nested under the smallest
+// declaration whose span contains it, as [sema.Containers] computes. It keeps the bindings that
+// include selects, as [engine.Bindings.Keeps] decides from the kind and from [sema.Locals]. A
+// declaration whose container it leaves out goes under the nearest container that it keeps.
+// The order is the order of items.
 //
-// Containment is decided by the bytes a declaration covers, so it holds
-// for every language without a query having to say what encloses what.
-// The order is the order the engine returned, which for a parser is the
-// order of the source.
-func Declared(items []sema.Symbol, d Detail, include []string) []Declaration {
-	held := make([]int, len(items))
-	for i := range held {
-		held[i] = -1
+// A declaration with source text has no members, because its source text contains them.
+// Declared returns an empty list, not nil, for no declarations.
+func Declared(items []sema.Symbol, d Detail, include engine.Bindings) []Declaration {
+	containers := sema.Containers(items)
+	locals := sema.Locals(items, containers)
+	keep := make([]bool, len(items))
+	for i, s := range items {
+		keep[i] = include.Keeps(s.Kind, locals[i])
 	}
 
-	// Smallest first, so the first container found is the nearest one.
-	order := make([]int, len(items))
-	for i := range order {
-		order[i] = i
-	}
-	sort.SliceStable(order, func(a, b int) bool {
-		return width(items[order[a]]) < width(items[order[b]])
-	})
-	for _, i := range order {
-		for _, j := range order {
-			if i == j || width(items[j]) <= width(items[i]) {
-				continue
-			}
-			if contains(items[j], items[i]) {
-				held[i] = j
-				break
-			}
-		}
-	}
-
-	keep := kept(items, held, include)
-
-	// A declaration whose container was dropped rises to the nearest one
-	// that was kept, so asking for locals without asking for parameters
-	// still puts each local under its function.
 	children := make([][]int, len(items))
 	var roots []int
 	for i := range items {
 		if !keep[i] {
 			continue
 		}
-		up := held[i]
+		up := containers[i]
 		for up >= 0 && !keep[up] {
-			up = held[up]
+			up = containers[up]
 		}
 		if up < 0 {
 			roots = append(roots, i)
@@ -205,9 +125,6 @@ func Declared(items []sema.Symbol, d Detail, include []string) []Declaration {
 	var build func(i int) Declaration
 	build = func(i int) Declaration {
 		out := project(items[i], d)
-		// A declaration's own source text already holds everything
-		// inside it. Carrying the members beside it would send a
-		// struct's fields twice, once as text and once as items.
 		if out.Snippet != "" {
 			return out
 		}
@@ -216,10 +133,6 @@ func Declared(items []sema.Symbol, d Detail, include []string) []Declaration {
 		}
 		return out
 	}
-
-	// An answer that found nothing says so with an empty list rather
-	// than a null, because a caller reads the two the same way only if
-	// it remembers to.
 	out := []Declaration{}
 	for _, i := range roots {
 		out = append(out, build(i))
@@ -227,65 +140,15 @@ func Declared(items []sema.Symbol, d Detail, include []string) []Declaration {
 	return out
 }
 
-// kept decides which declarations an answer holds.
-//
-// A kind that binds a name never leaving its scope is dropped unless the
-// caller asked for it, and so is anything written inside a callable: the
-// question an outline answers is what a file offers, and neither is part
-// of that.
-func kept(items []sema.Symbol, held []int, include []string) []bool {
-	keep := make([]bool, len(items))
-	for i, s := range items {
-		switch {
-		case s.Kind == sema.KindImport:
-			keep[i] = asks(include, IncludeImport)
-		case s.Kind == sema.KindParameter || s.Kind == sema.KindTypeParameter:
-			keep[i] = asks(include, IncludeParameter)
-		case s.Kind == sema.KindLabel:
-			keep[i] = asks(include, IncludeAll)
-		case insideValue(items, held, i):
-			keep[i] = asks(include, IncludeLocal)
-		default:
-			keep[i] = true
-		}
-	}
-	return keep
-}
-
-// insideValue reports whether a declaration is written inside a
-// callable's body or inside a value.
-//
-// Nothing in the vocabulary separates a package-level binding from one
-// local to a function: both are variables. Where it sits is what
-// separates them, and the same holds one level out. A key in an object
-// literal is a binding the language makes, and a caller asking what a
-// file offers is not asking for the fields of a value passed to a
-// constructor.
-func insideValue(items []sema.Symbol, held []int, of int) bool {
-	for at, steps := held[of], 0; at >= 0 && steps <= len(items); at, steps = held[at], steps+1 {
-		switch items[at].Kind {
-		case sema.KindFunction, sema.KindMethod, sema.KindConstructor, sema.KindProperty,
-			sema.KindField, sema.KindVariable, sema.KindConstant:
-			return true
-		}
-	}
-	return false
-}
-
-// project returns one declaration carrying what the level does.
+// project returns the declaration of s at the level d. It sets the visibility at every level,
+// because [Narrow] reads it.
 func project(s sema.Symbol, d Detail) Declaration {
 	out := Declaration{
 		Name: s.Name,
 		Kind: s.Kind,
-		// A span counts from zero and a reader counts from one.
 		Line: s.Span.Start.Line + 1,
 		Path: string(s.Span.Path),
 	}
-	// Set before the cheapest level returns, because it is what
-	// [Narrow] reads to honour a request for exported declarations
-	// alone. Left until after, every level but this one narrowed and
-	// this one answered with the unexported declarations the caller had
-	// asked it to leave out.
 	if s.Visibility != sema.Exported {
 		out.Visibility = s.Visibility
 	}
@@ -311,14 +174,4 @@ func project(s sema.Symbol, d Detail) Declaration {
 	span := s.Span
 	out.Span = &span
 	return out
-}
-
-func width(s sema.Symbol) int {
-	return s.Span.End.Offset - s.Span.Start.Offset
-}
-
-func contains(outer, inner sema.Symbol) bool {
-	return outer.Span.Path == inner.Span.Path &&
-		outer.Span.Start.Offset <= inner.Span.Start.Offset &&
-		outer.Span.End.Offset >= inner.Span.End.Offset
 }
