@@ -20,7 +20,11 @@ const (
 	// method. The type is the container in the qualified name of the
 	// definition. It defines nothing on its own.
 	Receiver Capture = "receiver"
+)
 
+// Each definition capture starts with [DefinitionPrefix] and captures a declaration of the kind
+// that [kinds] maps it to.
+const (
 	DefinitionFunction      Capture = "definition.function"
 	DefinitionMethod        Capture = "definition.method"
 	DefinitionConstructor   Capture = "definition.constructor"

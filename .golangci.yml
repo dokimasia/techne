@@ -2,9 +2,7 @@
 #
 # Reference: https://golangci-lint.run/usage/configuration/
 #
-# The set below is a conservative baseline — every linter named
-# is a "no false-positive" check or a high-signal modernization
-# rule. Extend as the project grows.
+# Every linter here reports few false positives or modernizes code to the Go of go.mod.
 
 version: "2"
 
@@ -54,34 +52,16 @@ linters:
     - usetesting
 
   settings:
-    # depguard enforces the module dependency rules from RFC-0001:
-    # core imports nothing else in this repository; lang and presenter
-    # import core only; a language module imports core and lang and
-    # never a sibling language module; only the root module imports a
-    # language module or a presenter.
-    #
-    # Each rule is `list-mode: strict`, so anything the allow list does
-    # not name is denied. Two consequences worth knowing before the
-    # first lint failure:
-    #
-    #   - A language module added later is covered with no edit here. A
-    #     deny list would have to name each one and would silently stop
-    #     covering whichever was forgotten.
-    #   - Every third-party import must be named too. Adding a
-    #     dependency is an edit to this file as well as to go.mod.
-    #
-    # `$gostd` covers the standard library. The `$` suffix asks for an
-    # exact match: depguard matches by prefix, so a bare
-    # `go.dokimi.dev/techne/lang` would also allow
-    # `go.dokimi.dev/techne/lang/go`, which is the rule it exists to
-    # enforce. The root module has no rule and may import anything.
+    # depguard enforces the boundaries of the modules. Each rule is list-mode strict, so it
+    # refuses an import that its allow list does not name, and a new third-party import is an
+    # edit of this file beside go.mod. $gostd is the standard library without the go/ tree. An
+    # entry that ends with $ matches that path alone, and any other entry matches as a prefix.
+    # The root module has no rule and may import anything.
     depguard:
       rules:
-        # core declares what an engine implements and the vocabulary the
-        # ports speak. It consumes none of it: the services that drive
-        # the ports are techne-service, and the surface an agent calls is
-        # techne-tool. Neither may be imported here, and the list below
-        # is what stops one being.
+        # core declares the ports and the vocabulary, and imports nothing else of techne. The
+        # services that drive the ports are techne-service, and the surface of the agent is
+        # techne-tool.
         core:
           files: ["**/techne-core/**"]
           list-mode: strict
@@ -90,10 +70,8 @@ linters:
             - go.dokimi.dev/assert
             - go.dokimi.dev/techne/core
 
-        # The read path, the write path and the workspace they run over.
-        # It imports core and nothing else here: a service reaching for
-        # the tool surface would put presentation behind the thing that
-        # applies changes.
+        # The read path, the write path and the workspace. A service imports core, and not the
+        # surface of the agent.
         service:
           files: ["**/techne-service/**"]
           list-mode: strict
@@ -102,14 +80,12 @@ linters:
             - go.dokimi.dev/assert
             - go.dokimi.dev/techne/core
             - go.dokimi.dev/techne/service
-            # LockFileEx, the advisory lock of a file on Windows, which the lock of a
-            # workspace takes.
+            # LockFileEx, the advisory lock of a file on Windows, which the lock of a workspace
+            # takes.
             - golang.org/x/sys/windows
 
-        # The surface an agent calls. It takes a service through an
-        # interface it declares itself, so techne-service is absent from
-        # this list on purpose: a tool that could name a service would
-        # be tested against one.
+        # The surface of the agent. A tool takes a service through an interface that it
+        # declares, so techne-service is absent from this list.
         tool:
           files: ["**/techne-tool/**"]
           list-mode: strict
@@ -118,9 +94,8 @@ linters:
             - go.dokimi.dev/assert
             - go.dokimi.dev/techne/core
             - go.dokimi.dev/techne/tool
-            # Schema derivation from the handler's own types. Standalone
-            # rather than the MCP SDK's own, so the tool surface carries
-            # no transport and a second transport needs no second schema.
+            # The schema of a tool from the types of its handler. The library is a module of its
+            # own, so the surface of the agent does not import a transport.
             - github.com/google/jsonschema-go
 
         lang:
@@ -135,14 +110,11 @@ linters:
             - go.dokimi.dev/techne/lang/lsp
             - go.dokimi.dev/techne/lang/engines
             - go.dokimi.dev/techne/lang/conformance
-            # The tree-sitter binding. Grammars are not allowed here:
-            # a grammar belongs to one language, so it lives in that
-            # language's module.
+            # The binding of tree-sitter. A grammar belongs to one language, so the module of
+            # that language imports it.
             - github.com/tree-sitter/go-tree-sitter
-            # The language server protocol. Taken as a dependency for
-            # the union types: a definition is a location, a list of
-            # locations or a list of links, and decoding the wrong arm
-            # by hand reports nothing found rather than failing.
+            # The language server protocol, for its union types: a definition is a location, a
+            # list of locations or a list of links.
             - go.lsp.dev/protocol
             - go.lsp.dev/jsonrpc2
             - go.lsp.dev/uri
@@ -156,13 +128,51 @@ linters:
             - go.dokimi.dev/techne/core
             - go.dokimi.dev/techne/tool
             - go.dokimi.dev/techne/presenter
-            # The transport itself. This is the only module allowed it,
-            # which is the reason presenter is a module rather than a
-            # package beside the tool surface.
+            # The MCP SDK. The presenter is the only module that imports it.
             - github.com/modelcontextprotocol/go-sdk
 
+        # The production files of a language module import core and the shared packages of
+        # lang, and no other language module. The Go module has a rule of its own, because it
+        # imports its own type checker.
         language-module:
-          files: ["**/techne-lang-*/**"]
+          files: ["**/techne-lang-*/**", "!**/techne-lang-go/**", "!$test"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - go.dokimi.dev/techne/core
+            - go.dokimi.dev/techne/lang$
+            - go.dokimi.dev/techne/lang/engines
+            - go.dokimi.dev/techne/lang/lsp
+            - go.dokimi.dev/techne/lang/treesitter
+            - github.com/tree-sitter/go-tree-sitter
+            # A grammar of tree-sitter. The grammar of a module is the one that it imports.
+            - github.com/tree-sitter/tree-sitter-
+
+        go-module:
+          files: ["**/techne-lang-go/**", "!$test"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - go.dokimi.dev/techne/core
+            - go.dokimi.dev/techne/lang$
+            - go.dokimi.dev/techne/lang/engines
+            - go.dokimi.dev/techne/lang/lsp
+            - go.dokimi.dev/techne/lang/treesitter
+            - go.dokimi.dev/techne/lang/go
+            - github.com/tree-sitter/go-tree-sitter
+            - github.com/tree-sitter/tree-sitter-go
+            # The loader of the Go toolchain, which type-checks a module in the process, and the
+            # packages of the go/ tree that it returns.
+            - golang.org/x/tools/go/packages
+            - go/ast
+            - go/token
+            - go/types
+
+        # The tests of a language module import its own package and the test packages of lang,
+        # such as the conformance suite and the scripted server. depguard matches a file against
+        # any entry of files, so the globs name the test files of the language modules.
+        language-module-tests:
+          files: ["**/techne-lang-*/*_test.go", "**/techne-lang-*/**/*_test.go"]
           list-mode: strict
           allow:
             - $gostd
@@ -170,19 +180,8 @@ linters:
             - go.dokimi.dev/techne/core
             - go.dokimi.dev/techne/lang
             - github.com/tree-sitter/go-tree-sitter
-            # A grammar belongs to exactly one language module. The
-            # prefix admits every tree-sitter grammar rather than naming
-            # each: which one a module may use is settled by which one it
-            # imports, and no module can import another's.
             - github.com/tree-sitter/tree-sitter-
-            # Go is the one language whose compiler is already a
-            # dependency of any workspace written in it, so its module
-            # answers with the toolchain's own type checker rather than
-            # only through a server. Which module may use this is settled
-            # the same way a grammar is: by which one imports it.
             - golang.org/x/tools/go/packages
-            # And the parts of the standard library that loader hands
-            # back. $gostd does not cover the go/ tree.
             - go/ast
             - go/token
             - go/types
@@ -207,13 +206,14 @@ linters:
         - name: indent-error-flow
         - name: early-return
         - name: unused-receiver
+        # Every exported declaration has a comment that starts with its name.
+        - name: exported
 
     govet:
       enable-all: true
 
-    # A test that builds its own background context leaks it past the
-    # test. t.Context() is cancelled when the test finishes, so a
-    # forgotten goroutine dies with the test rather than outliving it.
+    # t.Context() is cancelled when the test ends, so a goroutine that a test forgets ends with
+    # the test. A context that a test builds itself outlives it.
     usetesting:
       context-background: true
       context-todo: true
@@ -224,12 +224,11 @@ linters:
       - std-error-handling
       - common-false-positives
     rules:
-      # fieldalignment is noise outside hot-path structs.
+      # fieldalignment matters only for structs on a hot path.
       - linters: [govet]
         text: "fieldalignment:"
-      # A conformance fixture is another language's source rather than
-      # prose. Ruby closes every nested block with `end`, so `end end` is
-      # the language and not a typo.
+      # A conformance fixture is the source of another language. Ruby closes every nested block
+      # with end, so `end end` is the language and not a repeated word.
       - linters: [dupword]
         path: techne-lang-.*/doc_test\.go
 
