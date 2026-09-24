@@ -70,17 +70,24 @@ func Grammar() treesitter.Grammar {
 // server is the program of jdtls, which is also the name of the server.
 const server = "jdtls"
 
+// outside is the argument of the launcher of jdtls that keeps the Eclipse metadata of each
+// project that jdtls imports, .project, .classpath and .settings, in the data directory of
+// jdtls. jdtls 1.61.0 writes them into the root of the project unless the JVM system property
+// java.import.generatesMetadataFilesAtProjectRoot is false.
+const outside = "--jvm-arg=-Djava.import.generatesMetadataFilesAtProjectRoot=false"
+
 // importing is how long a question waits for jdtls to settle. jdtls
 // imports the Maven or Gradle build of the workspace before it answers.
 const importing = 2 * time.Minute
 
 // Server returns the declaration of jdtls, the Eclipse JDT language server.
 // jdtls offers one extraction of the kind refactor.extract.function, which
-// extracts a method.
+// extracts a method. The command keeps the Eclipse metadata of a project
+// out of the workspace.
 func Server() lsp.Server {
 	return lsp.Server{
 		Name:       server,
-		Command:    []string{server},
+		Command:    []string{server, outside},
 		Loading:    importing,
 		LanguageID: lsp.IdentityJava,
 		Serves:     lsp.Binding(),

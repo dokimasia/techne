@@ -13,6 +13,10 @@ import (
 	"go.dokimi.dev/techne/lang/lsp"
 )
 
+// outside is the argument of the launcher of jdtls that the test pins: the JVM system property
+// that keeps the Eclipse metadata of a project in the data directory of jdtls.
+const outside = "--jvm-arg=-Djava.import.generatesMetadataFilesAtProjectRoot=false"
+
 func TestLanguage(t *testing.T) {
 	t.Parallel()
 
@@ -54,9 +58,9 @@ func TestLanguage(t *testing.T) {
 	t.Run("Server", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("runs jdtls without arguments", func(t *testing.T) {
+		t.Run("keeps the Eclipse metadata of a project out of its root", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, java.Server().Command, []string{"jdtls"}, "the command of jdtls")
+			assert.Equal(t, java.Server().Command, []string{"jdtls", outside}, "the command of jdtls")
 		})
 
 		t.Run("opens a file as java", func(t *testing.T) {
