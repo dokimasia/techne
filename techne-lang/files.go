@@ -69,17 +69,6 @@ func Walk(fsys fs.FS, scope source.Path, extensions []string) (Files, error) {
 	return out, nil
 }
 
-// FilesIn returns the read and unread files of [Walk] in one sorted list.
-func FilesIn(fsys fs.FS, scope source.Path, extensions []string) ([]source.Path, error) {
-	files, err := Walk(fsys, scope, extensions)
-	if err != nil {
-		return nil, err
-	}
-	all := slices.Concat(files.Read, files.Unread)
-	slices.Sort(all)
-	return all, nil
-}
-
 // Claims reports whether the extension of p is one of extensions. It reads
 // no filesystem, so it also applies to a path that does not exist.
 func Claims(p string, extensions []string) bool {
@@ -118,8 +107,11 @@ func located(fsys fs.FS, scope source.Path) (string, fs.FileInfo, *ignores, erro
 }
 
 // sizeOf returns the size of the file at p, following a symbolic link. It
-// reports false for a link to a directory, a link to nothing, and a file
-// removed during the walk.
+// reports false for:
+//
+//   - a link to a directory
+//   - a link to nothing
+//   - a file removed during the walk
 func sizeOf(fsys fs.FS, p string, d fs.DirEntry) (int64, bool) {
 	info, err := d.Info()
 	if err == nil && info.Mode()&fs.ModeSymlink != 0 {

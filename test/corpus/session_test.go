@@ -22,11 +22,12 @@ func TestSession(t *testing.T) {
 	assert.NoError(t, err, "Binary")
 
 	// session starts techne over a workspace of the mock language, which
-	// answers every tool without a language server.
+	// serves every tool without a language server.
 	session := func(t *testing.T) *corpus.Session {
 		t.Helper()
 		dir := t.TempDir()
-		writeFile(t, dir, "a.mock", ";; Store holds items.\ntype Store\n  field size\nfunc New -> Store\n  use Store\n")
+		writeFile(t, dir, "a.mock",
+			";; Store maps a name to an item.\ntype Store\n  field size\nfunc New\n  use Store\n")
 		s, err := corpus.Start(t.Context(), binary, dir, append(os.Environ(), "TECHNE_MOCK=1"), io.Discard)
 		assert.NoError(t, err, "Start")
 		t.Cleanup(func() { _ = s.Close() })

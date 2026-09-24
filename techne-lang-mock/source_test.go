@@ -4,90 +4,154 @@
 package mock_test
 
 import (
+	"slices"
+	"strconv"
 	"testing"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/sema"
+	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/lang/mock"
 )
 
-func TestParse(t *testing.T) {
+// covered returns the text of content that span covers.
+func covered(content []byte, span source.Span) string {
+	return string(content[span.Start.Offset:span.End.Offset])
+}
+
+func TestSource(t *testing.T) {
 	t.Parallel()
 
-	t.Run("a line", func(t *testing.T) {
+	t.Run("Parse", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("declares, refers, documents or is blank", func(t *testing.T) {
+		t.Run("returns a declaration with the documentation above it", func(t *testing.T) {
 			t.Parallel()
-			lines, broken := mock.Parse("a.mock", []byte(
-				";; what it is\ntype Store\n  use Other\n\n"))
-
-			assert.Empty(t, broken, "four shapes, all of them this language")
-			assert.Length(t, lines, 2, "documentation and blanks make no line of their own")
-			assert.Equal(t, lines[0].Name, "Store", "a declaration names what it makes")
-			assert.Equal(t, lines[0].Doc, "what it is", "and carries what was written above it")
-			assert.Equal(t, lines[1].Uses, "Other", "a use names what it refers to")
-			assert.Empty(t, lines[1].Name, "and declares nothing")
+			lines, broken := mock.Parse("a.mock", []byte(";; one\n;; two\ntype Store\n"))
+			assert.Empty(t, broken, "the broken lines")
+			assert.Length(t, lines, 1, "the lines")
+			assert.Equal(t, lines[0].Name, "Store", "the name of the declaration")
+			assert.Equal(t, lines[0].Kind, sema.KindType, "the kind of the declaration")
+			assert.Equal(t, lines[0].Doc, "one\ntwo", "the documentation of the declaration")
 		})
 
-		t.Run("is broken when it is none of them", func(t *testing.T) {
+		t.Run("returns a use without a name", func(t *testing.T) {
 			t.Parallel()
-			// A gate over this language is worth something only because
-			// there is something for it to catch.
-			_, broken := mock.Parse("a.mock", []byte("type Store\nnonsense here and there\n"))
-			assert.Length(t, broken, 1, "a line that is not this language is reported")
-			assert.Equal(t, broken[0].Start.Line, 1, "at the line it is on")
+			lines, _ := mock.Parse("a.mock", []byte("func New\n  use Store\n"))
+			assert.Equal(t, lines[1].Uses, "Store", "the name that the use names")
+			assert.Empty(t, lines[1].Name, "the name of the use")
 		})
 
-		t.Run("is broken when it is lenient about spacing", func(t *testing.T) {
+		t.Run("drops the documentation above a blank line", func(t *testing.T) {
 			t.Parallel()
-			// The name's position is worked out from the two lengths, so
-			// a parser that shrugged at extra spaces is one where a
-			// rename writes over the wrong bytes.
-			_, broken := mock.Parse("a.mock", []byte("type  Store\n"))
-			assert.Length(t, broken, 1, "one word, one space, one name")
+			lines, _ := mock.Parse("a.mock", []byte(";; lost\n\ntype Store\n"))
+			assert.Empty(t, lines[0].Doc, "the documentation of Store")
 		})
-	})
 
-	t.Run("a name", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("is spanned on its own, not with the line around it", func(t *testing.T) {
+		t.Run("returns the span of a line that the language does not have", func(t *testing.T) {
 			t.Parallel()
-			// Rewriting the line would rewrite the keyword too, which is
-			// the difference between a rename and a substitution.
+			_, broken := mock.Parse("a.mock", []byte("type Store\nnot this language\n"))
+			assert.Equal(t, broken, []source.Span{{
+				Path:  "a.mock",
+				Start: source.Position{Offset: 11, Line: 1},
+				End:   source.Position{Offset: 28, Line: 1, Column: 17},
+			}}, "the broken lines")
+		})
+
+		t.Run("returns a declaration with two spaces after the word as broken", func(t *testing.T) {
+			t.Parallel()
+			lines, broken := mock.Parse("a.mock", []byte("type  Store\n"))
+			assert.Empty(t, lines, "the lines")
+			assert.Length(t, broken, 1, "the broken lines")
+		})
+
+		t.Run("spans the name of a line alone", func(t *testing.T) {
+			t.Parallel()
 			content := []byte("type Store\n  use Store\n")
 			lines, _ := mock.Parse("a.mock", content)
+			for _, one := range lines {
+				assert.Equal(t, covered(content, one.At), "Store",
+					"the name on line "+strconv.Itoa(one.Span.Start.Line))
+			}
+		})
 
-			assert.Equal(t, string(content[lines[0].At.Start.Offset:lines[0].At.End.Offset]),
-				"Store", "the declaration's name and nothing else")
-			assert.Equal(t, string(content[lines[1].At.Start.Offset:lines[1].At.End.Offset]),
-				"Store", "and the use's, wherever the indentation put it")
+		t.Run("returns one level of depth per two spaces of indentation", func(t *testing.T) {
+			t.Parallel()
+			lines, _ := mock.Parse("a.mock", []byte("type Store\n  field size\n    use Other\n"))
+			depths := []int{lines[0].Depth, lines[1].Depth, lines[2].Depth}
+			assert.Equal(t, depths, []int{0, 1, 2}, "the depths of the lines")
+		})
+
+		t.Run("starts the span of a line after its indentation", func(t *testing.T) {
+			t.Parallel()
+			content := []byte("type Store\n  field size\n")
+			lines, _ := mock.Parse("a.mock", content)
+			assert.Equal(t, lines[1].Span, source.Span{
+				Path:  "a.mock",
+				Start: source.Position{Offset: 13, Line: 1, Column: 2},
+				End:   source.Position{Offset: 23, Line: 1, Column: 12},
+			}, "the span of the field")
+			assert.Equal(t, covered(content, lines[1].Span), "field size", "the text of the field")
+		})
+
+		t.Run("ends a line at a carriage return before a line feed", func(t *testing.T) {
+			t.Parallel()
+			content := []byte("type Store\r\n  use Store\r\n")
+			lines, broken := mock.Parse("a.mock", content)
+			assert.Empty(t, broken, "the broken lines")
+			assert.Equal(t, lines[0].Name, "Store", "the name of the declaration")
+			assert.Equal(t, lines[1].Uses, "Store", "the name that the use names")
+			for _, one := range lines {
+				assert.Equal(t, covered(content, one.At), "Store",
+					"the name on line "+strconv.Itoa(one.Span.Start.Line))
+			}
 		})
 	})
 
-	t.Run("nesting", func(t *testing.T) {
+	t.Run("Kinds", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("is two spaces to a level", func(t *testing.T) {
+		t.Run("returns words that each open a declaration", func(t *testing.T) {
 			t.Parallel()
-			lines, _ := mock.Parse("a.mock", []byte("type Store\n  field size\n    use Other\n"))
-			assert.Equal(t, lines[0].Depth, 0, "a declaration at the margin")
-			assert.Equal(t, lines[1].Depth, 1, "one inside it")
-			assert.Equal(t, lines[2].Depth, 2, "and one inside that")
+			for _, word := range mock.Kinds() {
+				lines, broken := mock.Parse("a.mock", []byte(word+" Name\n"))
+				assert.Empty(t, broken, "the broken lines of "+word)
+				assert.Equal(t, lines[0].Name, "Name", "the name that "+word+" declares")
+				assert.NotEqual(t, lines[0].Kind, sema.KindUnknown, "the kind that "+word+" declares")
+			}
+		})
+
+		t.Run("returns the words in byte order", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, slices.IsSorted(mock.Kinds()), "the order of the words")
 		})
 	})
 
 	t.Run("Visibility", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("is read off the name, as Go reads it", func(t *testing.T) {
-			t.Parallel()
-			// A language needs some rule, and this is the shortest to
-			// state. What matters for the tools is that there is one.
-			assert.Equal(t, mock.Visibility("Store"), sema.Exported, "a capital opens it up")
-			assert.Equal(t, mock.Visibility("size"), sema.Unexported, "and lowercase closes it")
-			assert.Equal(t, mock.Visibility(""), sema.VisibilityUnknown, "a name that is not one says nothing")
-		})
+		tests := []struct {
+			name string
+			give string
+			want sema.Visibility
+		}{
+			{
+				name: "returns exported for a name that starts with an upper-case letter",
+				give: "Store",
+				want: sema.Exported,
+			},
+			{
+				name: "returns unexported for a name that starts with a lower-case letter",
+				give: "size",
+				want: sema.Unexported,
+			},
+			{name: "returns unknown for the empty name", give: "", want: sema.VisibilityUnknown},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, mock.Visibility(tt.give), tt.want, "the visibility of "+tt.give)
+			})
+		}
 	})
 }

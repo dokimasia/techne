@@ -4,6 +4,8 @@
 package mock
 
 import (
+	"maps"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -11,37 +13,27 @@ import (
 	"go.dokimi.dev/techne/core/source"
 )
 
-// Line is one line of the language, read.
-//
-// A file is its lines and nothing else: there is no expression, no type
-// and no block. What is here is what the ports need to be exercised —
-// something to name, something to nest it in, something to refer to it,
-// and somewhere to write documentation.
+// Line is one declaration or one use of a mock file, as [Parse] reads it.
 type Line struct {
-	// Kind is what the line declares, or [sema.KindUnknown] for a line
-	// that refers rather than declares.
+	// Kind is the kind of a declaration, and [sema.KindUnknown] for a use.
 	Kind sema.Kind
+	// Name is the name that a declaration declares, and empty for a use.
 	Name string
-	// Uses is the declaration a use line names, empty on a declaration.
+	// Uses is the name that a use names, and empty for a declaration.
 	Uses string
-	// Doc is the documentation written above, already stripped.
+	// Doc is the documentation of a declaration: the lines above it that start with ;;, without
+	// the marker.
 	Doc string
-	// Depth is how far the line is indented, in levels of two spaces.
+	// Depth is the indentation of the line, in levels of two spaces.
 	Depth int
-	// Span covers the line, without its terminator.
+	// Span covers the line from its first character after the indentation to its end, without
+	// the line terminator.
 	Span source.Span
-	// At covers the name alone. Rewriting the line would rewrite what
-	// is around it as well, which is the difference between a rename and
-	// a substitution.
+	// At covers the name alone, which a rename rewrites.
 	At source.Span
 }
 
-// declares reports whether a word opens a declaration, and what of.
-//
-// The set is small on purpose. A language with every kind would be a
-// language to maintain rather than one to drive the tools with, and the
-// kinds here are the ones that nest, that are referred to, and that a
-// caller filters on.
+// declares maps each word that opens a declaration to the kind of the declaration.
 var declares = map[string]sema.Kind{
 	"type":   sema.KindType,
 	"func":   sema.KindFunction,
@@ -51,27 +43,26 @@ var declares = map[string]sema.Kind{
 	"var":    sema.KindVariable,
 }
 
-// Kinds returns the words this language declares with, so a caller can
-// write a file without reading the parser.
-func Kinds() []string {
-	return []string{"const", "field", "func", "method", "type", "var"}
-}
+// Kinds returns the words that open a declaration, sorted.
+func Kinds() []string { return slices.Sorted(maps.Keys(declares)) }
 
 const (
-	// documents opens a documentation line, which attaches to the
-	// declaration below it.
+	// documents opens a line of documentation, which belongs to the declaration below it.
 	documents = ";;"
-	// refers opens a line naming a declaration rather than making one.
+	// refers opens a use.
 	refers = "use"
-	// nests is how much indentation one level is.
+	// nests is the number of spaces of one level of indentation.
 	nests = 2
 )
 
-// Parse reads a file.
+// Parse returns the declarations and the uses of the file at p, in the order of its lines, and
+// the span of each line that the language does not have.
 //
-// Every line is one of four things: blank, documentation, a declaration
-// or a use. Anything else is a fault, which is what makes a gate over
-// this language mean something.
+// A line is blank, documentation that starts with ;;, a declaration, or a use. A declaration
+// is a word of [Kinds], one space and a name. A use is the word use, one space and a name. The
+// documentation of a declaration is the run of documentation lines right above it. A carriage
+// return before a line feed ends the line with it. The span of a line starts after its
+// indentation.
 func Parse(p source.Path, content []byte) ([]Line, []source.Span) {
 	var (
 		out    []Line
@@ -79,16 +70,16 @@ func Parse(p source.Path, content []byte) ([]Line, []source.Span) {
 		doc    []string
 		at     int
 	)
-
-	for number, text := range strings.Split(string(content), "\n") {
+	for number, raw := range strings.Split(string(content), "\n") {
+		text := strings.TrimSuffix(raw, "\r")
+		body := strings.TrimLeft(text, " ")
+		indent := len(text) - len(body)
 		line := source.Span{
 			Path:  p,
-			Start: source.Position{Offset: at, Line: number},
+			Start: source.Position{Offset: at + indent, Line: number, Column: indent},
 			End:   source.Position{Offset: at + len(text), Line: number, Column: len(text)},
 		}
-		at += len(text) + 1
-
-		body := strings.TrimLeft(text, " ")
+		at += len(raw) + 1
 
 		switch {
 		case body == "":
@@ -96,7 +87,7 @@ func Parse(p source.Path, content []byte) ([]Line, []source.Span) {
 		case strings.HasPrefix(body, documents):
 			doc = append(doc, strings.TrimSpace(strings.TrimPrefix(body, documents)))
 		default:
-			one, ok := read(body, len(text)-len(body), line)
+			one, ok := read(body, line)
 			if !ok {
 				broken = append(broken, line)
 				doc = nil
@@ -110,21 +101,18 @@ func Parse(p source.Path, content []byte) ([]Line, []source.Span) {
 	return out, broken
 }
 
-// read turns one non-blank, non-documentation line into what it says.
-//
-// One word, one space, one name. Anything else is a fault rather than
-// something to be lenient about: the name's position is worked out from
-// the two lengths, and a line that is lenient about spacing is one where
-// a rename writes over the wrong bytes.
-func read(body string, indent int, line source.Span) (Line, bool) {
+// read returns the declaration or the use that body writes on line, whose span starts at
+// body, and reports whether body is one. A single space separates the word and the name, so
+// the span of the name follows from the length of the word.
+func read(body string, line source.Span) (Line, bool) {
 	word, name, split := strings.Cut(body, " ")
 	if !split || name == "" || strings.ContainsAny(name, " \t") {
 		return Line{}, false
 	}
 
-	from := indent + len(word) + 1
-	held := Line{
-		Depth: indent / nests,
+	from := len(word) + 1
+	out := Line{
+		Depth: line.Start.Column / nests,
 		Span:  line,
 		Name:  name,
 		At: source.Span{
@@ -132,30 +120,30 @@ func read(body string, indent int, line source.Span) (Line, bool) {
 			Start: source.Position{
 				Offset: line.Start.Offset + from,
 				Line:   line.Start.Line,
-				Column: from,
+				Column: line.Start.Column + from,
 			},
 			End: source.Position{
 				Offset: line.Start.Offset + from + len(name),
 				Line:   line.Start.Line,
-				Column: from + len(name),
+				Column: line.Start.Column + from + len(name),
 			},
 		},
 	}
 
 	if word == refers {
-		held.Uses, held.Name = name, ""
-		return held, true
+		out.Uses, out.Name = name, ""
+		return out, true
 	}
 	kind, known := declares[word]
 	if !known {
 		return Line{}, false
 	}
-	held.Kind = kind
-	return held, true
+	out.Kind = kind
+	return out, true
 }
 
-// Visibility reads a name the way Go does, because a language needs some
-// rule and this one is the shortest to state.
+// Visibility returns [sema.Exported] for a name that starts with an upper-case letter,
+// [sema.Unexported] for another name, and [sema.VisibilityUnknown] for the empty name.
 func Visibility(name string) sema.Visibility {
 	if name == "" {
 		return sema.VisibilityUnknown

@@ -4,6 +4,7 @@
 package mock
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"maps"
@@ -14,17 +15,18 @@ import (
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
+	"go.dokimi.dev/techne/lang"
 )
 
-// Plan computes the edits an operation would need.
+// Plan returns the changes of an operation over the files of the workspace:
 //
-// Three of them, and each is a real rewrite of real bytes: a rename
-// moves every use as well as the declaration, documenting writes a
-// comment above it, and moving a file moves it. What makes this worth
-// having is the first: a rename that rewrites references is the
-// operation the policy refuses on weak evidence, and until something
-// could plan one there was nothing for that refusal to be tested
-// against.
+//   - [edit.RenameSymbol] rewrites the name of the declaration and the name of every use of it.
+//   - [edit.DocumentSymbol] replaces the documentation above the declaration.
+//   - [edit.MoveFile] moves the file, which no line of the language names.
+//
+// Plan reads every file of the workspace, because a use can be in any file. A target in a scope
+// without a file of the language gets a skipped result. Plan declines every other operation.
+// It refuses a target that does not identify a declaration or a file of the workspace.
 func (e *Engine) Plan(
 	ctx context.Context,
 	req engine.Request,
@@ -32,101 +34,124 @@ func (e *Engine) Plan(
 	target edit.Target,
 	args edit.Args,
 ) (engine.Result[edit.Change], error) {
-	held, err := e.read(ctx, req)
+	switch op {
+	case edit.RenameSymbol, edit.DocumentSymbol, edit.MoveFile:
+	default:
+		return engine.Result[edit.Change]{}, fmt.Errorf(
+			"%w: mock: the language has no planner for %s", engine.ErrDecline, op)
+	}
+	w, err := e.read(ctx, everywhere(req))
 	if err != nil {
 		return engine.Result[edit.Change]{}, err
 	}
+	if p := targeted(target); !lang.Claims(string(p), e.declared.Extensions) && !w.claims(p) {
+		return result(e, []edit.Change(nil), w, p), nil
+	}
 
+	var out engine.Result[edit.Change]
 	switch op {
 	case edit.RenameSymbol:
-		return e.renaming(held, target, args[edit.ArgNewName])
+		out, err = renaming(w, target, strings.TrimSpace(args[edit.ArgNewName]))
 	case edit.DocumentSymbol:
-		return e.documenting(held, target, args[edit.ArgDoc])
+		out, err = documenting(w, target, args[edit.ArgDoc])
 	case edit.MoveFile:
-		return e.moving(target, args[edit.ArgDestination])
-	default:
-		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"%w: this language has no planner for %s", engine.ErrDecline, op)
+		out, err = moving(w, target, strings.TrimSpace(args[edit.ArgDestination]))
 	}
+	if err != nil {
+		return engine.Result[edit.Change]{}, err
+	}
+	return result(e, out.Items, w, engine.Root), nil
 }
 
-// renaming rewrites a declaration's name and every use of it.
-//
-// Every use, which is the whole point: a rename that moved nine of ten
-// would leave code that still parses and means something else, and the
-// policy admitting this is what says the evidence was strong enough to
-// claim there is no tenth.
-func (e *Engine) renaming(
-	held workspace,
-	target edit.Target,
-	name string,
-) (engine.Result[edit.Change], error) {
-	one, found := pointed(held, target)
-	if !found {
-		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"%w: nothing is declared there", engine.ErrRefuse)
+// targeted returns the path of the file of target, or the empty string for a target that
+// identifies a declaration by its ID.
+func targeted(target edit.Target) source.Path {
+	switch target.Kind {
+	case edit.TargetSpan:
+		return target.Span.Path
+	case edit.TargetFile:
+		return target.Path
+	case edit.TargetUnset, edit.TargetSymbol:
 	}
-	if name == one.Name {
+	return ""
+}
+
+// renaming returns the edits that rename the declaration that target names, and every use of
+// its name, to name. It refuses a name that is not one word, the name that the declaration
+// has, and a declaration whose name another declaration shares, because a use refers to a
+// declaration by its name alone.
+func renaming(w workspace, target edit.Target, name string) (engine.Result[edit.Change], error) {
+	one, err := pointed(w, target)
+	switch {
+	case err != nil:
+		return engine.Result[edit.Change]{}, err
+	case name == "" || strings.ContainsAny(name, " \t\n"):
 		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"%w: it is already called %s", engine.ErrRefuse, name)
+			"%w: mock: %s needs a new name of one word", engine.ErrRefuse, edit.RenameSymbol)
+	case name == one.Name:
+		return engine.Result[edit.Change]{}, fmt.Errorf("%w: mock: %s is the name that the declaration has",
+			engine.ErrRefuse, name)
+	}
+	if shared := sharing(w.symbols, one.Name); shared > 1 {
+		return engine.Result[edit.Change]{}, fmt.Errorf(
+			"%w: mock: a use of %s refers to each of its %d declarations", engine.ErrRefuse, one.Name, shared)
 	}
 
 	at := map[source.Path][]edit.TextEdit{}
-	for _, p := range slices.Sorted(maps.Keys(held.lines)) {
-		for _, line := range held.lines[p] {
-			if line.Name != one.Name && line.Uses != one.Name {
-				continue
+	for _, p := range slices.Sorted(maps.Keys(w.lines)) {
+		for _, line := range w.lines[p] {
+			if line.Name == one.Name || line.Uses == one.Name {
+				at[p] = append(at[p], edit.TextEdit{Span: line.At, New: name})
 			}
-			at[p] = append(at[p], edit.TextEdit{Span: line.At, New: name})
 		}
 	}
-	out := changes(at)
-	out.Completeness = e.coverage
-	return out, nil
+	return changes(at), nil
 }
 
-// documenting writes a comment above a declaration, replacing whatever
-// documentation is there.
-func (e *Engine) documenting(
-	held workspace,
-	target edit.Target,
-	text string,
-) (engine.Result[edit.Change], error) {
-	one, found := pointed(held, target)
-	if !found {
-		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"%w: nothing is declared there", engine.ErrRefuse)
+// sharing returns the number of declarations of items named name.
+func sharing(items []sema.Symbol, name string) int {
+	n := 0
+	for _, one := range items {
+		if one.Name == name {
+			n++
+		}
 	}
-	if strings.TrimSpace(text) == "" {
+	return n
+}
+
+// documenting returns the edit that replaces the documentation above the declaration that
+// target names with text, one documentation line per line of text, at the indentation of the
+// declaration. A file whose lines end in a carriage return and a line feed gets both after
+// each line. It refuses a blank text.
+func documenting(w workspace, target edit.Target, text string) (engine.Result[edit.Change], error) {
+	one, err := pointed(w, target)
+	switch {
+	case err != nil:
+		return engine.Result[edit.Change]{}, err
+	case strings.TrimSpace(text) == "":
 		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"%w: there is nothing to write", engine.ErrRefuse)
+			"%w: mock: %s needs a text to write", engine.ErrRefuse, edit.DocumentSymbol)
 	}
 
 	p := one.Span.Path
-	from, to := above(held.content[p], one)
+	from, to := above(w.content[p], one)
+	ending := "\n"
+	if bytes.Contains(w.content[p], []byte("\r\n")) {
+		ending = "\r\n"
+	}
 	indent := strings.Repeat(" ", one.Span.Start.Column)
-
 	var written []string
 	for line := range strings.SplitSeq(text, "\n") {
-		written = append(written, indent+documents+" "+line)
+		written = append(written, indent+documents+" "+line+ending)
 	}
-	out := changes(map[source.Path][]edit.TextEdit{p: {{
-		Span: source.Span{
-			Path:  p,
-			Start: source.Position{Offset: from},
-			End:   source.Position{Offset: to},
-		},
-		New: strings.Join(written, "\n") + "\n",
-	}}})
-	out.Completeness = e.coverage
-	return out, nil
+	return changes(map[source.Path][]edit.TextEdit{p: {{
+		Span: source.Span{Path: p, Start: source.Position{Offset: from}, End: source.Position{Offset: to}},
+		New:  strings.Join(written, ""),
+	}}}), nil
 }
 
-// above is the byte range the documentation for a declaration occupies,
-// or an empty range at the start of its line where there is none.
-//
-// Replacing rather than adding to: a declaration carrying two comments
-// is one this language's reader takes only the second of.
+// above returns the byte range of the documentation lines right above the declaration of,
+// or the empty range at the start of its line when there are none.
 func above(content []byte, of sema.Symbol) (from, to int) {
 	start := of.Span.Start.Offset - of.Span.Start.Column
 	from = start
@@ -143,54 +168,60 @@ func above(content []byte, of sema.Symbol) (from, to int) {
 	return from, start
 }
 
-// moving takes a file somewhere else. Nothing refers to a file in this
-// language, so the move is the whole change.
-func (e *Engine) moving(target edit.Target, to string) (engine.Result[edit.Change], error) {
-	if to == "" {
+// moving returns the move of the file that target names to to. It refuses a target that names
+// no file of the workspace, and a move without a destination.
+func moving(w workspace, target edit.Target, to string) (engine.Result[edit.Change], error) {
+	switch {
+	case target.Kind != edit.TargetFile || !slices.Contains(w.claimed, target.Path):
 		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"%w: there is nowhere to move it to", engine.ErrRefuse)
+			"%w: mock: %s names a file of the workspace, and the target names none", engine.ErrRefuse, edit.MoveFile)
+	case to == "":
+		return engine.Result[edit.Change]{}, fmt.Errorf(
+			"%w: mock: %s needs %s", engine.ErrRefuse, edit.MoveFile, edit.ArgDestination)
 	}
 	return engine.Result[edit.Change]{
-		Items: []edit.Change{{
-			Kind: edit.ChangeMove, Path: target.Path, To: source.Path(to),
-		}},
-		Completeness: e.coverage,
+		Items: []edit.Change{{Kind: edit.ChangeMove, Path: target.Path, To: source.Path(to)}},
 	}, nil
 }
 
-// pointed is the declaration a target names.
-func pointed(held workspace, target edit.Target) (sema.Symbol, bool) {
+// pointed returns the declaration that target names: the declaration that starts at the start
+// of its span, or the one declaration with its ID. It returns [engine.ErrRefuse] for a target
+// that does not identify a declaration, and for an ID of two or more declarations.
+func pointed(w workspace, target edit.Target) (sema.Symbol, error) {
 	switch target.Kind {
 	case edit.TargetSpan:
-		for _, one := range held.symbols {
-			if one.Span.Path == target.Span.Path &&
-				one.Span.Start.Offset == target.Span.Start.Offset {
-				return one, true
+		for _, one := range w.symbols {
+			if one.Span.Path == target.Span.Path && one.Span.Start.Offset == target.Span.Start.Offset {
+				return one, nil
 			}
 		}
 	case edit.TargetSymbol:
-		return byID(held.symbols, target.Symbol)
+		switch found := matching(w.symbols, target.Symbol); len(found) {
+		case 0:
+		case 1:
+			return found[0], nil
+		default:
+			return sema.Symbol{}, fmt.Errorf("%w: mock: %s names %d declarations",
+				engine.ErrRefuse, target.Symbol, len(found))
+		}
 	case edit.TargetUnset, edit.TargetFile:
 	}
-	return sema.Symbol{}, false
+	return sema.Symbol{}, fmt.Errorf("%w: mock: the target names no declaration", engine.ErrRefuse)
 }
 
-// changes turns per-file edits into the changes a plan carries, sorted
-// as the write path requires: it walks an edit list once and never looks
-// back, so an unsorted list writes the wrong bytes.
+// changes returns the edits of at as one change per file, in path order, with the edits of
+// each file sorted by offset, as the write path applies them.
 func changes(at map[source.Path][]edit.TextEdit) engine.Result[edit.Change] {
 	var out []edit.Change
 	for _, p := range slices.Sorted(maps.Keys(at)) {
 		edits := at[p]
-		slices.SortFunc(edits, func(a, b edit.TextEdit) int {
-			return a.Span.Start.Offset - b.Span.Start.Offset
-		})
+		slices.SortFunc(edits, func(a, b edit.TextEdit) int { return a.Span.Start.Offset - b.Span.Start.Offset })
 		out = append(out, edit.Change{Kind: edit.ChangeEdit, Path: p, Edits: edits})
 	}
 	return engine.Result[edit.Change]{Items: out}
 }
 
-// assert the engine serves every role its package comment claims.
+// Engine implements the port of every role that it serves.
 var _ interface {
 	engine.Outliner
 	engine.Searcher

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strings"
 
 	"go.dokimi.dev/techne/core/engine"
@@ -16,38 +17,42 @@ import (
 	"go.dokimi.dev/techne/lang"
 )
 
-// Outline reports what the files in a scope declare.
+// dynamic is the caveat on every answer of an engine at the resolved tier.
+var dynamic = trust.Caveat{
+	Code: trust.CaveatDynamic,
+	Note: "no static analysis binds a name that a program builds at run time",
+}
+
+// Outline returns the declarations of the files of the language in the scope of req, in path
+// order and in the order that each file writes them. A declaration spans the lines nested
+// under it.
 func (e *Engine) Outline(ctx context.Context, req engine.Request) (engine.Result[sema.Symbol], error) {
-	held, err := e.read(ctx, req)
+	w, err := e.read(ctx, req)
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, err
 	}
-	return e.found(held.symbols, len(held.lines)), nil
+	return result(e, w.symbols, w, req.Scope), nil
 }
 
-// Search reports the declarations in a scope matching a query.
-//
-// An exact name first, then a prefix, then anything holding the text.
-// The order is the engine's own, which is what a service must not
-// re-rank: an engine that binds names knows more about which match is
-// wanted than the thing displaying them.
+// Search returns the declarations in the scope of req that match q. The exact names come
+// first, then the names that start with the text of q, then the names and the documentation
+// that contain it, each group in outline order and each match without regard to case. q.Kind
+// and q.Private filter the declarations. An answer cut at q.Limit has a
+// [trust.CaveatTruncated] caveat with the number of matches returned and found.
 func (e *Engine) Search(
 	ctx context.Context,
 	req engine.Request,
 	q engine.Query,
 ) (engine.Result[sema.Symbol], error) {
-	held, err := e.read(ctx, req)
+	w, err := e.read(ctx, req)
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, err
 	}
 
 	wanted := strings.ToLower(q.Text)
 	var exact, prefixed, loose []sema.Symbol
-	for _, one := range held.symbols {
-		if q.Kind != sema.KindUnknown && one.Kind != q.Kind {
-			continue
-		}
-		if !q.Private && one.Visibility == sema.Unexported {
+	for _, one := range w.symbols {
+		if q.Kind != sema.KindUnknown && one.Kind != q.Kind || !q.Private && one.Visibility == sema.Unexported {
 			continue
 		}
 		name := strings.ToLower(one.Name)
@@ -61,95 +66,91 @@ func (e *Engine) Search(
 		}
 	}
 
-	out := append(append(exact, prefixed...), loose...)
-	if q.Limit > 0 && len(out) > q.Limit {
-		out = out[:q.Limit]
+	matched := slices.Concat(exact, prefixed, loose)
+	out := result(e, matched, w, req.Scope)
+	if q.Limit > 0 && len(matched) > q.Limit {
+		out.Items = matched[:q.Limit]
+		out.Caveats = append(out.Caveats, trust.Caveat{
+			Code: trust.CaveatTruncated,
+			Note: fmt.Sprintf("%d of %d matches returned", q.Limit, len(matched)),
+		})
 	}
-	return e.found(out, len(held.lines)), nil
+	return out, nil
 }
 
-// workspace is one read of a scope: what it declares, and what refers to
-// what.
+// workspace is one read of the files of the language in a scope.
 type workspace struct {
+	// symbols are the declarations of the files that the read parsed, in path order.
 	symbols []sema.Symbol
-	// lines are the parsed lines each file holds, kept so the write path
-	// can point at a name rather than at a line.
+	// lines are the lines of each file that the read parsed.
 	lines map[source.Path][]Line
-	// uses are the reference sites, by the name they name.
-	uses map[string][]source.Span
-	// broken are the lines that are not this language.
-	broken []source.Span
-	// content is what each file held, kept so a plan can be computed
-	// against the bytes rather than against the lines alone.
+	// content is the content of each file that the read parsed.
 	content map[source.Path][]byte
+	// claimed are the files of the language in the scope, the test files and the files that the
+	// read leaves out included.
+	claimed []source.Path
+	// unread are the files larger than [lang.Largest], which the read leaves out.
+	unread []source.Path
 }
 
-// read walks a scope and reads every file this language claims.
-//
-// The whole scope, every time. An engine that cached would be an engine
-// whose staleness had to be tested, and what this exists for is the
-// tools rather than the caching.
+// claims reports whether scope contains a file of the language that the read found.
+func (w workspace) claims(scope source.Path) bool {
+	return slices.ContainsFunc(w.claimed, func(p source.Path) bool { return lang.Within(p, scoped(scope)) })
+}
+
+// read returns the files of the language in the scope of req, parsed, with the test files only
+// when req includes tests. It walks the scope with [lang.Walk] and reads each file anew. A file
+// larger than [lang.Largest] is not read.
 func (e *Engine) read(ctx context.Context, req engine.Request) (workspace, error) {
-	paths, err := lang.FilesIn(e.fsys, req.Scope, e.declared.Extensions)
+	files, err := lang.Walk(e.fsys, scoped(req.Scope), e.declared.Extensions)
 	if err != nil {
 		return workspace{}, err
 	}
 
 	out := workspace{
 		lines:   map[source.Path][]Line{},
-		uses:    map[string][]source.Span{},
 		content: map[source.Path][]byte{},
+		claimed: slices.Concat(files.Read, files.Unread),
+		unread:  files.Unread,
 	}
-	for _, p := range paths {
+	for _, p := range files.Read {
 		if err := ctx.Err(); err != nil {
 			return workspace{}, err
 		}
 		if !req.Tests && e.declared.IsTest(string(p)) {
 			continue
 		}
-		content, readErr := fs.ReadFile(e.fsys, string(p))
-		if readErr != nil {
-			return workspace{}, fmt.Errorf("mock: read %s: %w", p, readErr)
+		content, err := fs.ReadFile(e.fsys, string(p))
+		if err != nil {
+			return workspace{}, fmt.Errorf("mock: read %s: %w", p, err)
 		}
-
-		lines, broken := Parse(p, content)
+		lines, _ := Parse(p, content)
 		out.lines[p], out.content[p] = lines, content
-		out.broken = append(out.broken, broken...)
 		out.symbols = append(out.symbols, e.declarations(p, lines, content)...)
-		for _, one := range lines {
-			if one.Uses != "" {
-				out.uses[one.Uses] = append(out.uses[one.Uses], one.At)
-			}
-		}
 	}
 	return out, nil
 }
 
-// declarations turns one file's lines into the declarations they make.
-//
-// Nesting is by indentation, so the parent of a line is the nearest line
-// above it at a shallower depth. A use nests under whatever it sits in
-// and declares nothing.
-func (e *Engine) declarations(p source.Path, lines []Line, content []byte) []sema.Symbol {
-	unit := source.Path(e.declared.Namespace(string(p)))
+// scoped returns scope, with the empty scope as [engine.Root].
+func scoped(scope source.Path) source.Path {
+	if scope == "" {
+		return engine.Root
+	}
+	return scope
+}
 
+// declarations returns the declarations of the lines of the file at p. A declaration spans the
+// lines nested under it. Its parent is the smallest declaration whose span contains it, which
+// [sema.Containers] finds, and its ID is qualified by the qualified name of the parent.
+func (e *Engine) declarations(p source.Path, lines []Line, content []byte) []sema.Symbol {
 	var out []sema.Symbol
-	within := map[int]sema.ID{}
 	for i, one := range lines {
 		if one.Name == "" {
 			continue
 		}
-		id := sema.NewID(e.declared.Language, unit, one.Name, one.Kind)
-		within[one.Depth] = id
-
-		// A declaration covers what is nested under it, as it does in
-		// every language with a body. Reporting the line alone would
-		// leave nothing able to tell that a field sits inside a type.
 		span := one.Span
 		span.End = through(lines, i).End
-
-		held := sema.Symbol{
-			ID:         id,
+		out = append(out, sema.Symbol{
 			Name:       one.Name,
 			Kind:       one.Kind,
 			Language:   e.declared.Language,
@@ -158,17 +159,26 @@ func (e *Engine) declarations(p source.Path, lines []Line, content []byte) []sem
 			Doc:        one.Doc,
 			Signature:  text(one),
 			Snippet:    quoted(content, span),
+		})
+	}
+
+	// A parent starts on an earlier line than its child, so its qualified name and its ID are
+	// set before the child reads them.
+	unit := source.Path(e.declared.Namespace(string(p)))
+	qualified := make([]string, len(out))
+	for i, parent := range sema.Containers(out) {
+		qualified[i] = out[i].Name
+		if parent >= 0 {
+			qualified[i] = sema.Qualify(qualified[parent], out[i].Name)
+			out[i].Parent = out[parent].ID
 		}
-		if one.Depth > 0 {
-			held.Parent = within[one.Depth-1]
-		}
-		out = append(out, held)
+		out[i].ID = sema.NewID(e.declared.Language, unit, qualified[i], out[i].Kind)
 	}
 	return out
 }
 
-// through is the last line nested under the one at this index, or that
-// line itself where nothing is.
+// through returns the span of the last line nested under the line at index at, or of that line
+// when nothing is nested under it.
 func through(lines []Line, at int) source.Span {
 	last := lines[at].Span
 	for i := at + 1; i < len(lines); i++ {
@@ -180,7 +190,7 @@ func through(lines []Line, at int) source.Span {
 	return last
 }
 
-// text is the declaration as written, without its indentation.
+// text returns a line without its indentation: the word and the name.
 func text(one Line) string {
 	if one.Uses != "" {
 		return refers + " " + one.Uses
@@ -188,33 +198,36 @@ func text(one Line) string {
 	return kindWord(one.Kind) + " " + one.Name
 }
 
-// kindWord is the word this language declares that kind with.
+// kindWord returns the word that declares a declaration of kind k.
 func kindWord(k sema.Kind) string {
-	for word, held := range declares {
-		if held == k {
+	for word, declared := range declares {
+		if declared == k {
 			return word
 		}
 	}
 	return ""
 }
 
-// found wraps symbols in the result this engine returns, at the tier it
-// was registered to claim.
+// result returns items with the evidence of w for scope:
 //
-// A scope holding no file of this language says so. It is not an answer
-// about the language, and a service merging several must not let it
-// lower what the others are worth.
-func (e *Engine) found(items []sema.Symbol, read int) engine.Result[sema.Symbol] {
-	out := engine.Result[sema.Symbol]{
-		Items: items, Completeness: e.coverage, Skipped: read == 0,
-	}
+//   - The result is skipped when scope contains no file of the language.
+//   - The completeness is the one that [Covering] set, and partial when the read left out a
+//     file larger than [lang.Largest]. A [trust.CaveatUnread] caveat lists such files.
+//   - An engine at the resolved tier adds the [trust.CaveatDynamic] caveat.
+func result[T any](e *Engine, items []T, w workspace, scope source.Path) engine.Result[T] {
+	out := engine.Result[T]{Items: items, Completeness: e.coverage, Skipped: !w.claims(scope)}
 	if e.fidelity >= trust.Resolved {
-		// Every resolved answer carries it, because no static analysis
-		// sees a name assembled at run time.
-		out.Caveats = []trust.Caveat{{
-			Code: trust.CaveatDynamic,
-			Note: "a name built at run time is invisible here, as it is to every engine",
-		}}
+		out.Caveats = append(out.Caveats, dynamic)
+	}
+	if len(w.unread) > 0 {
+		if out.Completeness == trust.ScopeTotal {
+			out.Completeness = trust.ScopePartial
+		}
+		out.Caveats = append(out.Caveats, trust.Caveat{
+			Code:  trust.CaveatUnread,
+			Note:  fmt.Sprintf("larger than %d bytes, so not read", lang.Largest),
+			Paths: w.unread,
+		})
 	}
 	return out
 }

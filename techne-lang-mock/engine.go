@@ -15,13 +15,9 @@ import (
 	"go.dokimi.dev/techne/lang"
 )
 
-// Engine answers every port, over files it really reads.
-//
-// It claims what it can do rather than what would be convenient. The
-// default is resolved and total because within this language both are
-// true: a use names a declaration, and the whole workspace is read to
-// find it. [At] and [Covering] lower either, which is how a refusal is
-// exercised rather than described.
+// Engine serves every role of a mock language over the files of a workspace, at the tier, the
+// completeness and the cost that its options set. Each call reads the files anew, so an
+// Engine is safe for concurrent use.
 type Engine struct {
 	fsys     fs.FS
 	declared lang.Declaration
@@ -31,15 +27,17 @@ type Engine struct {
 	missing  string
 }
 
-// New returns an engine over a workspace.
+// New returns an engine over the workspace in fsys for the language that d declares, with
+// opts applied. The engine claims [trust.Resolved], [trust.ScopeTotal] and
+// [engine.CostAnalyze] unless an option sets another value. New returns an error for a nil
+// fsys and for a declaration without a language.
 func New(fsys fs.FS, d lang.Declaration, opts ...Option) (*Engine, error) {
 	if fsys == nil {
-		return nil, fmt.Errorf("mock: no filesystem to read from")
+		return nil, errors.New("mock: the engine has no filesystem to read")
 	}
 	if d.Language == "" {
-		return nil, fmt.Errorf("mock: declaration names no language")
+		return nil, errors.New("mock: the declaration names no language")
 	}
-
 	e := &Engine{
 		fsys:     fsys,
 		declared: d,
@@ -53,33 +51,29 @@ func New(fsys fs.FS, d lang.Declaration, opts ...Option) (*Engine, error) {
 	return e, nil
 }
 
-// Name identifies this engine in a provenance and a capability report.
-// It carries the language, because one adapter serves every mock
-// language and five instances sharing one name would collide.
+// Name returns mock/ and the name of the language, so two mock languages of one catalogue
+// have two engine names.
 func (e *Engine) Name() string { return "mock/" + string(e.declared.Language) }
 
-// Language is the one language this engine answers about.
+// Language returns the language of the declaration that the engine was built with.
 func (e *Engine) Language() source.Language { return e.declared.Language }
 
-// Fidelity is what this language was registered to claim, for every
-// role. A language that binds names binds them whatever is asked.
+// Fidelity returns the tier that [At] set for every role.
 func (e *Engine) Fidelity(engine.Role) trust.Fidelity { return e.fidelity }
 
-// Cost is what this language was registered to cost.
+// Cost returns the cost that [Costing] set for every role.
 func (e *Engine) Cost(engine.Role) engine.Cost { return e.cost }
 
-// Available reports the reason this language cannot run, where one was
-// given. A language declared missing is reported rather than hidden, so
-// a caller learns the difference between a capability nothing has and
-// one whose tool is not installed.
+// Available returns an error with the reason that [Missing] set, and nil for an engine without
+// that option.
 func (e *Engine) Available(context.Context) error {
 	if e.missing == "" {
 		return nil
 	}
-	return errors.New("mock: " + e.missing)
+	return fmt.Errorf("mock: %s", e.missing)
 }
 
-// assert the engine claims what its package comment says it does.
+// Engine implements the engine port and reports whether it is available.
 var _ interface {
 	engine.Engine
 	engine.Available

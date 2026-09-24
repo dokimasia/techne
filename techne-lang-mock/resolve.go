@@ -4,218 +4,202 @@
 package mock
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"maps"
 	"slices"
-	"strings"
 
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
+	"go.dokimi.dev/techne/lang"
 )
 
-// Resolve reports what the name at a position denotes.
+// Resolve returns the declarations of every file of the workspace that the name at a position
+// names. The scope of req is the file of the position, and a use can refer to a declaration of
+// any file. A position with an offset takes its line and column from the file.
 //
-// The position may carry only a line and a column, which is what a
-// caller reading an editor has. The offset is worked out here, because
-// only an engine has the file to count in.
-//
-// The whole workspace is read, not the file the position is in. What a
-// name denotes is usually declared somewhere else, and an engine that
-// looked only where it was pointed would answer "nothing" for every
-// cross-file reference while claiming it had covered the scope.
+// Resolve returns a skipped result for a scope without a file of the language. It declines a
+// directory with files of the language, because a position belongs to one file, and a file of
+// the language that the workspace does not contain or that is too large to read.
 func (e *Engine) Resolve(
 	ctx context.Context,
 	req engine.Request,
 	at source.Position,
 ) (engine.Result[sema.Symbol], error) {
-	held, err := e.read(ctx, everywhere(req))
+	w, err := e.read(ctx, everywhere(req))
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, err
 	}
-
-	named := naming(held, req.Scope, at)
-	if named == "" {
-		return e.found(nil, len(held.lines)), nil
+	p := scoped(req.Scope)
+	lines, parsed := w.lines[p]
+	switch {
+	case parsed:
+	case lang.Claims(string(p), e.declared.Extensions) && slices.Contains(w.unread, p):
+		return engine.Result[sema.Symbol]{}, fmt.Errorf("%w: mock: %s is larger than %d bytes",
+			engine.ErrDecline, p, lang.Largest)
+	case lang.Claims(string(p), e.declared.Extensions):
+		return engine.Result[sema.Symbol]{}, fmt.Errorf("%w: mock: the workspace contains no %s",
+			engine.ErrDecline, p)
+	case w.claims(p):
+		return engine.Result[sema.Symbol]{}, fmt.Errorf(
+			"%w: mock: a position names a file, and %s is a directory", engine.ErrDecline, p)
+	default:
+		return result(e, []sema.Symbol(nil), w, p), nil
 	}
 
+	line, column := at.Line, at.Column
+	if at.Offset > 0 {
+		line, column = placed(w.content[p], at.Offset)
+	}
+	named := naming(lines, line, column)
 	var out []sema.Symbol
-	for _, one := range held.symbols {
-		if one.Name == named {
+	for _, one := range w.symbols {
+		if named != "" && one.Name == named {
 			out = append(out, one)
 		}
 	}
-	return e.found(out, len(held.lines)), nil
+	return result(e, out, w, p), nil
 }
 
-// Relate reports how a declaration connects to the rest.
+// Relate returns the relations of kind from the declaration with the ID of, from every file of
+// the workspace, sorted by the path and the offset of their sites. A use is an edge from the
+// innermost declaration that contains it to each declaration of the name that it uses:
 //
-// One direction is stored and both are answered: a use line is an edge
-// from what holds it to what it names, so who calls this and what this
-// calls are the same edges read from opposite ends.
+//   - [sema.ReferencedBy] and [sema.CalledBy] return the uses of the name of the declaration.
+//   - [sema.References] and [sema.Calls] return the declarations that the uses inside the
+//     declaration name.
 //
-// The whole workspace, for the reason [Engine.Resolve] reads it: who
-// calls this is a question about everywhere, and an engine that read one
-// file would report the callers in it and claim there were no others.
+// Another kind gets an empty result, because the language has no other edge. Relate returns a
+// skipped result for a scope without a file of the language. It declines an ID that no
+// declaration has, and refuses an ID that two or more declarations have.
 func (e *Engine) Relate(
 	ctx context.Context,
 	req engine.Request,
 	of sema.ID,
 	kind sema.RelationKind,
 ) (engine.Result[sema.Relation], error) {
-	held, err := e.read(ctx, everywhere(req))
+	w, err := e.read(ctx, everywhere(req))
 	if err != nil {
 		return engine.Result[sema.Relation]{}, err
 	}
-
-	subject, known := byID(held.symbols, of)
-	if !known {
-		return engine.Result[sema.Relation]{Completeness: e.coverage}, nil
+	if !w.claims(req.Scope) {
+		return result(e, []sema.Relation(nil), w, req.Scope), nil
+	}
+	found := matching(w.symbols, of)
+	switch len(found) {
+	case 0:
+		return engine.Result[sema.Relation]{}, fmt.Errorf("%w: mock: no declaration matches %s",
+			engine.ErrDecline, of)
+	case 1:
+	default:
+		return engine.Result[sema.Relation]{}, fmt.Errorf("%w: mock: %s names %d declarations",
+			engine.ErrRefuse, of, len(found))
 	}
 
 	var out []sema.Relation
 	switch kind {
 	case sema.CalledBy, sema.ReferencedBy:
-		out = e.toward(held, subject, kind)
+		out = toward(w, found[0], kind)
 	case sema.Calls, sema.References:
-		out = from(held, subject, kind)
-	default:
-		// A direction this language has no edge for is answered with
-		// none rather than refused: the caller asked something
-		// answerable and the answer is that there are none.
+		out = from(w, found[0], kind)
 	}
-	return engine.Result[sema.Relation]{Items: out, Completeness: e.coverage}, nil
+	return result(e, out, w, req.Scope), nil
 }
 
-// toward finds what refers to a declaration.
-func (e *Engine) toward(held workspace, of sema.Symbol, kind sema.RelationKind) []sema.Relation {
+// toward returns the uses of the name of the declaration subject, each with the innermost
+// declaration that contains it, in path order and in the order of the lines of each file.
+func toward(w workspace, subject sema.Symbol, kind sema.RelationKind) []sema.Relation {
 	var out []sema.Relation
-	for _, p := range slices.Sorted(maps.Keys(held.lines)) {
-		lines := held.lines[p]
-		for i, one := range lines {
-			if one.Uses != of.Name {
+	for _, p := range slices.Sorted(maps.Keys(w.lines)) {
+		for _, one := range w.lines[p] {
+			if one.Uses != subject.Name {
 				continue
 			}
-			within, found := enclosing(lines, i)
-			if !found {
-				continue
+			if container, found := innermost(w.symbols, one.At); found {
+				out = append(out, sema.Relation{Kind: kind, To: container, At: one.At, Via: text(one)})
 			}
-			out = append(out, sema.Relation{
-				Kind: kind,
-				To:   e.symbol(p, held, within),
-				At:   one.At,
-				Via:  text(one),
-			})
 		}
 	}
-	return sorted(out)
+	return out
 }
 
-// from finds what a declaration refers to.
-func from(held workspace, of sema.Symbol, kind sema.RelationKind) []sema.Relation {
+// from returns the declarations that the uses inside the declaration subject name, at the site
+// of each use, in path order and in the order of the lines of each file.
+func from(w workspace, subject sema.Symbol, kind sema.RelationKind) []sema.Relation {
 	var out []sema.Relation
-	for _, p := range slices.Sorted(maps.Keys(held.lines)) {
-		lines := held.lines[p]
-		for i, one := range lines {
+	for _, p := range slices.Sorted(maps.Keys(w.lines)) {
+		for _, one := range w.lines[p] {
 			if one.Uses == "" {
 				continue
 			}
-			within, found := enclosing(lines, i)
-			if !found || within.Name != of.Name {
+			if container, found := innermost(w.symbols, one.At); !found || container.ID != subject.ID {
 				continue
 			}
-			for _, named := range held.symbols {
-				if named.Name != one.Uses {
-					continue
+			for _, named := range w.symbols {
+				if named.Name == one.Uses {
+					out = append(out, sema.Relation{Kind: kind, To: named, At: one.At, Via: text(one)})
 				}
-				out = append(out, sema.Relation{
-					Kind: kind, To: named, At: one.At, Via: text(one),
-				})
 			}
 		}
 	}
-	return sorted(out)
+	return out
 }
 
-// sorted puts edges in a fixed order, so two identical questions get two
-// identical answers and a caller diffing them sees only changes somebody
-// made.
-func sorted(edges []sema.Relation) []sema.Relation {
-	slices.SortStableFunc(edges, func(a, b sema.Relation) int {
-		if held := strings.Compare(string(a.At.Path), string(b.At.Path)); held != 0 {
-			return held
-		}
-		return a.At.Start.Offset - b.At.Start.Offset
-	})
-	return edges
-}
-
-// enclosing is the declaration a line sits inside: the nearest one above
-// it at a shallower depth.
-func enclosing(lines []Line, at int) (Line, bool) {
-	for i := at - 1; i >= 0; i-- {
-		if lines[i].Name != "" && lines[i].Depth < lines[at].Depth {
-			return lines[i], true
+// innermost returns the declaration of symbols with the smallest span that contains at, and
+// reports whether a span contains it. The spans of one file nest, so the smallest span that
+// contains at is the one that starts last.
+func innermost(symbols []sema.Symbol, at source.Span) (sema.Symbol, bool) {
+	var out sema.Symbol
+	found := false
+	for _, one := range symbols {
+		inside := one.Span.Path == at.Path && one.Span.Start.Offset <= at.Start.Offset &&
+			at.End.Offset <= one.Span.End.Offset
+		if inside && (!found || one.Span.Start.Offset > out.Span.Start.Offset) {
+			out, found = one, true
 		}
 	}
-	return Line{}, false
+	return out, found
 }
 
-// symbol is one line as the declaration it makes.
-func (e *Engine) symbol(p source.Path, held workspace, one Line) sema.Symbol {
-	for _, named := range e.declarations(p, held.lines[p], held.content[p]) {
-		if named.Name == one.Name && named.Span == one.Span {
-			return named
-		}
-	}
-	return sema.Symbol{Name: one.Name, Kind: one.Kind, Language: e.declared.Language}
-}
-
-// byID finds the declaration an identity names, and reports whether
-// exactly one does.
-func byID(items []sema.Symbol, of sema.ID) (sema.Symbol, bool) {
-	var found sema.Symbol
-	seen := 0
+// matching returns the declarations of items with the ID of.
+func matching(items []sema.Symbol, of sema.ID) []sema.Symbol {
+	var out []sema.Symbol
 	for _, one := range items {
 		if one.ID == of {
-			found, seen = one, seen+1
+			out = append(out, one)
 		}
 	}
-	return found, seen == 1
+	return out
 }
 
-// everywhere widens a request to the workspace.
-//
-// A question about what a name means is a question about everywhere it
-// could have been declared. The scope a caller gave still says where the
-// position is; it does not say where the answer may come from.
+// everywhere returns req with the whole workspace as its scope and the test files included, for
+// a question whose answer can be in any file.
 func everywhere(req engine.Request) engine.Request {
 	req.Scope = engine.Root
 	req.Tests = true
 	return req
 }
 
-// naming is the declaration a position falls on.
-//
-// A map ranges in no order, so the walk is over the file the caller
-// asked about rather than over whatever came first.
-func naming(held workspace, scope source.Path, where source.Position) string {
-	for _, p := range slices.Sorted(maps.Keys(held.lines)) {
-		lines := held.lines[p]
-		if scope != "" && p != scope {
+// naming returns the name that the line of lines at the zero-based line and column covers, or
+// the empty string for none.
+func naming(lines []Line, line, column int) string {
+	for _, one := range lines {
+		if one.At.Start.Line != line || column < one.At.Start.Column || column >= one.At.End.Column {
 			continue
 		}
-		for _, one := range lines {
-			if one.At.Start.Line != where.Line {
-				continue
-			}
-			if where.Column >= one.At.Start.Column && where.Column < one.At.End.Column {
-				if one.Uses != "" {
-					return one.Uses
-				}
-				return one.Name
-			}
+		if one.Uses != "" {
+			return one.Uses
 		}
+		return one.Name
 	}
 	return ""
+}
+
+// placed returns the zero-based line and column of the byte at offset of content.
+func placed(content []byte, offset int) (int, int) {
+	offset = min(offset, len(content))
+	start := bytes.LastIndexByte(content[:offset], '\n') + 1
+	return bytes.Count(content[:offset], []byte("\n")), offset - start
 }

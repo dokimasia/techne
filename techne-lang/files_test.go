@@ -174,21 +174,6 @@ func TestFiles(t *testing.T) {
 		})
 	})
 
-	t.Run("FilesIn", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("returns the read and unread files in one sorted list", func(t *testing.T) {
-			t.Parallel()
-			fsys := fstest.MapFS{
-				"a.fx": {Data: bytes.Repeat([]byte("x"), lang.Largest+1)},
-				"b.fx": {Data: []byte("x")},
-			}
-			got, err := lang.FilesIn(fsys, ".", claimed)
-			assert.NoError(t, err, "FilesIn")
-			assert.Equal(t, got, []source.Path{"a.fx", "b.fx"}, "files")
-		})
-	})
-
 	t.Run("Claims", func(t *testing.T) {
 		t.Parallel()
 

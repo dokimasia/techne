@@ -14,12 +14,12 @@ import (
 	"go.dokimi.dev/techne/lang/mock"
 )
 
-// workspace is what every case here reads: a container with a member, a
-// function that refers to it, and a second file that refers to both.
+// workspace returns a type with a member, a function that uses the type, a file that uses
+// both, and a file of another language.
 func workspace() fstest.MapFS {
 	return fstest.MapFS{
 		"src/store.mock": {Data: []byte(
-			";; Store holds items by name.\n" +
+			";; Store maps a name to an item.\n" +
 				"type Store\n" +
 				"  field size\n" +
 				"  method Get\n" +
@@ -35,11 +35,17 @@ func workspace() fstest.MapFS {
 	}
 }
 
-// built returns an engine over the workspace.
+// built returns an engine over [workspace] with opts applied.
 func built(t *testing.T, opts ...mock.Option) *mock.Engine {
 	t.Helper()
-	e, err := mock.New(workspace(), mock.Declaration(mock.Language), opts...)
-	assert.NoError(t, err, "an engine builds from a declaration and a filesystem")
+	return over(t, workspace(), opts...)
+}
+
+// over returns an engine over fsys with opts applied.
+func over(t *testing.T, fsys fstest.MapFS, opts ...mock.Option) *mock.Engine {
+	t.Helper()
+	e, err := mock.New(fsys, mock.Declaration(mock.Language), opts...)
+	assert.NoError(t, err, "New")
 	return e
 }
 
@@ -49,61 +55,76 @@ func TestEngine(t *testing.T) {
 	t.Run("New", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("refuses a declaration naming no language", func(t *testing.T) {
+		t.Run("returns an error for a declaration without a language", func(t *testing.T) {
 			t.Parallel()
 			_, err := mock.New(workspace(), lang.Declaration{})
-			assert.HasError(t, err, "a language without a name routes nowhere")
+			assert.HasError(t, err, "New without a language")
 		})
 
-		t.Run("refuses no filesystem", func(t *testing.T) {
+		t.Run("returns an error for a nil filesystem", func(t *testing.T) {
 			t.Parallel()
 			_, err := mock.New(nil, mock.Declaration(mock.Language))
-			assert.HasError(t, err, "an engine with nothing to read answers about nothing")
+			assert.HasError(t, err, "New without a filesystem")
 		})
 	})
 
 	t.Run("Name", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("carries the language, so instances do not collide", func(t *testing.T) {
+		t.Run("returns a name per language", func(t *testing.T) {
 			t.Parallel()
-			// One adapter serves every mock language. A constant name
-			// would have a catalogue refuse the second and a provenance
-			// unable to say which answered.
-			one, err := mock.New(workspace(), mock.Declaration("alpha"))
-			assert.NoError(t, err, "an engine builds")
-			two, err := mock.New(workspace(), mock.Declaration("beta"))
-			assert.NoError(t, err, "and so does a second")
-			assert.NotEqual(t, one.Name(), two.Name(), "two languages are two engines")
+			alpha, err := mock.New(workspace(), mock.Declaration("alpha"))
+			assert.NoError(t, err, "New of alpha")
+			beta, err := mock.New(workspace(), mock.Declaration("beta"))
+			assert.NoError(t, err, "New of beta")
+			assert.Equal(t, alpha.Name(), "mock/alpha", "the name of alpha")
+			assert.Equal(t, beta.Name(), "mock/beta", "the name of beta")
 		})
 	})
 
 	t.Run("Fidelity", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("is resolved unless a caller lowers it", func(t *testing.T) {
+		t.Run("returns resolved by default", func(t *testing.T) {
 			t.Parallel()
-			// Honest rather than convenient: within this language a use
-			// names a declaration and the workspace is read whole.
-			assert.Equal(t, built(t).Fidelity(engine.RoleOutline), trust.Resolved,
-				"what it claims is what it does")
-			assert.Equal(t, built(t, mock.At(trust.Syntactic)).Fidelity(engine.RoleOutline),
-				trust.Syntactic,
-				"and a workspace can hold one that only parses, so the refusal is real")
+			assert.Equal(t, built(t).Fidelity(engine.RoleOutline), trust.Resolved, "the tier of outline")
+		})
+
+		t.Run("returns the tier that At sets", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, built(t, mock.At(trust.Syntactic)).Fidelity(engine.RoleOutline), trust.Syntactic,
+				"the tier of outline")
+		})
+	})
+
+	t.Run("Cost", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns an analysis by default", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, built(t).Cost(engine.RoleRelate), engine.CostAnalyze, "the cost of relate")
+		})
+
+		t.Run("returns the cost that Costing sets", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, built(t, mock.Costing(engine.CostSession)).Cost(engine.RoleRelate), engine.CostSession,
+				"the cost of relate")
 		})
 	})
 
 	t.Run("Available", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("reports a language that cannot run, with the reason", func(t *testing.T) {
+		t.Run("returns nil by default", func(t *testing.T) {
 			t.Parallel()
-			// A missing tool is a different problem from a missing
-			// capability, and a caller can act on the first.
-			assert.NoError(t, built(t).Available(t.Context()),
-				"a language with nothing outside the process always runs")
-			assert.HasError(t, built(t, mock.Missing("nothing is installed")).Available(t.Context()),
-				"and one declared missing says so rather than answering")
+			assert.NoError(t, built(t).Available(t.Context()), "Available")
+		})
+
+		t.Run("returns the reason that Missing sets", func(t *testing.T) {
+			t.Parallel()
+			err := built(t, mock.Missing("nothing is installed")).Available(t.Context())
+			assert.HasError(t, err, "Available of a missing language")
+			assert.Contains(t, err.Error(), "nothing is installed", "the reason of the error")
 		})
 	})
 }

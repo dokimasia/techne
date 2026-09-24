@@ -1,48 +1,56 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: MIT
 
-// Package mock is a language that exists to be driven.
+// Package mock declares a line-oriented language whose [Engine] reads its files itself and
+// serves the roles outline, search, resolve, relate, plan, check and verify at the tier that
+// its registration sets. Tests and a composition root register it to exercise the tools of
+// techne at tiers that no language module claims for every role.
 //
-// # Why a language rather than a test double
+// # Registration
 //
-// Every port core declares can be answered at any tier. Nothing techne
-// ships answers above [go.dokimi.dev/techne/core/trust.Syntactic]: a
-// parser matches text, so it cannot resolve, relate, or plan a change
-// that rewrites references. The tools for those roles would go untested
-// against anything but a refusal, and the ports would be shaped by what
-// a parser happens to manage rather than by what a caller needs.
+// [Registering] returns the registration of a mock language of a name, which claims the
+// extension of that name, so a composition root can register two or more that route apart.
+// These options set what a language claims:
 //
-// This answers all of them, over real files it really reads, and claims
-// the tier it really has. Within its own small language it resolves: a
-// use names a declaration, and the workspace is read whole, so an empty
-// answer means there are none.
+//   - [At] sets the tier of every role, [go.dokimi.dev/techne/core/trust.Resolved] by default.
+//   - [Covering] sets the completeness of every answer,
+//     [go.dokimi.dev/techne/core/trust.ScopeTotal] by default.
+//   - [Missing] makes [Engine.Available] return an error with a reason.
+//   - [Costing] sets the cost of every role,
+//     [go.dokimi.dev/techne/core/engine.CostAnalyze] by default.
 //
-// # It is a factory, not a language
-//
-// [Registering] takes a name and returns the registration for a language
-// of that name, claiming the extension of the same name. Registering
-// three gives a workspace holding three languages that answer
-// differently, which is what routing, merging and per-language refusal
-// need in order to be exercised at all.
-//
-// [With] narrows what one of them claims, so a workspace can hold a
-// language that resolves beside one that only parses, and the refusals
-// between them are real rather than simulated.
+// [Register] registers one mock language, named [Language].
 //
 // # The language
 //
-// Line-oriented, indentation-nested, and small enough to read in one
-// sitting. [Parse] is the whole of it.
+// [Parse] reads a file as a list of lines. A line is blank, documentation that starts with ;;,
+// a declaration of a word of [Kinds] and a name, or a use of a name. Two spaces indent a line
+// one level into the declaration above it.
 //
-//	;; Store holds items.
+//	;; Store maps a name to an item.
 //	type Store
 //	  field size
-//	func New -> Store
+//	func New
 //	  use Store
+//
+// # Answers
+//
+// The roles do not keep state between calls. Each call reads what it needs:
+//
+//   - Outline and Search read the files of the language in the scope of the request.
+//   - Resolve, Relate and Plan read every file of the language in the workspace, because a use
+//     can refer to a declaration of any file.
+//   - Verify checks the uses in the scope against the declarations of every file.
+//   - Check parses the content of a change and does not read a file.
+//
+// An answer for a scope without a file of the language is skipped. A file larger than
+// [go.dokimi.dev/techne/lang.Largest] is not read, and an answer that needs it is partial. An
+// answer at the resolved tier has a [go.dokimi.dev/techne/core/trust.CaveatDynamic] caveat for
+// the names that a program builds at run time. Relate declines an ID that no declaration has,
+// and Plan refuses a target that does not identify a declaration.
 //
 // # Dependency position
 //
-// Imports core and lang, and nothing else in this repository, as every
-// language module does. It compiles without cgo and depends on no
-// grammar.
+// Imports the standard library, core/diag, core/edit, core/engine, core/sema, core/source,
+// core/trust and lang. It does not need cgo or a grammar.
 package mock
