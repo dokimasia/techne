@@ -11,18 +11,17 @@ import (
 	"go.dokimi.dev/techne/lang/java"
 )
 
-// TestDoc runs the suite every language module runs.
-//
-// The fixture carries one of every declaration form Java has,
-// along with the documentation, annotations and modifiers written on
-// them, because the suite compares the outline against it as a whole
-// set: a form left out here is a form nothing checks.
+// TestDoc runs the conformance suite over a fixture that declares every
+// form of Java declaration once, with the documentation, annotations and
+// modifiers of each form.
 func TestDoc(t *testing.T) {
 	t.Parallel()
 
 	conformance.Run(t, conformance.Suite{
 		Declaration: java.Declaration(),
 		Grammar:     java.Grammar(),
+		Server:      java.Server(),
+		Register:    java.Register,
 		Unclaimed:   "notes.md",
 		Files: map[string]string{
 			"pkg/Service.java": `package pkg;
@@ -67,7 +66,7 @@ public class Store implements Readable {
 		},
 		Declares: []conformance.Declared{
 			{Name: "pkg", Kind: sema.KindPackage},
-			{Name: "java.util.List", Kind: sema.KindImport},
+			{Name: "java.util.List", Kind: sema.KindImport, Visibility: sema.Unexported, Simple: "List"},
 
 			{
 				Name: "Readable", Kind: sema.KindInterface,
@@ -89,7 +88,7 @@ public class Store implements Readable {
 			{Name: "size", Kind: sema.KindField, Modifiers: []string{"private"}},
 
 			{Name: "Store", Kind: sema.KindConstructor},
-			{Name: "start", Kind: sema.KindParameter},
+			{Name: "start", Kind: sema.KindParameter, Visibility: sema.Unexported},
 
 			{
 				Name: "get", Kind: sema.KindMethod,
@@ -98,10 +97,10 @@ public class Store implements Readable {
 			},
 
 			{Name: "pick", Kind: sema.KindMethod, Modifiers: []string{"static"}},
-			{Name: "T", Kind: sema.KindTypeParameter},
-			{Name: "first", Kind: sema.KindParameter},
-			{Name: "second", Kind: sema.KindParameter},
-			{Name: "both", Kind: sema.KindVariable},
+			{Name: "T", Kind: sema.KindTypeParameter, Visibility: sema.Unexported},
+			{Name: "first", Kind: sema.KindParameter, Visibility: sema.Unexported},
+			{Name: "second", Kind: sema.KindParameter, Visibility: sema.Unexported},
+			{Name: "both", Kind: sema.KindVariable, Visibility: sema.Unexported},
 		},
 	})
 }

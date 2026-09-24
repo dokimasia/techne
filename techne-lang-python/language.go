@@ -16,28 +16,29 @@ import (
 	"go.dokimi.dev/techne/lang/treesitter"
 )
 
-// Language is the wire form this module claims. It reaches a caller and,
-// through a sema identity, an index that outlives the process, so
-// changing it invalidates stored data.
+// Language is the language this module declares. Every sema.ID of a Python
+// declaration contains it, so a change invalidates the IDs an index has
+// stored.
 const Language source.Language = "python"
 
-// Upstream's query is vendored for diffing but not compiled in, which
-// is the exception rather than the rule here. It tags every module-level
-// assignment @definition.constant, and Python has no constant: what it
-// calls one is a variable that nothing reassigns by convention. Keeping
-// it would report `registry = {}` as a constant, which CPython's own
-// symbol table disagrees with.
-
+// extendsQuery is the tags query that the module compiles in place of the
+// upstream query in queries/upstream.scm. Upstream captures an assignment
+// at module level as @definition.constant, and Python has no constant. The
+// module keeps the upstream query to compare it with the next release of
+// the grammar.
+//
 //go:embed queries/extends.scm
 var extendsQuery string
 
-// Declaration states the facts about python that hold whichever
-// engine serves it.
+// Declaration returns the declaration of Python, with the visibility rule
+// of PEP 8 and the test files of pytest.
 func Declaration() lang.Declaration {
 	return lang.Declaration{
 		Language:   Language,
 		Extensions: []string{".py", ".pyi"},
-		Manifests:  []string{"pyproject.toml", "setup.py"},
+		// The project files of PEP 621 and setuptools, and the configuration
+		// file of pyright.
+		Manifests: []string{"pyproject.toml", "setup.py", "setup.cfg", "pyrightconfig.json"},
 		Comment: lang.CommentStyle{
 			Line: "# ",
 			Doc: []lang.DocStyle{
@@ -48,13 +49,13 @@ func Declaration() lang.Declaration {
 			},
 		},
 		IsTest:     IsTest,
-		Namespace:  Namespace,
+		Namespace:  lang.Stem,
 		Visibility: Visibility,
 	}
 }
 
-// Grammar pairs the compiled grammar with the tags query vendored from
-// upstream.
+// Grammar returns the tree-sitter grammar of Python with the tags query of
+// the module.
 func Grammar() treesitter.Grammar {
 	return treesitter.Grammar{
 		Language: ts.NewLanguage(binding.Language()),
@@ -62,27 +63,15 @@ func Grammar() treesitter.Grammar {
 	}
 }
 
-// What runs this language's server.
-//
-// The program is named once and used twice, as the server's own name and
-// as the command to run: a declaration that spelt them differently would
-// report one thing about itself and start another.
+// The program of pyright's language server, which is also the name of the
+// server, and the flag that selects LSP over stdio.
 const (
 	server = "pyright-langserver"
-	// stdio is the flag that speaks the protocol over stdin and stdout rather than
-	// over a socket or a node channel.
-	stdio = "--stdio"
+	stdio  = "--stdio"
 )
 
-// Server is the language server this module declares.
-//
-// pyright is the type checker behind the Python extension for Visual
-// Studio Code, and the only widely installed one that binds names
-// rather than guessing at them.
-//
-// Declared whether or not it is installed. Told nothing, a caller
-// concludes this language cannot be served at all; told the server is
-// missing, it knows what to install.
+// Server returns the declaration of pyright, the type checker of the
+// Python extension of Visual Studio Code.
 func Server() lsp.Server {
 	return lsp.Server{
 		Name:       server,
@@ -92,11 +81,8 @@ func Server() lsp.Server {
 	}
 }
 
-// Register adds python to a registry and its engines to a catalogue.
-//
-// A composition root calls this. Which engines follow from a workspace
-// is settled in one place rather than ten, so a language cannot end up
-// served differently from its siblings by accident.
+// Register adds Python to r and its engines to c: the tree-sitter engine,
+// and pyright for a workspace on disk.
 func Register(w lang.Workspace, r *lang.Registry, c *engine.Catalog) error {
 	return engines.Register(w, r, c, Declaration(), Grammar(), Server())
 }

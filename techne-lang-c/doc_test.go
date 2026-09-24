@@ -11,20 +11,20 @@ import (
 	"go.dokimi.dev/techne/lang/conformance"
 )
 
-// TestDoc runs the suite every language module runs.
-//
-// The fixture carries one of every declaration form C has,
-// because the suite compares the outline against it as a whole set: a
-// form left out here is a form nothing checks.
+// TestDoc runs the conformance suite over a fixture that declares every
+// form of C declaration once.
 func TestDoc(t *testing.T) {
 	t.Parallel()
 
 	conformance.Run(t, conformance.Suite{
 		Declaration: c.Declaration(),
 		Grammar:     c.Grammar(),
+		Server:      c.Server(),
+		Register:    c.Register,
 		Unclaimed:   "notes.md",
 		Files: map[string]string{
 			"pkg/store.c": `#include <stdio.h>
+#include "store.h"
 
 #define LIMIT 10
 #define SQUARE(x) ((x) * (x))
@@ -61,7 +61,8 @@ static int read_store(struct Store *held, enum Colour tint) {
 `,
 		},
 		Declares: []conformance.Declared{
-			{Name: "<stdio.h>", Kind: sema.KindImport},
+			{Name: "<stdio.h>", Kind: sema.KindImport, Visibility: sema.Unexported, Simple: "stdio"},
+			{Name: "store.h", Kind: sema.KindImport, Visibility: sema.Unexported, Simple: "store"},
 			{Name: "Bits", Kind: sema.KindUnion},
 			{Name: "Colour", Kind: sema.KindEnum},
 			{Name: "GREEN", Kind: sema.KindEnumMember},
@@ -70,8 +71,8 @@ static int read_store(struct Store *held, enum Colour tint) {
 			{Name: "SQUARE", Kind: sema.KindMacro, Signature: "#define SQUARE(x) ((x) * (x))"},
 			{Name: "Store", Kind: sema.KindStruct, Doc: "Store holds a count."},
 			{Name: "Store", Kind: sema.KindType, Doc: "Store holds a count."},
-			{Name: "a", Kind: sema.KindParameter},
-			{Name: "a", Kind: sema.KindParameter},
+			{Name: "a", Kind: sema.KindParameter, Visibility: sema.Unexported},
+			{Name: "a", Kind: sema.KindParameter, Visibility: sema.Unexported},
 			{
 				Name: "borrow", Kind: sema.KindFunction,
 				Signature: "static int * borrow(int *a)",
@@ -82,14 +83,14 @@ static int read_store(struct Store *held, enum Colour tint) {
 				Doc:       "Returns its argument.",
 				Modifiers: []string{"static"},
 			},
-			{Name: "held", Kind: sema.KindParameter},
-			{Name: "local", Kind: sema.KindVariable},
+			{Name: "held", Kind: sema.KindParameter, Visibility: sema.Unexported},
+			{Name: "local", Kind: sema.KindVariable, Visibility: sema.Unexported},
 			{
 				Name: "read_store", Kind: sema.KindFunction,
 				Doc:       "Reads a store, which names its type without declaring it.",
 				Modifiers: []string{"static"},
 			},
-			{Name: "tint", Kind: sema.KindParameter},
+			{Name: "tint", Kind: sema.KindParameter, Visibility: sema.Unexported},
 			{Name: "n", Kind: sema.KindField},
 			{Name: "raw", Kind: sema.KindField},
 		},

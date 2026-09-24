@@ -10,34 +10,41 @@ import (
 	binding "github.com/tree-sitter/tree-sitter-ruby/bindings/go"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
+	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/lang"
 	"go.dokimi.dev/techne/lang/engines"
 	"go.dokimi.dev/techne/lang/lsp"
 	"go.dokimi.dev/techne/lang/treesitter"
 )
 
-// Language is the wire form this module claims. It reaches a caller and,
-// through a sema identity, an index that outlives the process, so
-// changing it invalidates stored data.
+// Language is the language this module declares. Every sema.ID of a Ruby
+// declaration contains it, so a change invalidates the IDs an index has
+// stored.
 const Language source.Language = "ruby"
 
-// Upstream's query, unchanged, followed by this module's own patterns.
-// Keeping them in separate files makes upgrading a grammar a re-vendor
-// and a diff review rather than a hand merge.
-
+// upstreamQuery is the tags query of the grammar's repository, vendored
+// unchanged, so an upgrade of the grammar replaces the file and a review
+// reads the diff.
+//
 //go:embed queries/upstream.scm
 var upstreamQuery string
 
+// extendsQuery holds the patterns of the module, which Grammar appends to
+// upstreamQuery.
+//
 //go:embed queries/extends.scm
 var extendsQuery string
 
-// Declaration states the facts about ruby that hold whichever
-// engine serves it.
+// Declaration returns the declaration of Ruby.
 func Declaration() lang.Declaration {
 	return lang.Declaration{
 		Language:   Language,
 		Extensions: []string{".rb", ".rake", ".gemspec"},
-		Manifests:  []string{"Gemfile", "Rakefile"},
+		// The Gemfile names that Bundler reads, the Rakefile names that rake
+		// reads, and the specification of a gem.
+		Manifests: []string{
+			"Gemfile", "gems.rb", "Rakefile", "rakefile", "Rakefile.rb", "rakefile.rb", "*.gemspec",
+		},
 		Comment: lang.CommentStyle{
 			Line: "# ", BlockOpen: "=begin", BlockClose: "=end",
 			Doc: []lang.DocStyle{
@@ -46,12 +53,13 @@ func Declaration() lang.Declaration {
 			},
 		},
 		IsTest:     IsTest,
-		Namespace:  Namespace,
-		Visibility: Visibility,
+		Namespace:  lang.Stem,
+		Visibility: lang.VisibilityByModifier,
 	}
 }
 
-// Grammar pairs the compiled grammar with this module's tags query.
+// Grammar returns the tree-sitter grammar of Ruby with the upstream tags
+// query and the patterns of the module.
 func Grammar() treesitter.Grammar {
 	return treesitter.Grammar{
 		Language: ts.NewLanguage(binding.Language()),
@@ -59,37 +67,29 @@ func Grammar() treesitter.Grammar {
 	}
 }
 
-// server is what runs this language's server.
-//
-// Named once and used twice, as the server's own name and as the command
-// to run: a declaration that spelt them differently would report one
-// thing about itself and start another. It needs no argument, because it
-// speaks the protocol over stdio and does nothing else.
+// server is the program of ruby-lsp, which is also the name of the server.
 const server = "ruby-lsp"
 
-// Server is the language server this module declares.
+// Server returns the declaration of ruby-lsp, the language server of
+// Shopify. ruby-lsp runs under the Ruby and the bundle of the process that
+// starts techne.
 //
-// ruby-lsp is Shopify's server and the one Ruby tooling has settled
-// on. It expects to run under the Ruby and the bundle of the project
-// it is looking at, which is what whoever launches techne arranges.
-//
-// Declared whether or not it is installed. Told nothing, a caller
-// concludes this language cannot be served at all; told the server is
-// missing, it knows what to install.
+// ruby-lsp finds the references of a method by its name, so the uses of
+// one method include the methods of other classes with that name. Its
+// relations claim the indexed tier.
 func Server() lsp.Server {
+	serves := lsp.Binding()
+	serves[engine.RoleRelate] = trust.Indexed
 	return lsp.Server{
 		Name:       server,
 		Command:    []string{server},
 		LanguageID: lsp.IdentityRuby,
-		Serves:     lsp.Binding(),
+		Serves:     serves,
 	}
 }
 
-// Register adds ruby to a registry and its engines to a catalogue.
-//
-// A composition root calls this. Which engines follow from a workspace
-// is settled in one place rather than ten, so a language cannot end up
-// served differently from its siblings by accident.
+// Register adds Ruby to r and its engines to c: the tree-sitter engine,
+// and ruby-lsp for a workspace on disk.
 func Register(w lang.Workspace, r *lang.Registry, c *engine.Catalog) error {
 	return engines.Register(w, r, c, Declaration(), Grammar(), Server())
 }

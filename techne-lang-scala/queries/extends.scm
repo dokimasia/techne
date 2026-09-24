@@ -1,7 +1,5 @@
-;; Everything Scala declares, at any depth.
-;;
-;; Upstream is the fullest of the ten and still captures no parameter,
-;; no import, no type parameter and no case-class field.
+;; The declarations of Scala at any depth. The upstream query captures no
+;; parameter, import, type parameter or field of a case class.
 
 (class_definition name: (identifier) @name) @definition.class
 (object_definition name: (identifier) @name) @definition.object
@@ -26,6 +24,15 @@
 (contravariant_type_parameter name: (identifier) @name) @definition.type_parameter
 (package_clause (package_identifier) @name) @definition.package
 
-;; An import names its path in repeated path fields with no node holding
-;; them together, so the first segment is what a pattern can bind.
-(import_declaration path: (identifier) @name) @definition.import
+;; An import writes the segments of its path as children of the
+;; declaration, each with the path field. A pattern on a repeated field
+;; matches the first child with the field only, so the patterns select a
+;; segment by its position. Each pattern binds the name that an import
+;; brings into scope: the last segment of a path, the package of a wildcard
+;; import, each name of a selector group, and the alias of a renamed name.
+(import_declaration (identifier) @name .) @definition.import
+(import_declaration (identifier) @name . (namespace_wildcard)) @definition.import
+(import_declaration (namespace_selectors (identifier) @name)) @definition.import
+(import_declaration (namespace_selectors (arrow_renamed_identifier alias: (identifier) @name))) @definition.import
+(import_declaration (namespace_selectors (as_renamed_identifier alias: (identifier) @name))) @definition.import
+(import_declaration (as_renamed_identifier alias: (identifier) @name)) @definition.import

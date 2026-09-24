@@ -17,28 +17,35 @@ import (
 	"go.dokimi.dev/techne/lang/treesitter"
 )
 
-// Language is the wire form this module claims. It reaches a caller and,
-// through a sema identity, an index that outlives the process, so
-// changing it invalidates stored data.
+// Language is the language this module declares. Every sema.ID of a Scala
+// declaration contains it, so a change invalidates the IDs an index has
+// stored.
 const Language source.Language = "scala"
 
-// Upstream's query, unchanged, followed by this module's own patterns.
-// Keeping them in separate files makes upgrading a grammar a re-vendor
-// and a diff review rather than a hand merge.
-
+// upstreamQuery is the tags query of the grammar's repository, vendored
+// unchanged, so an upgrade of the grammar replaces the file and a review
+// reads the diff.
+//
 //go:embed queries/upstream.scm
 var upstreamQuery string
 
+// extendsQuery holds the patterns of the module, which Grammar appends to
+// upstreamQuery.
+//
 //go:embed queries/extends.scm
 var extendsQuery string
 
-// Declaration states the facts about scala that hold whichever
-// engine serves it.
+// Declaration returns the declaration of Scala.
 func Declaration() lang.Declaration {
 	return lang.Declaration{
 		Language:   Language,
 		Extensions: []string{".scala", ".sc"},
-		Manifests:  []string{"build.sbt", "build.sc"},
+		// The build files of sbt, Mill, Scala CLI, Maven and Gradle, the
+		// builds that Metals imports.
+		Manifests: []string{
+			"build.sbt", "build.mill", "build.mill.yaml", "build.sc", "project.scala",
+			"pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts",
+		},
 		Comment: lang.CommentStyle{
 			Line: "// ", BlockOpen: "/*", BlockClose: "*/",
 			Doc: []lang.DocStyle{
@@ -47,12 +54,13 @@ func Declaration() lang.Declaration {
 		},
 		Blank:      map[string]bool{"_": true},
 		IsTest:     IsTest,
-		Namespace:  Namespace,
-		Visibility: Visibility,
+		Namespace:  lang.Stem,
+		Visibility: lang.VisibilityByModifier,
 	}
 }
 
-// Grammar pairs the compiled grammar with this module's tags query.
+// Grammar returns the tree-sitter grammar of Scala with the upstream tags
+// query and the patterns of the module.
 func Grammar() treesitter.Grammar {
 	return treesitter.Grammar{
 		Language: ts.NewLanguage(binding.Language()),
@@ -60,40 +68,23 @@ func Grammar() treesitter.Grammar {
 	}
 }
 
-// server is what runs this language's server.
-//
-// Named once and used twice, as the server's own name and as the command
-// to run: a declaration that spelt them differently would report one
-// thing about itself and start another. It needs no argument, because it
-// speaks the protocol over stdio and does nothing else.
+// server is the program of Metals, which is also the name of the server.
 const server = "metals"
 
-// importing is how long a question waits for this server to read the
-// workspace. Far longer than the default, because what it reads is a
-// build description rather than a set of files.
+// importing is how long a question waits for Metals to settle. Metals
+// imports the build of the workspace before it answers.
 const importing = 2 * time.Minute
 
-// Server is the language server this module declares.
+// Server returns the declaration of Metals, the language server of Scala.
 //
-// metals is the Scala server every editor outside IntelliJ runs. It
-// imports the build before it can answer anything, which for a cold
-// project is the slowest first question of any server declared here.
-//
-// Declared whether or not it is installed. Told nothing, a caller
-// concludes this language cannot be served at all; told the server is
-// missing, it knows what to install.
+// Metals asks the client whether to import the build, and a client
+// without a person to answer leaves Metals without a build. The settings
+// tell Metals to import every build without asking. Metals reads them as
+// the initialization options and in reply to workspace/configuration.
 func Server() lsp.Server {
 	return lsp.Server{
 		Name:    server,
 		Command: []string{server},
-		// Metals asks whether to import the build and waits for the
-		// answer, and a headless client has nobody to ask: the prompt is
-		// dismissed and the server sits with no compiler view, answering
-		// every question with nothing. Told to import without asking, it
-		// builds one.
-		//
-		// Read twice from here: as the initialisation options, and as
-		// the answer to a configuration request for the metals section.
 		Settings: map[string]any{
 			"metals": map[string]any{"autoImportBuilds": "all"},
 		},
@@ -103,11 +94,8 @@ func Server() lsp.Server {
 	}
 }
 
-// Register adds scala to a registry and its engines to a catalogue.
-//
-// A composition root calls this. Which engines follow from a workspace
-// is settled in one place rather than ten, so a language cannot end up
-// served differently from its siblings by accident.
+// Register adds Scala to r and its engines to c: the tree-sitter engine,
+// and Metals for a workspace on disk.
 func Register(w lang.Workspace, r *lang.Registry, c *engine.Catalog) error {
 	return engines.Register(w, r, c, Declaration(), Grammar(), Server())
 }

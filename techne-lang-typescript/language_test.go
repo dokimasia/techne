@@ -4,14 +4,11 @@
 package typescript_test
 
 import (
-	"os"
 	"testing"
 	"testing/fstest"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/techne/core/engine"
-	"go.dokimi.dev/techne/core/source"
-	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/lang"
 	"go.dokimi.dev/techne/lang/lsp"
 	"go.dokimi.dev/techne/lang/typescript"
@@ -23,130 +20,143 @@ func TestLanguage(t *testing.T) {
 	t.Run("Declaration", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("claims the wire form this module owns", func(t *testing.T) {
+		t.Run("declares the language typescript", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, string(typescript.Declaration().Language), "typescript",
-				"the wire form reaches an index that outlives the process, so it is pinned here")
+			assert.Equal(t, typescript.Declaration().Language, typescript.Language, "the language of the declaration")
+			assert.Equal(t, string(typescript.Language), "typescript", "the value of Language")
 		})
 
-		t.Run("states every convention the registry demands", func(t *testing.T) {
+		t.Run("claims the extensions of TypeScript", func(t *testing.T) {
 			t.Parallel()
-			d := typescript.Declaration()
-			assert.NotEmpty(t, d.Extensions, "without an extension nothing routes to this module")
-			assert.NotNil(t, d.IsTest, "a nil convention panics on the first call")
-			assert.NotNil(t, d.Namespace, "a nil convention panics on the first call")
-			assert.NotNil(t, d.Visibility, "a nil convention panics on the first call")
-			assert.NotEmpty(t, d.Comment.Line, "the document operations need a comment prefix no grammar states")
+			assert.Equal(t, typescript.Declaration().Extensions, []string{".ts", ".mts", ".cts", ".tsx"},
+				"the extensions of TypeScript")
 		})
 
-		t.Run("claims .ts", func(t *testing.T) {
+		t.Run("lists the manifests of a TypeScript project", func(t *testing.T) {
 			t.Parallel()
-			assert.Contains(t, typescript.Declaration().Extensions, ".ts",
-				"a file with this suffix is this language's to answer about")
+			assert.Equal(t, typescript.Declaration().Manifests, []string{"package.json", "tsconfig.json"},
+				"the manifests of TypeScript")
+		})
+
+		t.Run("reads test files by the rule of JavaScriptTest", func(t *testing.T) {
+			t.Parallel()
+			for _, p := range []string{"src/store.spec.ts", "test/app.e2e-spec.ts", "src/store.ts"} {
+				assert.Equal(t, typescript.Declaration().IsTest(p), lang.JavaScriptTest(p), "the test status of "+p)
+			}
+		})
+
+		t.Run("returns the path without its extension as the unit", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, typescript.Declaration().Namespace("src/store.ts"), "src/store", "the unit of src/store.ts")
+		})
+
+		t.Run("reports VisibilityUnknown for every name", func(t *testing.T) {
+			t.Parallel()
+			for _, name := range []string{"Store", "store"} {
+				assert.Equal(t, typescript.Declaration().Visibility(name), sema.VisibilityUnknown,
+					"the visibility of "+name)
+			}
+		})
+	})
+
+	t.Run("Grammar", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("parses a .tsx file with the TSX grammar", func(t *testing.T) {
+			t.Parallel()
+			g := typescript.Grammar()
+			assert.NotNil(t, g.Dialects[".tsx"], "the grammar of .tsx")
+			assert.True(t, g.For("src/view.tsx") == g.Dialects[".tsx"], "the grammar of src/view.tsx")
+			assert.True(t, g.For("src/store.ts") == g.Language, "the grammar of src/store.ts")
 		})
 	})
 
 	t.Run("Server", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("can be run as it is declared", func(t *testing.T) {
+		t.Run("runs typescript-language-server over stdio", func(t *testing.T) {
 			t.Parallel()
-			// Checked here rather than when a call arrives. A server
-			// declared without a language identity opens every file under
-			// an empty name and is answered about nothing, which in a
-			// tool whose job includes reporting that it found nothing is
-			// the hardest failure to notice.
-			assert.NoError(t, typescript.Server().Valid(),
-				"the declaration carries everything a server needs")
+			assert.Equal(t, typescript.Server().Command, []string{"typescript-language-server", "--stdio"},
+				"the command of typescript-language-server")
 		})
 
-		t.Run("names itself as it names the program to run", func(t *testing.T) {
-			t.Parallel()
-			// The name reaches a caller in a capability report and a
-			// provenance. One that named a different program from the one
-			// it starts would tell a caller to install the wrong thing.
-			assert.Equal(t, typescript.Server().Name, typescript.Server().Command[0],
-				"what answered and what was run are the same program")
-		})
-
-		t.Run("opens files under the identity the protocol names", func(t *testing.T) {
+		t.Run("opens a file as typescript", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, typescript.Server().LanguageID, lsp.IdentityTypeScript,
-				"the specification's own spelling, which is what a server matches on")
+				"the language identifier of typescript-language-server")
 		})
 
-		t.Run("claims only the roles binding answers", func(t *testing.T) {
+		t.Run("opens a .tsx file as typescriptreact", func(t *testing.T) {
 			t.Parallel()
-			// A server outlines one file no better than a parser does at
-			// a thousandth of the speed, so claiming outline would make
-			// every outline start a process to do worse.
-			assert.Equal(t, typescript.Server().Reaches(engine.RoleResolve), trust.Resolved,
-				"a type checker binds names, which is what resolve asks about")
-			assert.Equal(t, typescript.Server().Reaches(engine.RoleOutline), trust.None,
-				"and holds no evidence a parser does not already have for outline")
+			assert.Equal(t, typescript.Server().Dialects, map[string]string{".tsx": lsp.IdentityTypeScriptReact},
+				"the dialects of typescript-language-server")
+		})
+
+		t.Run("prefers the extraction of a method", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, typescript.Server().Extracts, lsp.Refactor{
+				Kind:   "refactor.extract.function",
+				Titles: []string{"method in class", "function in module scope"},
+			}, "the extraction of typescript-language-server")
+		})
+
+		t.Run("opens the files that write a name before a rename", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, typescript.Server().Scoped, "the scope of typescript-language-server")
 		})
 	})
 
-	t.Run("Register", func(t *testing.T) {
+	t.Run("Native", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("puts the language in the registry and its engine in the catalogue", func(t *testing.T) {
+		t.Run("runs tsc over LSP on stdio", func(t *testing.T) {
 			t.Parallel()
-			r, c := lang.NewRegistry(), engine.NewCatalog()
-			assert.NoError(t, typescript.Register(lang.Workspace{FS: fstest.MapFS{}}, r, c),
-				"a composition root registers this module with one call")
-			assert.Length(t, r.Languages(), 1, "one call registers one language")
-			assert.Length(t, c.For(t.Context(), typescript.Declaration().Language, engine.RoleOutline), 1,
-				"the parser is selectable for the role it serves")
+			assert.Equal(t, typescript.Native().Command, []string{"tsc", "--lsp", "--stdio"}, "the command of tsc")
 		})
 
-		t.Run("adds the server for a workspace on disk", func(t *testing.T) {
+		t.Run("passes Server.Valid", func(t *testing.T) {
 			t.Parallel()
-			// The parser answers over any tree; the server needs one a
-			// process can open files in. Both are registered here, and
-			// the roles they claim do not overlap.
-			registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
-			held := lang.Workspace{FS: os.DirFS(t.TempDir()), Root: t.TempDir()}
-			assert.NoError(t, typescript.Register(held, registry, catalogue),
-				"a workspace on disk registers both")
-
-			assert.NotContains(t,
-				serving(t, catalogue, typescript.Declaration().Language, engine.RoleOutline),
-				typescript.Server().Name,
-				"the parser keeps outline, which a server does no better and far slower")
+			assert.NoError(t, typescript.Native().Valid(), "Valid of tsc")
 		})
 
-		t.Run("leaves the server out where a tree is nowhere", func(t *testing.T) {
+		t.Run("declares no extraction", func(t *testing.T) {
 			t.Parallel()
-			// A server is a process that opens files by name. Registered
-			// over a tree that was never written, it would fail on the
-			// first call rather than never be offered.
-			registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
-			assert.NoError(t, typescript.Register(lang.Workspace{FS: fstest.MapFS{}}, registry, catalogue),
-				"a tree that is nowhere still registers a parser")
-			assert.NotContains(t,
-				serving(t, catalogue, typescript.Declaration().Language, engine.RolePlan),
-				typescript.Server().Name,
-				"and its server is not among what can answer")
-		})
-
-		t.Run("refuses a second registration of one language", func(t *testing.T) {
-			t.Parallel()
-			r, c := lang.NewRegistry(), engine.NewCatalog()
-			assert.NoError(t, typescript.Register(lang.Workspace{FS: fstest.MapFS{}}, r, c), "the first call registers")
-			assert.HasError(t, typescript.Register(lang.Workspace{FS: fstest.MapFS{}}, r, c),
-				"two claims on one language would make routing depend on call order")
+			assert.False(t, typescript.Native().Extracts.Offered(), "the extraction of tsc")
 		})
 	})
-}
 
-// serving is the engines a catalogue offers for a role, by name.
-func serving(t *testing.T, c *engine.Catalog, l source.Language, role engine.Role) []string {
-	t.Helper()
-	held := c.For(t.Context(), l, role)
-	out := make([]string, 0, len(held))
-	for _, one := range held {
-		out = append(out, one.Name())
-	}
-	return out
+	t.Run("For", func(t *testing.T) {
+		t.Parallel()
+
+		workspace := func(json string) fstest.MapFS {
+			return fstest.MapFS{"package.json": &fstest.MapFile{Data: []byte(json)}}
+		}
+		tests := []struct {
+			name  string
+			files fstest.MapFS
+			want  string
+		}{
+			{
+				name:  "returns tsc for a workspace on TypeScript 7",
+				files: workspace(`{"devDependencies": {"typescript": "^7.0.2"}}`),
+				want:  "tsc",
+			},
+			{
+				name:  "returns typescript-language-server for a workspace on TypeScript 6",
+				files: workspace(`{"devDependencies": {"typescript": "^6.0.3"}}`),
+				want:  "typescript-language-server",
+			},
+			{
+				name:  "returns typescript-language-server for a workspace without TypeScript",
+				files: workspace(`{"dependencies": {}}`),
+				want:  "typescript-language-server",
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, typescript.For(tt.files).Name, tt.want, "the server of the workspace")
+			})
+		}
+	})
 }

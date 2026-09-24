@@ -17,41 +17,56 @@ func TestConventions(t *testing.T) {
 	t.Run("IsTest", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("reads the suffix the toolchain itself uses", func(t *testing.T) {
-			t.Parallel()
-			assert.True(t, golang.IsTest("pkg/store_test.go"), "go test discovers by this suffix")
-			assert.False(t, golang.IsTest("pkg/store.go"), "shipped code is not a test")
-			assert.False(t, golang.IsTest("pkg/testing.go"), "a name containing test is not the suffix")
-		})
+		tests := []struct {
+			name string
+			give string
+			want bool
+		}{
+			{name: "returns true for a _test.go file", give: "pkg/store_test.go", want: true},
+			{name: "returns false for a source file", give: "pkg/store.go"},
+			{name: "returns false for a name that starts with test", give: "pkg/testing.go"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, golang.IsTest(tt.give), tt.want, "the test status of "+tt.give)
+			})
+		}
 	})
 
 	t.Run("Visibility", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("is never unknown, because the name carries the whole rule", func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, golang.Visibility("Store"), sema.Exported,
-				"an upper-case initial makes a Go declaration visible outside its package")
-			assert.Equal(t, golang.Visibility("helper"), sema.Unexported,
-				"a lower-case initial keeps a Go declaration inside its package")
-		})
-
-		t.Run("reports unknown for a name that is not one", func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, golang.Visibility(""), sema.VisibilityUnknown,
-				"an empty name carries no rule to read")
-		})
+		tests := []struct {
+			name string
+			give string
+			want sema.Visibility
+		}{
+			{name: "returns Exported for an upper-case initial", give: "Store", want: sema.Exported},
+			{name: "returns Exported for an upper-case initial outside ASCII", give: "Ωmega", want: sema.Exported},
+			{name: "returns Unexported for a lower-case initial", give: "helper", want: sema.Unexported},
+			{name: "returns Unexported for an underscore initial", give: "_Store", want: sema.Unexported},
+			{name: "returns VisibilityUnknown for an empty name", give: "", want: sema.VisibilityUnknown},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, golang.Visibility(tt.give), tt.want, "the visibility of "+tt.give)
+			})
+		}
 	})
 
 	t.Run("Unit", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("is the directory, because a Go package is one", func(t *testing.T) {
+		t.Run("returns the directory of a file", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, golang.Unit("core/trust/status.go"), "core/trust",
-				"two files in one directory belong to one unit, so their symbols share it")
-			assert.Equal(t, golang.Unit("core/trust/evidence.go"), "core/trust",
-				"two files in one directory belong to one unit, so their symbols share it")
+			assert.Equal(t, golang.Unit("core/trust/status.go"), "core/trust", "the unit of core/trust/status.go")
+		})
+
+		t.Run("returns the root for a file at the root", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, golang.Unit("main.go"), ".", "the unit of main.go")
 		})
 	})
 }

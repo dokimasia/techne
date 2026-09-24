@@ -4,17 +4,18 @@
 package javascript_test
 
 import (
-	"os"
+	"bytes"
+	"fmt"
 	"testing"
 	"testing/fstest"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
-	"go.dokimi.dev/techne/core/source"
-	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/lang"
 	"go.dokimi.dev/techne/lang/javascript"
 	"go.dokimi.dev/techne/lang/lsp"
+	"go.dokimi.dev/techne/lang/treesitter"
 )
 
 func TestLanguage(t *testing.T) {
@@ -23,133 +24,151 @@ func TestLanguage(t *testing.T) {
 	t.Run("Declaration", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("claims the wire form this module owns", func(t *testing.T) {
+		t.Run("declares the language javascript", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, string(javascript.Declaration().Language), "javascript",
-				"the wire form reaches an index that outlives the process, so it is pinned here")
+			assert.Equal(t, javascript.Declaration().Language, javascript.Language, "the language of the declaration")
+			assert.Equal(t, string(javascript.Language), "javascript", "the value of Language")
 		})
 
-		t.Run("states every convention the registry demands", func(t *testing.T) {
+		t.Run("claims the extensions of JavaScript", func(t *testing.T) {
 			t.Parallel()
-			d := javascript.Declaration()
-			assert.NotEmpty(t, d.Extensions, "without an extension nothing routes to this module")
-			assert.NotNil(t, d.IsTest, "a nil convention panics on the first call")
-			assert.NotNil(t, d.Namespace, "a nil convention panics on the first call")
-			assert.NotNil(t, d.Visibility, "a nil convention panics on the first call")
-			assert.NotEmpty(t, d.Comment.Line,
-				"the document operations need a comment prefix no grammar states")
-			assert.NotEmpty(t, d.Comment.Doc,
-				"a language states the forms its own documentation tool reads")
+			assert.Equal(t, javascript.Declaration().Extensions, []string{".js", ".mjs", ".cjs", ".jsx"},
+				"the extensions of JavaScript")
 		})
 
-		t.Run("claims .js", func(t *testing.T) {
+		t.Run("lists the manifests of a JavaScript project", func(t *testing.T) {
 			t.Parallel()
-			assert.Contains(t, javascript.Declaration().Extensions, ".js",
-				"a file with this suffix is this language's to answer about")
+			assert.Equal(t, javascript.Declaration().Manifests, []string{"package.json", "jsconfig.json"},
+				"the manifests of JavaScript")
+		})
+
+		t.Run("reads test files by the rule of JavaScriptTest", func(t *testing.T) {
+			t.Parallel()
+			for _, p := range []string{"src/store.test.js", "test/store.js", "src/store.js"} {
+				assert.Equal(t, javascript.Declaration().IsTest(p), lang.JavaScriptTest(p), "the test status of "+p)
+			}
+		})
+
+		t.Run("returns the path without its extension as the unit", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, javascript.Declaration().Namespace("src/store.js"), "src/store", "the unit of src/store.js")
+		})
+
+		t.Run("reports VisibilityUnknown for every name", func(t *testing.T) {
+			t.Parallel()
+			for _, name := range []string{"Store", "store"} {
+				assert.Equal(t, javascript.Declaration().Visibility(name), sema.VisibilityUnknown,
+					"the visibility of "+name)
+			}
 		})
 	})
 
 	t.Run("Server", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("can be run as it is declared", func(t *testing.T) {
+		t.Run("runs typescript-language-server over stdio", func(t *testing.T) {
 			t.Parallel()
-			// Checked here rather than when a call arrives. A server
-			// declared without a language identity opens every file under
-			// an empty name and is answered about nothing, which in a
-			// tool whose job includes reporting that it found nothing is
-			// the hardest failure to notice.
-			assert.NoError(t, javascript.Server().Valid(),
-				"the declaration carries everything a server needs")
+			assert.Equal(t, javascript.Server().Command, []string{"typescript-language-server", "--stdio"},
+				"the command of typescript-language-server")
 		})
 
-		t.Run("names itself as it names the program to run", func(t *testing.T) {
-			t.Parallel()
-			// The name reaches a caller in a capability report and a
-			// provenance. One that named a different program from the one
-			// it starts would tell a caller to install the wrong thing.
-			assert.Equal(t, javascript.Server().Name, javascript.Server().Command[0],
-				"what answered and what was run are the same program")
-		})
-
-		t.Run("opens files under the identity the protocol names", func(t *testing.T) {
+		t.Run("opens a file as javascript", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, javascript.Server().LanguageID, lsp.IdentityJavaScript,
-				"the specification's own spelling, which is what a server matches on")
+				"the language identifier of typescript-language-server")
 		})
 
-		t.Run("claims only the roles binding answers", func(t *testing.T) {
+		t.Run("opens a .jsx file as javascriptreact", func(t *testing.T) {
 			t.Parallel()
-			// A server outlines one file no better than a parser does at
-			// a thousandth of the speed, so claiming outline would make
-			// every outline start a process to do worse.
-			assert.Equal(t, javascript.Server().Reaches(engine.RoleResolve), trust.Resolved,
-				"a type checker binds names, which is what resolve asks about")
-			assert.Equal(t, javascript.Server().Reaches(engine.RoleOutline), trust.None,
-				"and holds no evidence a parser does not already have for outline")
+			assert.Equal(t, javascript.Server().Dialects, map[string]string{".jsx": lsp.IdentityJavaScriptReact},
+				"the dialects of typescript-language-server")
+		})
+
+		t.Run("prefers the extraction of a method", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, javascript.Server().Extracts, lsp.Refactor{
+				Kind:   "refactor.extract.function",
+				Titles: []string{"method in class", "function in module scope"},
+			}, "the extraction of typescript-language-server")
+		})
+
+		t.Run("opens the files that write a name before a rename", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, javascript.Server().Scoped, "the scope of typescript-language-server")
 		})
 	})
 
-	t.Run("Register", func(t *testing.T) {
+	t.Run("Native", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("puts the language in the registry and its engine in the catalogue", func(t *testing.T) {
+		t.Run("runs tsc over LSP on stdio", func(t *testing.T) {
 			t.Parallel()
-			r, c := lang.NewRegistry(), engine.NewCatalog()
-			assert.NoError(t, javascript.Register(lang.Workspace{FS: fstest.MapFS{}}, r, c),
-				"a composition root registers this module with one call")
-			assert.Length(t, r.Languages(), 1, "one call registers one language")
-			assert.Length(t, c.For(t.Context(), javascript.Declaration().Language, engine.RoleOutline), 1,
-				"the parser is selectable for the role it serves")
+			assert.Equal(t, javascript.Native().Command, []string{"tsc", "--lsp", "--stdio"}, "the command of tsc")
 		})
 
-		t.Run("adds the server for a workspace on disk", func(t *testing.T) {
+		t.Run("opens a file as javascript", func(t *testing.T) {
 			t.Parallel()
-			// The parser answers over any tree; the server needs one a
-			// process can open files in. Both are registered here, and
-			// the roles they claim do not overlap.
-			registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
-			held := lang.Workspace{FS: os.DirFS(t.TempDir()), Root: t.TempDir()}
-			assert.NoError(t, javascript.Register(held, registry, catalogue),
-				"a workspace on disk registers both")
-
-			assert.NotContains(t,
-				serving(t, catalogue, javascript.Declaration().Language, engine.RoleOutline),
-				javascript.Server().Name,
-				"the parser keeps outline, which a server does no better and far slower")
+			assert.Equal(t, javascript.Native().LanguageID, lsp.IdentityJavaScript, "the language identifier of tsc")
 		})
 
-		t.Run("leaves the server out where a tree is nowhere", func(t *testing.T) {
+		t.Run("passes Server.Valid", func(t *testing.T) {
 			t.Parallel()
-			// A server is a process that opens files by name. Registered
-			// over a tree that was never written, it would fail on the
-			// first call rather than never be offered.
-			registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
-			assert.NoError(t, javascript.Register(lang.Workspace{FS: fstest.MapFS{}}, registry, catalogue),
-				"a tree that is nowhere still registers a parser")
-			assert.NotContains(t,
-				serving(t, catalogue, javascript.Declaration().Language, engine.RolePlan),
-				javascript.Server().Name,
-				"and its server is not among what can answer")
+			assert.NoError(t, javascript.Native().Valid(), "Valid of tsc")
+		})
+	})
+
+	t.Run("For", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns tsc for a workspace on TypeScript 7", func(t *testing.T) {
+			t.Parallel()
+			files := fstest.MapFS{"package.json": {Data: []byte(`{"devDependencies": {"typescript": "^7.0.2"}}`)}}
+			assert.Equal(t, javascript.For(files).Name, "tsc", "the server of the workspace")
 		})
 
-		t.Run("refuses a second registration of one language", func(t *testing.T) {
+		t.Run("returns typescript-language-server for a workspace without TypeScript 7", func(t *testing.T) {
 			t.Parallel()
-			r, c := lang.NewRegistry(), engine.NewCatalog()
-			assert.NoError(t, javascript.Register(lang.Workspace{FS: fstest.MapFS{}}, r, c), "the first call registers")
-			assert.HasError(t, javascript.Register(lang.Workspace{FS: fstest.MapFS{}}, r, c),
-				"two claims on one language would make routing depend on call order")
+			files := fstest.MapFS{"package.json": {Data: []byte(`{"devDependencies": {"typescript": "^6.0.3"}}`)}}
+			assert.Equal(t, javascript.For(files).Name, "typescript-language-server", "the server of the workspace")
 		})
 	})
 }
 
-// serving is the engines a catalogue offers for a role, by name.
-func serving(t *testing.T, c *engine.Catalog, l source.Language, role engine.Role) []string {
-	t.Helper()
-	held := c.For(t.Context(), l, role)
-	out := make([]string, 0, len(held))
-	for _, one := range held {
-		out = append(out, one.Name())
+// BenchmarkGrammar measures the tree-sitter engine of JavaScript over one
+// file of 48,000 declarations, the size of a large bundle.
+func BenchmarkGrammar(b *testing.B) {
+	const lines = 12_000
+	e, err := treesitter.New(fstest.MapFS{"src/bundle.js": {Data: bundle(lines)}},
+		javascript.Declaration(), javascript.Grammar())
+	assert.NoError(b, err, "New over the bundle")
+	b.Cleanup(e.Close)
+
+	b.Run("Outline", func(b *testing.B) {
+		got, err := e.Outline(b.Context(), engine.Request{Scope: engine.Root})
+		assert.NoError(b, err, "Outline of the bundle")
+		assert.Length(b, got.Items, 4*lines, "the declarations of the bundle")
+		for b.Loop() {
+			_, _ = e.Outline(b.Context(), engine.Request{Scope: engine.Root})
+		}
+	})
+
+	b.Run("Search", func(b *testing.B) {
+		q := engine.Query{Text: fmt.Sprintf("f%d", lines/2), Private: true}
+		got, err := e.Search(b.Context(), engine.Request{Scope: engine.Root}, q)
+		assert.NoError(b, err, "Search of the bundle")
+		assert.Length(b, got.Items, 1, "the matches of "+q.Text)
+		for b.Loop() {
+			_, _ = e.Search(b.Context(), engine.Request{Scope: engine.Root}, q)
+		}
+	})
+}
+
+// bundle returns lines functions, each with two parameters and a constant,
+// which the query of the module reads as four declarations.
+func bundle(lines int) []byte {
+	var out bytes.Buffer
+	for i := range lines {
+		fmt.Fprintf(&out, "function f%d(a, b) { const x%d = a + b; return x%d; }\n", i, i, i)
 	}
-	return out
+	return out.Bytes()
 }

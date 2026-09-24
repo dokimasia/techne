@@ -10,28 +10,33 @@ import (
 	"go.dokimi.dev/techne/core/sema"
 )
 
-// Namespace maps a file path to the name an import would use for it,
-// dropping the extension: a/b/c becomes the module path a/b/c.
-func Namespace(p string) string {
-	return strings.TrimSuffix(p, path.Ext(p))
-}
-
-// IsTest reports whether a path holds tests, following the convention
-// pytest and unittest discovery both use.
+// IsTest reports whether p is a test file by the default patterns of
+// pytest: a base name that starts with test_ or ends in _test.py.
 func IsTest(p string) bool {
 	base := path.Base(p)
 	return strings.HasPrefix(base, "test_") || strings.HasSuffix(base, "_test.py")
 }
 
-// Visibility reads Python's convention: a leading underscore marks a
-// name as internal. It is a convention rather than a rule the runtime
-// enforces, which is why an answer here is a claim about intent.
+// Visibility returns the visibility that PEP 8 gives a name. A leading
+// underscore marks a name as internal, so Visibility returns
+// sema.Unexported for it. A special name such as __init__ belongs to a
+// protocol of the language, so Visibility returns sema.Exported for it, as
+// for every other name. It returns sema.VisibilityUnknown for an empty
+// name.
 func Visibility(name string) sema.Visibility {
-	if name == "" {
+	switch {
+	case name == "":
 		return sema.VisibilityUnknown
-	}
-	if strings.HasPrefix(name, "_") {
+	case special(name) || !strings.HasPrefix(name, "_"):
+		return sema.Exported
+	default:
 		return sema.Unexported
 	}
-	return sema.Exported
+}
+
+// special reports whether name has two leading and two trailing
+// underscores around at least one other character, as the special names of
+// Python have.
+func special(name string) bool {
+	return len(name) > 4 && strings.HasPrefix(name, "__") && strings.HasSuffix(name, "__")
 }

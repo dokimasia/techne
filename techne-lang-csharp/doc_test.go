@@ -11,20 +11,20 @@ import (
 	"go.dokimi.dev/techne/lang/csharp"
 )
 
-// TestDoc runs the suite every language module runs.
-//
-// The fixture carries one of every declaration form C# has,
-// because the suite compares the outline against it as a whole set: a
-// form left out here is a form nothing checks.
+// TestDoc runs the conformance suite over a fixture that declares every
+// form of C# declaration once.
 func TestDoc(t *testing.T) {
 	t.Parallel()
 
 	conformance.Run(t, conformance.Suite{
 		Declaration: csharp.Declaration(),
 		Grammar:     csharp.Grammar(),
+		Server:      csharp.Server(),
+		Register:    csharp.Register,
 		Unclaimed:   "notes.md",
 		Files: map[string]string{
 			"pkg/Store.cs": `using System;
+using System.Collections.Generic;
 
 namespace Shop
 {
@@ -84,17 +84,21 @@ namespace Shop
 			{
 				Name: "Store",
 				Kind: sema.KindStruct,
-				Doc:  "<summary>Store holds items by name.</summary>",
+				Doc:  "Store holds items by name.",
 				Annotations: []conformance.Annotated{
 					{Name: "Serializable", Text: "Serializable"},
 					{Name: "Obsolete", Text: "Obsolete"},
 				},
 				Modifiers: []string{"public"},
 			},
-			{Name: "System", Kind: sema.KindImport},
-			{Name: "local", Kind: sema.KindVariable},
+			{Name: "System", Kind: sema.KindImport, Visibility: sema.Unexported, Simple: "System"},
+			{
+				Name: "System.Collections.Generic", Kind: sema.KindImport, Visibility: sema.Unexported,
+				Simple: "Generic",
+			},
+			{Name: "local", Kind: sema.KindVariable, Visibility: sema.Unexported},
 			{Name: "size", Kind: sema.KindField},
-			{Name: "start", Kind: sema.KindParameter},
+			{Name: "start", Kind: sema.KindParameter, Visibility: sema.Unexported},
 		},
 	})
 }

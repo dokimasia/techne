@@ -18,23 +18,25 @@ import (
 	"go.dokimi.dev/techne/lang/treesitter"
 )
 
-// Language is the wire form this module claims. It reaches a caller and,
-// through a sema identity, an index that outlives the process, so
-// changing it invalidates stored data.
+// Language is the language this module declares. Every sema.ID of a Go
+// declaration contains it, so a change invalidates the IDs an index has
+// stored.
 const Language source.Language = "go"
 
-// Upstream's query, unchanged, followed by this module's own patterns.
-// Keeping them in separate files makes upgrading a grammar a re-vendor
-// and a diff review rather than a hand merge.
-
+// upstreamQuery is the tags query of the grammar's repository, vendored
+// unchanged, so an upgrade of the grammar replaces the file and a review
+// reads the diff.
+//
 //go:embed queries/upstream.scm
 var upstreamQuery string
 
+// extendsQuery holds the patterns of the module, which Grammar appends to
+// upstreamQuery.
+//
 //go:embed queries/extends.scm
 var extendsQuery string
 
-// Declaration states the facts about go that hold whichever
-// engine serves it.
+// Declaration returns the declaration of Go.
 func Declaration() lang.Declaration {
 	return lang.Declaration{
 		Language:   Language,
@@ -54,8 +56,8 @@ func Declaration() lang.Declaration {
 	}
 }
 
-// Grammar pairs the compiled grammar with the tags query vendored from
-// upstream.
+// Grammar returns the tree-sitter grammar of Go with the upstream tags
+// query and the patterns of the module.
 func Grammar() treesitter.Grammar {
 	return treesitter.Grammar{
 		Language: ts.NewLanguage(binding.Language()),
@@ -63,68 +65,49 @@ func Grammar() treesitter.Grammar {
 	}
 }
 
-// What runs this language's server.
-//
-// The program is named once and used twice, as the server's own name and
-// as the command to run: a declaration that spelt them differently would
-// report one thing about itself and start another.
+// The program of gopls, which is also the name of the server, and the
+// subcommand that speaks LSP over stdio.
 const (
 	server = "gopls"
-	// serves is the subcommand that speaks the protocol over stdio.
 	serves = "serve"
 )
 
-// Server is the language server this module declares.
-//
-// gopls is the Go team's own server and the one every Go editor uses.
-// The serve subcommand speaks the protocol over stdio.
-//
-// Declared whether or not it is installed. Told nothing, a caller
-// concludes this language cannot be served at all; told the server is
-// missing, it knows what to install.
+// Server returns the declaration of gopls, the language server of the Go
+// team. gopls offers to extract a function and a method, each with its own
+// kind of code action, so the declaration selects the function by its
+// kind.
 func Server() lsp.Server {
 	return lsp.Server{
 		Name:       server,
 		Command:    []string{server, serves},
 		LanguageID: lsp.IdentityGo,
 		Serves:     lsp.Binding(),
-		// gopls offers extracting a function beside extracting a
-		// method, each under its own kind, so the kind alone picks one.
-		Extracts: lsp.Refactor{Kind: "refactor.extract.function"},
+		Extracts:   lsp.Refactor{Kind: "refactor.extract.function"},
 	}
 }
 
-// Register adds go to a registry and its engines to a catalogue.
-//
-// A composition root calls this. Which engines follow from a workspace
-// is settled in one place rather than ten, so a language cannot end up
-// served differently from its siblings by accident.
+// Register adds Go to r and its engines to c: the tree-sitter engine, and
+// for a workspace on disk gopls and the type checker of package checker.
+// The type checker serves the roles that need types on a machine without
+// gopls, because it runs the go command that builds the workspace.
 func Register(w lang.Workspace, r *lang.Registry, c *engine.Catalog) error {
-	held, err := checking(w)
+	checked, err := checking(w)
 	if err != nil {
 		return err
 	}
-	return engines.Register(w, r, c, Declaration(), Grammar(), Server(), held...)
+	return engines.Register(w, r, c, Declaration(), Grammar(), Server(), checked...)
 }
 
-// checking is the in-process type checker, where the workspace is one it
-// can be run over.
-//
-// Go is the language techne is written in, so its toolchain is on every
-// machine techne builds on and gopls is not. Without this, a machine
-// with no server drops Go from every question that needs a type: what
-// implements this, what calls this, does this still compile.
-//
-// It needs a directory for the same reason a server does — the loader
-// runs the go command against one — so a workspace that is nowhere gets
-// the parser alone.
+// checking returns the type checker of a workspace on disk. It returns no
+// engine for a workspace in memory, because the checker runs the go command
+// in the root directory.
 func checking(w lang.Workspace) ([]engine.Engine, error) {
 	if !w.OnDisk() {
 		return nil, nil
 	}
-	held, err := checker.New(w.Root, Declaration())
+	checked, err := checker.New(w.Root, Declaration())
 	if err != nil {
 		return nil, fmt.Errorf("go: %w", err)
 	}
-	return []engine.Engine{held}, nil
+	return []engine.Engine{checked}, nil
 }

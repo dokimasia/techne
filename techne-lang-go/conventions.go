@@ -4,34 +4,35 @@
 package golang
 
 import (
+	"go/token"
 	"path"
 	"strings"
-	"unicode"
 
 	"go.dokimi.dev/techne/core/sema"
 )
 
-// IsTest reports whether a path holds tests. Go's toolchain decides this
-// by filename, so a parser can answer exactly.
+// IsTest reports whether p is a test file: a base name that ends in
+// _test.go, the rule of the go command.
 func IsTest(p string) bool {
-	return strings.HasSuffix(p, "_test.go")
+	return strings.HasSuffix(path.Base(p), "_test.go")
 }
 
-// Visibility reads Go's rule: a declaration is visible outside its
-// package when its name begins with an upper-case letter. The name
-// carries the whole rule, so this is never unknown.
+// Visibility returns sema.Exported for a name that starts with an
+// upper-case letter, which the Go specification exports from its package,
+// and sema.Unexported for any other name. It returns
+// sema.VisibilityUnknown for an empty name.
 func Visibility(name string) sema.Visibility {
-	if name == "" {
+	switch {
+	case name == "":
 		return sema.VisibilityUnknown
-	}
-	if unicode.IsUpper([]rune(name)[0]) {
+	case token.IsExported(name):
 		return sema.Exported
+	default:
+		return sema.Unexported
 	}
-	return sema.Unexported
 }
 
-// Unit is the directory holding the file, because a Go package is a
-// directory.
+// Unit returns the directory of p, because a Go package is a directory.
 func Unit(p string) string {
 	return path.Dir(p)
 }

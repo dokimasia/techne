@@ -1,20 +1,19 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: MIT
 
-// Package python holds everything true of python and nothing true of
-// any other language: its declaration, its vendored tags query, and the
-// engines only it can use.
+// Package python declares the Python language:
 //
-// # What this module is
+//   - its extensions, project manifests, comment forms and test files
+//   - its visibility rule, which PEP 8 states
+//   - its tree-sitter grammar and tags query
+//   - pyright, its language server
 //
-// [Declaration] states the facts about python that hold whichever
-// engine serves it. [Grammar] pairs the compiled grammar with the tags
-// query vendored from upstream. [Register] puts both into a registry and
-// a catalogue.
+// A composition root calls [Register], which adds Python to a registry and
+// its engines to a catalogue.
 //
 // # Dependency position
 //
-// Imports core, lang and this language's tree-sitter grammar, and never
-// another language module. Deleting this directory and its line in
-// go.work removes python support completely.
+// Imports the standard library, core/engine, core/sema, core/source, lang,
+// lang/engines, lang/lsp, lang/treesitter and the tree-sitter grammar of
+// Python. It does not import another language module.
 package python

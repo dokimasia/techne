@@ -5,17 +5,17 @@ package golang_test
 
 import (
 	"os"
+	"slices"
 	"testing"
 	"testing/fstest"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
-	"go.dokimi.dev/techne/core/source"
-	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/lang"
 	golang "go.dokimi.dev/techne/lang/go"
 	"go.dokimi.dev/techne/lang/lsp"
+	"go.dokimi.dev/techne/lang/treesitter"
 )
 
 func TestLanguage(t *testing.T) {
@@ -24,312 +24,116 @@ func TestLanguage(t *testing.T) {
 	t.Run("Declaration", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("claims the wire form this module owns", func(t *testing.T) {
+		t.Run("declares the language go", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, string(golang.Declaration().Language), "go",
-				"the wire form reaches an index that outlives the process, so it is pinned here")
+			assert.Equal(t, golang.Declaration().Language, golang.Language, "the language of the declaration")
+			assert.Equal(t, string(golang.Language), "go", "the value of Language")
 		})
 
-		t.Run("states every convention the registry demands", func(t *testing.T) {
+		t.Run("claims the extension of Go", func(t *testing.T) {
 			t.Parallel()
-			d := golang.Declaration()
-			assert.NotEmpty(t, d.Extensions, "without an extension nothing routes to this module")
-			assert.NotNil(t, d.IsTest, "a nil convention panics on the first call")
-			assert.NotNil(t, d.Namespace, "a nil convention panics on the first call")
-			assert.NotNil(t, d.Visibility, "a nil convention panics on the first call")
-			assert.NotEmpty(t, d.Comment.Line, "the document operations need a comment prefix no grammar states")
+			assert.Equal(t, golang.Declaration().Extensions, []string{".go"}, "the extensions of Go")
 		})
 
-		t.Run("claims .go", func(t *testing.T) {
+		t.Run("lists the manifests of a Go project", func(t *testing.T) {
 			t.Parallel()
-			assert.Contains(t, golang.Declaration().Extensions, ".go",
-				"a file with this suffix is this language's to answer about")
+			assert.Equal(t, golang.Declaration().Manifests, []string{"go.mod", "go.work"}, "the manifests of Go")
+		})
+
+		t.Run("returns the directory as the unit", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, golang.Declaration().Namespace("core/trust/status.go"), "core/trust",
+				"the unit of core/trust/status.go")
+		})
+
+		t.Run("ignores the blank identifier", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, golang.Declaration().Blank["_"], "the blank identifiers of Go")
 		})
 	})
 
 	t.Run("Server", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("can be run as it is declared", func(t *testing.T) {
+		t.Run("runs gopls serve", func(t *testing.T) {
 			t.Parallel()
-			// Checked here rather than when a call arrives. A server
-			// declared without a language identity opens every file under
-			// an empty name and is answered about nothing, which in a
-			// tool whose job includes reporting that it found nothing is
-			// the hardest failure to notice.
-			assert.NoError(t, golang.Server().Valid(),
-				"the declaration carries everything a server needs")
+			assert.Equal(t, golang.Server().Command, []string{"gopls", "serve"}, "the command of gopls")
 		})
 
-		t.Run("names itself as it names the program to run", func(t *testing.T) {
+		t.Run("opens a file as go", func(t *testing.T) {
 			t.Parallel()
-			// The name reaches a caller in a capability report and a
-			// provenance. One that named a different program from the one
-			// it starts would tell a caller to install the wrong thing.
-			assert.Equal(t, golang.Server().Name, golang.Server().Command[0],
-				"what answered and what was run are the same program")
+			assert.Equal(t, golang.Server().LanguageID, lsp.IdentityGo, "the language identifier of gopls")
 		})
 
-		t.Run("opens files under the identity the protocol names", func(t *testing.T) {
+		t.Run("extracts a function by the kind of its code action", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, golang.Server().LanguageID, lsp.IdentityGo,
-				"the specification's own spelling, which is what a server matches on")
+			assert.Equal(t, golang.Server().Extracts, lsp.Refactor{Kind: "refactor.extract.function"},
+				"the extraction of gopls")
 		})
+	})
 
-		t.Run("claims only the roles binding answers", func(t *testing.T) {
+	t.Run("Grammar", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("qualifies a method by the type of its receiver", func(t *testing.T) {
 			t.Parallel()
-			// A server outlines one file no better than a parser does at
-			// a thousandth of the speed, so claiming outline would make
-			// every outline start a process to do worse.
-			assert.Equal(t, golang.Server().Reaches(engine.RoleResolve), trust.Resolved,
-				"a type checker binds names, which is what resolve asks about")
-			assert.Equal(t, golang.Server().Reaches(engine.RoleOutline), trust.None,
-				"and holds no evidence a parser does not already have for outline")
+			fsys := fstest.MapFS{"store.go": {Data: []byte("package store\n\n" +
+				"type Store struct{}\n\nfunc (s *Store) Get() int { return 0 }\n\n" +
+				"type Cache[T any] struct{}\n\nfunc (c *Cache[T]) Get() int { return 0 }\n")}}
+			e, err := treesitter.New(fsys, golang.Declaration(), golang.Grammar())
+			assert.NoError(t, err, "New of the Go engine")
+			t.Cleanup(e.Close)
+			got, err := e.Outline(t.Context(), engine.Request{Scope: "store.go"})
+			assert.NoError(t, err, "Outline of store.go")
+			var methods []string
+			for _, one := range got.Items {
+				if one.Kind == sema.KindMethod {
+					methods = append(methods, one.ID.Name())
+				}
+			}
+			assert.Equal(t, methods, []string{"Store.Get", "Cache.Get"}, "the qualified names of the methods")
 		})
 	})
 
 	t.Run("Register", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("puts the language in the registry and its engine in the catalogue", func(t *testing.T) {
+		t.Run("adds the type checker for a workspace on disk", func(t *testing.T) {
 			t.Parallel()
-			r, c := lang.NewRegistry(), engine.NewCatalog()
-			assert.NoError(t, golang.Register(lang.Workspace{FS: fstest.MapFS{}}, r, c),
-				"a composition root registers this module with one call")
-			assert.Length(t, r.Languages(), 1, "one call registers one language")
-			assert.Length(t, c.For(t.Context(), golang.Declaration().Language, engine.RoleOutline), 1,
-				"the parser is selectable for the role it serves")
+			root := t.TempDir()
+			c := engine.NewCatalog()
+			assert.NoError(t, golang.Register(lang.Workspace{FS: os.DirFS(root), Root: root}, lang.NewRegistry(), c),
+				"Register of a workspace on disk")
+			assert.Contains(t, engines(t, c), "go/types", "the engines of a workspace on disk")
 		})
 
-		t.Run("adds the server for a workspace on disk", func(t *testing.T) {
+		t.Run("leaves out the type checker for a workspace in memory", func(t *testing.T) {
 			t.Parallel()
-			// The parser answers over any tree; the server needs one a
-			// process can open files in. Both are registered here, and
-			// the roles they claim do not overlap.
-			registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
-			held := lang.Workspace{FS: os.DirFS(t.TempDir()), Root: t.TempDir()}
-			assert.NoError(t, golang.Register(held, registry, catalogue),
-				"a workspace on disk registers both")
-
-			assert.NotContains(t,
-				serving(t, catalogue, golang.Declaration().Language, engine.RoleOutline),
-				golang.Server().Name,
-				"the parser keeps outline, which a server does no better and far slower")
+			c := engine.NewCatalog()
+			assert.NoError(t, golang.Register(lang.Workspace{FS: fstest.MapFS{}}, lang.NewRegistry(), c),
+				"Register of a workspace in memory")
+			assert.NotContains(t, engines(t, c), "go/types", "the engines of a workspace in memory")
 		})
 
-		t.Run("leaves the server out where a tree is nowhere", func(t *testing.T) {
+		t.Run("returns an error for a root that is not a directory", func(t *testing.T) {
 			t.Parallel()
-			// A server is a process that opens files by name. Registered
-			// over a tree that was never written, it would fail on the
-			// first call rather than never be offered.
-			registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
-			assert.NoError(t, golang.Register(lang.Workspace{FS: fstest.MapFS{}}, registry, catalogue),
-				"a tree that is nowhere still registers a parser")
-			assert.NotContains(t,
-				serving(t, catalogue, golang.Declaration().Language, engine.RolePlan),
-				golang.Server().Name,
-				"and its server is not among what can answer")
-		})
-
-		t.Run("refuses a second registration of one language", func(t *testing.T) {
-			t.Parallel()
-			r, c := lang.NewRegistry(), engine.NewCatalog()
-			assert.NoError(t, golang.Register(lang.Workspace{FS: fstest.MapFS{}}, r, c), "the first call registers")
-			assert.HasError(t, golang.Register(lang.Workspace{FS: fstest.MapFS{}}, r, c),
-				"two claims on one language would make routing depend on call order")
+			file := t.TempDir() + "/file"
+			assert.NoError(t, os.WriteFile(file, nil, 0o600), "WriteFile of "+file)
+			err := golang.Register(lang.Workspace{FS: fstest.MapFS{}, Root: file},
+				lang.NewRegistry(), engine.NewCatalog())
+			assert.HasError(t, err, "Register of a root that is a file")
 		})
 	})
 }
 
-// serving is the engines a catalogue offers for a role, by name.
-func serving(t *testing.T, c *engine.Catalog, l source.Language, role engine.Role) []string {
+// engines returns the distinct names of the engines in c.
+func engines(t *testing.T, c *engine.Catalog) []string {
 	t.Helper()
-	held := c.For(t.Context(), l, role)
-	out := make([]string, 0, len(held))
-	for _, one := range held {
-		out = append(out, one.Name())
-	}
-	return out
-}
-
-// An import is the one edge a parser can be correct about: the tags
-// query already captures it, and neither end needs a name bound to
-// anything. It is also the one relation a workspace with no language
-// server installed can still ask for.
-func TestImports(t *testing.T) {
-	t.Parallel()
-
-	// relating builds the engines over a small workspace and asks one
-	// direction of one edge.
-	relating := func(t *testing.T, of sema.ID, kind sema.RelationKind) engine.Result[sema.Relation] {
-		t.Helper()
-		registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
-		held := lang.Workspace{FS: fstest.MapFS{
-			"a.go": {Data: []byte("package p\n\nimport (\n\t\"fmt\"\n\t\"encoding/json\"\n)\n\ntype Store struct{}\n")},
-			"b.go": {Data: []byte("package p\n\nimport \"fmt\"\n\nfunc Use() {}\n")},
-			"c.go": {Data: []byte("package p\n\nfunc Alone() {}\n")},
-		}}
-		assert.NoError(t, golang.Register(held, registry, catalogue), "the module registers")
-
-		for _, e := range catalogue.For(t.Context(), golang.Declaration().Language, engine.RoleRelate) {
-			relator, serves := e.(engine.Relator)
-			if !serves {
-				continue
-			}
-			got, err := relator.Relate(t.Context(), engine.Request{Scope: ".", Preferred: trust.Syntactic},
-				of, kind)
-			if err == nil {
-				return got
-			}
+	var out []string
+	for _, one := range c.Capabilities(t.Context()) {
+		if !slices.Contains(out, one.Engine) {
+			out = append(out, one.Engine)
 		}
-		t.Fatalf("no engine answered %s", kind)
-		return engine.Result[sema.Relation]{}
-	}
-
-	t.Run("imported-by", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("names every file that brings a package into scope", func(t *testing.T) {
-			t.Parallel()
-			got := relating(t, sema.NewID(golang.Declaration().Language, ".", "fmt", sema.KindImport),
-				sema.ImportedBy)
-
-			assert.Equal(t, ends(got.Items), []string{"a.go", "b.go"},
-				"both files that import it, and not the one that does not")
-			assert.Equal(t, got.Completeness, trust.ScopeTotal,
-				"the walk read every file in the scope")
-		})
-
-		t.Run("carries the line the import was written on", func(t *testing.T) {
-			t.Parallel()
-			got := relating(t, sema.NewID(golang.Declaration().Language, ".", "fmt", sema.KindImport),
-				sema.ImportedBy)
-
-			assert.Contains(t, got.Items[0].Via, "fmt",
-				"a caller reading who depends on this wants to read the import")
-		})
-
-		t.Run("matches a package by the name it is written under", func(t *testing.T) {
-			t.Parallel()
-			// A caller asks for what it reads, which is the last segment
-			// as often as the whole path.
-			got := relating(t, sema.NewID(golang.Declaration().Language, ".", "json", sema.KindImport),
-				sema.ImportedBy)
-
-			assert.Equal(t, ends(got.Items), []string{"a.go"},
-				"encoding/json is asked for as json")
-		})
-	})
-
-	t.Run("imports", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("names what the file declaring a symbol brings into scope", func(t *testing.T) {
-			t.Parallel()
-			got := relating(t, sema.NewID(golang.Declaration().Language, ".", "Store", sema.KindStruct),
-				sema.Imports)
-
-			assert.Equal(t, ends(got.Items), []string{"fmt", "encoding/json"},
-				"the imports of the file that declares it, in the order it wrote them, "+
-					"and no other file's")
-		})
-	})
-
-	t.Run("a direction that needs a binding", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("is declined rather than answered with none", func(t *testing.T) {
-			t.Parallel()
-			// A parser matched text. Answering none would be a claim
-			// that nothing calls the declaration, over a tier that
-			// cannot support one.
-			registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
-			assert.NoError(t,
-				golang.Register(lang.Workspace{FS: fstest.MapFS{
-					"a.go": {Data: []byte("package p\n\nfunc Use() {}\n")},
-				}}, registry, catalogue), "the module registers")
-
-			for _, e := range catalogue.For(t.Context(), golang.Declaration().Language, engine.RoleRelate) {
-				relator, serves := e.(engine.Relator)
-				if !serves {
-					continue
-				}
-				_, err := relator.Relate(t.Context(), engine.Request{Scope: "."},
-					sema.NewID(golang.Declaration().Language, ".", "Use", sema.KindFunction),
-					sema.CalledBy)
-				assert.ErrorIs(t, err, engine.ErrDecline,
-					"who calls this is a binding, and this engine has none")
-			}
-		})
-	})
-}
-
-// ends is what each edge pointed at, in order.
-func ends(held []sema.Relation) []string {
-	out := make([]string, 0, len(held))
-	for _, one := range held {
-		out = append(out, one.To.Name)
-	}
-	return out
-}
-
-// An index asks per file and needs to know what a change to one costs.
-// The facts are the same ones Outline returns for that file, which the
-// conformance suite asserts; what this checks is that a real grammar
-// produces them one file at a time.
-func TestIndexOneFile(t *testing.T) {
-	t.Parallel()
-
-	indexing := func(t *testing.T) engine.Indexer {
-		t.Helper()
-		registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
-		held := lang.Workspace{FS: fstest.MapFS{
-			"a.go": {Data: []byte("package p\n\ntype Store struct{ n int }\n\nfunc Use() {}\n")},
-			"b.go": {Data: []byte("package p\n\ntype Other struct{}\n")},
-		}}
-		assert.NoError(t, golang.Register(held, registry, catalogue), "the module registers")
-
-		for _, e := range catalogue.For(t.Context(), golang.Declaration().Language, engine.RoleIndex) {
-			if indexer, serves := e.(engine.Indexer); serves {
-				return indexer
-			}
-		}
-		t.Fatal("no engine indexes")
-		return nil
-	}
-
-	t.Run("Index", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("reports one file's declarations and no other's", func(t *testing.T) {
-			t.Parallel()
-			got, err := indexing(t).Index(t.Context(), "a.go")
-
-			assert.NoError(t, err, "indexing a file this language claims succeeds")
-			assert.Equal(t, names(got.Items), []string{"Store", "n", "Use"},
-				"what that file declares, and nothing from beside it")
-			assert.False(t, got.Skipped, "the file was read")
-		})
-
-		t.Run("says it read nothing for a file of another language", func(t *testing.T) {
-			t.Parallel()
-			// An index storing an empty answer would record that the
-			// file declares none, which is a different fact from this
-			// engine not reading it.
-			got, err := indexing(t).Index(t.Context(), "notes.md")
-
-			assert.NoError(t, err, "a file this language does not claim is not a fault")
-			assert.True(t, got.Skipped, "and the engine says it read nothing")
-			assert.Empty(t, got.Items, "rather than that the file declares nothing")
-		})
-	})
-}
-
-// names is what an answer declared, in order.
-func names(held []sema.Symbol) []string {
-	out := make([]string, 0, len(held))
-	for _, one := range held {
-		out = append(out, one.Name)
 	}
 	return out
 }

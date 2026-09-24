@@ -16,26 +16,31 @@ import (
 	"go.dokimi.dev/techne/lang/treesitter"
 )
 
-// Language is the wire form this module claims. It reaches a caller and,
-// through a sema identity, an index that outlives the process, so
-// changing it invalidates stored data.
+// Language is the language this module declares. Every sema.ID of a C
+// declaration contains it, so a change invalidates the IDs an index has
+// stored.
 const Language source.Language = "c"
 
-// Upstream's query is vendored for diffing but not compiled in. It
-// captures a function by its declarator, so the span it reports stops
-// before the body and nothing written inside a function nests under it.
-// Everything upstream captures is covered below.
-
+// extendsQuery is the tags query that the module compiles in place of the
+// upstream query in queries/upstream.scm. Upstream captures a function by
+// its declarator, so the span of a function ends before its body and no
+// declaration of the body nests under the function. The module keeps the
+// upstream query to compare it with the next release of the grammar.
+//
 //go:embed queries/extends.scm
 var extendsQuery string
 
-// Declaration states the facts about c that hold whichever
-// engine serves it.
+// Declaration returns the declaration of C. A header is C, so C claims .h.
 func Declaration() lang.Declaration {
 	return lang.Declaration{
 		Language:   Language,
 		Extensions: []string{".c", ".h"},
-		Manifests:  []string{"Makefile", "CMakeLists.txt"},
+		// The build files of CMake, make and Meson, and the files from which
+		// clangd reads the compile flags of a project.
+		Manifests: []string{
+			"CMakeLists.txt", "GNUmakefile", "Makefile", "makefile", "meson.build",
+			"compile_commands.json", "compile_flags.txt",
+		},
 		Comment: lang.CommentStyle{
 			Line: "// ", BlockOpen: "/*", BlockClose: "*/",
 			Doc: []lang.DocStyle{
@@ -46,12 +51,13 @@ func Declaration() lang.Declaration {
 			},
 		},
 		IsTest:     IsTest,
-		Namespace:  Namespace,
-		Visibility: Visibility,
+		Namespace:  lang.Stem,
+		Visibility: lang.VisibilityByModifier,
 	}
 }
 
-// Grammar pairs the compiled grammar with this module's tags query.
+// Grammar returns the tree-sitter grammar of C with the tags query of the
+// module.
 func Grammar() treesitter.Grammar {
 	return treesitter.Grammar{
 		Language: ts.NewLanguage(binding.Language()),
@@ -59,38 +65,20 @@ func Grammar() treesitter.Grammar {
 	}
 }
 
-// server is what runs this language's server.
-//
-// Named once and used twice, as the server's own name and as the command
-// to run: a declaration that spelt them differently would report one
-// thing about itself and start another. It needs no argument, because it
-// speaks the protocol over stdio and does nothing else.
+// server is the program of clangd, which is also the name of the server.
 const server = "clangd"
 
-// Server is the language server this module declares.
+// Server returns the declaration of clangd, the language server of LLVM.
+// clangd reads the compile flags of each file from compile_commands.json,
+// and guesses the flags of a file that the database does not list.
 //
-// clangd is part of LLVM and reads compile_commands.json to learn how
-// each file is built. Without one it falls back to guessing the flags,
-// and answers about a translation unit that may not be the real one.
-//
-// Declared whether or not it is installed. Told nothing, a caller
-// concludes this language cannot be served at all; told the server is
-// missing, it knows what to install.
+// The declaration omits check. clangd builds the preamble of a file from
+// the headers on disk, so a check of an unwritten change to a header
+// reports every file that includes the header as broken. The tree-sitter
+// engine checks a change to C.
 func Server() lsp.Server {
 	serves := lsp.Binding()
-	// clangd builds a translation unit's preamble from the files on
-	// disk, so a change to a header is invisible to every file that
-	// includes it until something writes it. Asked to gate one it
-	// reports the dependent file as calling a function nothing declares
-	// and refuses a rename that is right — which was measured against
-	// clangd directly, with no techne in the way, and did not clear
-	// after six seconds.
-	//
-	// So C gates on its grammar. That says the result is still C and not
-	// that it still compiles, which is less than the other nine get and
-	// more than a false refusal is worth.
 	delete(serves, engine.RoleCheck)
-
 	return lsp.Server{
 		Name:       server,
 		Command:    []string{server},
@@ -99,11 +87,8 @@ func Server() lsp.Server {
 	}
 }
 
-// Register adds c to a registry and its engines to a catalogue.
-//
-// A composition root calls this. Which engines follow from a workspace
-// is settled in one place rather than ten, so a language cannot end up
-// served differently from its siblings by accident.
+// Register adds C to r and its engines to c: the tree-sitter engine, and
+// clangd for a workspace on disk.
 func Register(w lang.Workspace, r *lang.Registry, c *engine.Catalog) error {
 	return engines.Register(w, r, c, Declaration(), Grammar(), Server())
 }

@@ -5,6 +5,7 @@ package typescript
 
 import (
 	_ "embed"
+	"io/fs"
 
 	ts "github.com/tree-sitter/go-tree-sitter"
 	binding "github.com/tree-sitter/tree-sitter-typescript/bindings/go"
@@ -16,54 +17,49 @@ import (
 	"go.dokimi.dev/techne/lang/treesitter"
 )
 
-// Language is the wire form this module claims. It reaches a caller and,
-// through a sema identity, an index that outlives the process, so
-// changing it invalidates stored data.
+// Language is the language this module declares. Every sema.ID of a
+// TypeScript declaration contains it, so a change invalidates the IDs an
+// index has stored.
 const Language source.Language = "typescript"
 
-// The TypeScript grammar inherits the JavaScript one, so a .ts file uses
-// both languages' forms. This module's own patterns cover both.
+// extendsQuery is the tags query of the module, for the forms of JavaScript
+// that the TypeScript grammar inherits and the forms that TypeScript adds.
+// The module keeps the two upstream queries in queries to compare them with
+// the next release of the grammar, and does not compile them, because the
+// only constant pattern of the JavaScript query captures an assignment in
+// an export statement and no pattern captures a plain const.
 //
-// Upstream's two files are vendored for diffing but not compiled in:
-// JavaScript's only constant pattern is for the CommonJS export form, so
-// a plain const was captured by nothing.
-
 //go:embed queries/extends.scm
 var extendsQuery string
 
-// Declaration states the facts about typescript that hold whichever
-// engine serves it.
+// Declaration returns the declaration of TypeScript. It claims .tsx,
+// because the server and the type checker read a .tsx file as TypeScript.
+// A rename that crosses the two extensions stays within one language.
 func Declaration() lang.Declaration {
 	return lang.Declaration{
-		Language: Language,
-		// .tsx is TypeScript with JSX in it. Claimed here rather than by
-		// a language of its own, because it is one language to a server
-		// and to a type checker: a declaration in a .tsx file is
-		// TypeScript, and a rename crossing the two would otherwise be
-		// two languages and refuse itself.
+		Language:   Language,
 		Extensions: []string{".ts", ".mts", ".cts", ".tsx"},
-		Manifests:  []string{"package.json", "tsconfig.json"},
+		// The manifest of an npm package, and the configuration file of the
+		// TypeScript compiler.
+		Manifests: []string{"package.json", "tsconfig.json"},
 		Comment: lang.CommentStyle{
 			Line: "// ", BlockOpen: "/*", BlockClose: "*/",
 			Doc: []lang.DocStyle{
 				{Open: "/**", Close: "*/", Continuation: " * "},
 			},
 		},
-		IsTest:     IsTest,
-		Namespace:  Namespace,
-		Visibility: Visibility,
+		IsTest:     lang.JavaScriptTest,
+		Namespace:  lang.Stem,
+		Visibility: lang.VisibilityByModifier,
 	}
 }
 
-// Grammar pairs the compiled grammar with the tags query vendored from
-// upstream.
+// Grammar returns the tree-sitter grammar of TypeScript with the tags
+// query of the module. A .tsx file takes the TSX grammar of the same
+// binding, because the TypeScript grammar parses JSX as an error.
 func Grammar() treesitter.Grammar {
 	return treesitter.Grammar{
 		Language: ts.NewLanguage(binding.LanguageTypescript()),
-		// The plain grammar does not parse JSX: a component file comes
-		// back as a tree with an error in it and every declaration under
-		// the error is lost. The binding ships the second grammar and
-		// the same tags query compiles against both.
 		Dialects: map[string]*ts.Language{
 			".tsx": ts.NewLanguage(binding.LanguageTSX()),
 		},
@@ -71,53 +67,73 @@ func Grammar() treesitter.Grammar {
 	}
 }
 
-// What runs this language's server.
-//
-// The program is named once and used twice, as the server's own name and
-// as the command to run: a declaration that spelt them differently would
-// report one thing about itself and start another.
+// The program of typescript-language-server, which is also the name of the
+// server, and the flag that selects LSP over stdio.
 const (
 	server = "typescript-language-server"
-	// stdio is the flag that speaks the protocol over stdin and stdout rather than
-	// over a socket.
-	stdio = "--stdio"
+	stdio  = "--stdio"
 )
 
-// Server is the language server this module declares.
+// Server returns the declaration of typescript-language-server. The
+// JavaScript module declares the same program under the JavaScript
+// identifier, so each language has its own engine and its own server.
 //
-// One program serves TypeScript and JavaScript, so this declaration and
-// the JavaScript module's name the same binary. They are two engines:
-// each opens its files under its own identity, and a file opened as the
-// wrong one is checked by the wrong rules.
-//
-// Declared whether or not it is installed. Told nothing, a caller
-// concludes this language cannot be served at all; told the server is
-// missing, it knows what to install.
+// A .tsx file opens as typescriptreact, because the server reads JSX in a
+// file opened as typescript as an error. The server offers to extract a
+// function in module scope and a method in the class, both of the kind
+// refactor.extract.function. The declaration prefers the method, because
+// a function in module scope cannot use the receiver.
 func Server() lsp.Server {
 	return lsp.Server{
 		Name:       server,
 		Command:    []string{server, stdio},
 		LanguageID: lsp.IdentityTypeScript,
-		// Opened as typescript, a server reads the JSX in a .tsx file as
-		// an error.
-		Dialects: map[string]string{".tsx": lsp.IdentityTypeScriptReact},
-		Serves:   lsp.Binding(),
-		// typescript-language-server offers an inner function beside a
-		// method on the class, both under the same kind and the inner
-		// one first. An inner function cannot see the receiver, so
-		// extracting to one produces code that parses and does not run.
+		Dialects:   map[string]string{".tsx": lsp.IdentityTypeScriptReact},
+		Serves:     lsp.Binding(),
 		Extracts: lsp.Refactor{
 			Kind:   "refactor.extract.function",
 			Titles: []string{"method in class", "function in module scope"},
 		},
+		// typescript-language-server places a file that no tsconfig.json
+		// includes in a project without a configuration file, which contains
+		// the open files and what they import. The engine cannot see which
+		// project contains a file, so it opens the files that write a name for
+		// every rename and move.
+		Scoped: true,
 	}
 }
 
-// Register adds typescript to a registry and its engines to a catalogue.
-//
-// A composition root calls this. Which engines follow from a workspace
-// is settled in one place rather than ten, so a language cannot end up
-// served differently from its siblings by accident.
+// native is the program of TypeScript 7, which serves LSP itself.
+const native = "tsc"
+
+// Native returns the declaration of the language server of TypeScript 7,
+// tsc --lsp. TypeScript 7 ships no tsserver, which typescript-language-server
+// runs, so a workspace on TypeScript 7 takes this server. It offers no code
+// action that extracts a function, and it places a file that no
+// tsconfig.json includes in a project without a configuration file, as
+// tsserver does.
+func Native() lsp.Server {
+	return lsp.Server{
+		Name:       native,
+		Command:    []string{native, "--lsp", stdio},
+		LanguageID: lsp.IdentityTypeScript,
+		Dialects:   map[string]string{".tsx": lsp.IdentityTypeScriptReact},
+		Serves:     lsp.Binding(),
+		Scoped:     true,
+	}
+}
+
+// For returns the server of the workspace of fsys: [Native] when the
+// workspace uses TypeScript 7 or later, and [Server] otherwise.
+func For(fsys fs.FS) lsp.Server {
+	if major, found := lang.NodeMajor(fsys, "typescript"); found && major >= 7 {
+		return Native()
+	}
+	return Server()
+}
+
+// Register adds TypeScript to r and its engines to c: the tree-sitter
+// engine, and for a workspace on disk the server that [For] returns.
 func Register(w lang.Workspace, r *lang.Registry, c *engine.Catalog) error {
-	return engines.Register(w, r, c, Declaration(), Grammar(), Server())
+	return engines.Register(w, r, c, Declaration(), Grammar(), For(w.FS))
 }

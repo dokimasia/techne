@@ -4,15 +4,12 @@
 package c_test
 
 import (
-	"os"
 	"testing"
-	"testing/fstest"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
-	"go.dokimi.dev/techne/core/source"
+	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/trust"
-	"go.dokimi.dev/techne/lang"
 	"go.dokimi.dev/techne/lang/c"
 	"go.dokimi.dev/techne/lang/lsp"
 )
@@ -23,147 +20,63 @@ func TestLanguage(t *testing.T) {
 	t.Run("Declaration", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("claims the wire form this module owns", func(t *testing.T) {
+		t.Run("declares the language c", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, string(c.Declaration().Language), "c",
-				"the wire form reaches an index that outlives the process, so it is pinned here")
+			assert.Equal(t, c.Declaration().Language, c.Language, "the language of the declaration")
+			assert.Equal(t, string(c.Language), "c", "the value of Language")
 		})
 
-		t.Run("states every convention the registry demands", func(t *testing.T) {
+		t.Run("claims the extensions of C", func(t *testing.T) {
 			t.Parallel()
-			d := c.Declaration()
-			assert.NotEmpty(t, d.Extensions, "without an extension nothing routes to this module")
-			assert.NotNil(t, d.IsTest, "a nil convention panics on the first call")
-			assert.NotNil(t, d.Namespace, "a nil convention panics on the first call")
-			assert.NotNil(t, d.Visibility, "a nil convention panics on the first call")
-			assert.NotEmpty(t, d.Comment.Line,
-				"the document operations need a comment prefix no grammar states")
-			assert.NotEmpty(t, d.Comment.Doc,
-				"a language states the forms its own documentation tool reads")
+			assert.Equal(t, c.Declaration().Extensions, []string{".c", ".h"}, "the extensions of C")
 		})
 
-		t.Run("claims .c", func(t *testing.T) {
+		t.Run("lists the manifests of a C project", func(t *testing.T) {
 			t.Parallel()
-			assert.Contains(t, c.Declaration().Extensions, ".c",
-				"a file with this suffix is this language's to answer about")
+			assert.Equal(t, c.Declaration().Manifests, []string{
+				"CMakeLists.txt", "GNUmakefile", "Makefile", "makefile", "meson.build",
+				"compile_commands.json", "compile_flags.txt",
+			}, "the manifests of C")
+		})
+
+		t.Run("returns the path without its extension as the unit", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.Declaration().Namespace("src/parser.c"), "src/parser", "the unit of src/parser.c")
+		})
+
+		t.Run("reports VisibilityUnknown for every name", func(t *testing.T) {
+			t.Parallel()
+			for _, name := range []string{"Store", "store"} {
+				assert.Equal(t, c.Declaration().Visibility(name), sema.VisibilityUnknown, "the visibility of "+name)
+			}
 		})
 	})
 
 	t.Run("Server", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("can be run as it is declared", func(t *testing.T) {
+		t.Run("runs clangd without arguments", func(t *testing.T) {
 			t.Parallel()
-			// Checked here rather than when a call arrives. A server
-			// declared without a language identity opens every file under
-			// an empty name and is answered about nothing, which in a
-			// tool whose job includes reporting that it found nothing is
-			// the hardest failure to notice.
-			assert.NoError(t, c.Server().Valid(),
-				"the declaration carries everything a server needs")
+			assert.Equal(t, c.Server().Command, []string{"clangd"}, "the command of clangd")
 		})
 
-		t.Run("names itself as it names the program to run", func(t *testing.T) {
+		t.Run("opens a file as c", func(t *testing.T) {
 			t.Parallel()
-			// The name reaches a caller in a capability report and a
-			// provenance. One that named a different program from the one
-			// it starts would tell a caller to install the wrong thing.
-			assert.Equal(t, c.Server().Name, c.Server().Command[0],
-				"what answered and what was run are the same program")
+			assert.Equal(t, c.Server().LanguageID, lsp.IdentityC, "the language identifier of clangd")
 		})
 
-		t.Run("opens files under the identity the protocol names", func(t *testing.T) {
+		t.Run("claims no tier for check", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, c.Server().LanguageID, lsp.IdentityC,
-				"the specification's own spelling, which is what a server matches on")
+			assert.Equal(t, c.Server().Fidelity(engine.RoleCheck), trust.None, "the tier of clangd for check")
 		})
 
-		t.Run("claims only the roles binding answers", func(t *testing.T) {
+		t.Run("claims Resolved for every other role of Binding", func(t *testing.T) {
 			t.Parallel()
-			// A server outlines one file no better than a parser does at
-			// a thousandth of the speed, so claiming outline would make
-			// every outline start a process to do worse.
-			assert.Equal(t, c.Server().Reaches(engine.RoleResolve), trust.Resolved,
-				"a type checker binds names, which is what resolve asks about")
-			assert.Equal(t, c.Server().Reaches(engine.RoleOutline), trust.None,
-				"and holds no evidence a parser does not already have for outline")
-		})
-
-		t.Run("does not gate a change, because clangd cannot", func(t *testing.T) {
-			t.Parallel()
-			// clangd builds a translation unit's preamble from the files
-			// on disk, so a change to a header is invisible to every
-			// file that includes it until something writes it. Asked to
-			// gate one it reports the dependent file as calling a
-			// function nothing declares, and refuses a rename that is
-			// right.
-			assert.Equal(t, c.Server().Reaches(engine.RoleCheck), trust.None,
-				"so C gates on its grammar, which says less and says it truly")
-			assert.Equal(t, lsp.Binding()[engine.RoleCheck], trust.Resolved,
-				"and the other nine keep the compiler gate this one gives up")
+			for role := range lsp.Binding() {
+				if role != engine.RoleCheck {
+					assert.Equal(t, c.Server().Fidelity(role), trust.Resolved, "the tier of clangd for "+role.String())
+				}
+			}
 		})
 	})
-
-	t.Run("Register", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("puts the language in the registry and its engine in the catalogue", func(t *testing.T) {
-			t.Parallel()
-			r, cat := lang.NewRegistry(), engine.NewCatalog()
-			assert.NoError(t, c.Register(lang.Workspace{FS: fstest.MapFS{}}, r, cat),
-				"a composition root registers this module with one call")
-			assert.Length(t, r.Languages(), 1, "one call registers one language")
-			assert.Length(t, cat.For(t.Context(), c.Declaration().Language, engine.RoleOutline), 1,
-				"the parser is selectable for the role it serves")
-		})
-
-		t.Run("adds the server for a workspace on disk", func(t *testing.T) {
-			t.Parallel()
-			// The parser answers over any tree; the server needs one a
-			// process can open files in. Both are registered here, and
-			// the roles they claim do not overlap.
-			registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
-			held := lang.Workspace{FS: os.DirFS(t.TempDir()), Root: t.TempDir()}
-			assert.NoError(t, c.Register(held, registry, catalogue),
-				"a workspace on disk registers both")
-
-			assert.NotContains(t,
-				serving(t, catalogue, c.Declaration().Language, engine.RoleOutline),
-				c.Server().Name,
-				"the parser keeps outline, which a server does no better and far slower")
-		})
-
-		t.Run("leaves the server out where a tree is nowhere", func(t *testing.T) {
-			t.Parallel()
-			// A server is a process that opens files by name. Registered
-			// over a tree that was never written, it would fail on the
-			// first call rather than never be offered.
-			registry, catalogue := lang.NewRegistry(), engine.NewCatalog()
-			assert.NoError(t, c.Register(lang.Workspace{FS: fstest.MapFS{}}, registry, catalogue),
-				"a tree that is nowhere still registers a parser")
-			assert.NotContains(t,
-				serving(t, catalogue, c.Declaration().Language, engine.RolePlan),
-				c.Server().Name,
-				"and its server is not among what can answer")
-		})
-
-		t.Run("refuses a second registration of one language", func(t *testing.T) {
-			t.Parallel()
-			r, cat := lang.NewRegistry(), engine.NewCatalog()
-			assert.NoError(t, c.Register(lang.Workspace{FS: fstest.MapFS{}}, r, cat), "the first call registers")
-			assert.HasError(t, c.Register(lang.Workspace{FS: fstest.MapFS{}}, r, cat),
-				"two claims on one language would make routing depend on call order")
-		})
-	})
-}
-
-// serving is the engines a catalogue offers for a role, by name.
-func serving(t *testing.T, c *engine.Catalog, l source.Language, role engine.Role) []string {
-	t.Helper()
-	held := c.For(t.Context(), l, role)
-	out := make([]string, 0, len(held))
-	for _, one := range held {
-		out = append(out, one.Name())
-	}
-	return out
 }

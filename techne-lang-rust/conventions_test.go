@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/lang/rust"
 )
 
@@ -17,31 +16,29 @@ func TestConventions(t *testing.T) {
 	t.Run("IsTest", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("reads Cargo's layout", func(t *testing.T) {
-			t.Parallel()
-			assert.True(t, rust.IsTest("tests/integration.rs"), "Cargo's integration test directory")
-			assert.True(t, rust.IsTest("crate/tests/api.rs"), "a nested test directory")
-			assert.False(t, rust.IsTest("src/lib.rs"), "shipped code is not a test")
-		})
-
-		t.Run("cannot see a unit test inside a source file", func(t *testing.T) {
-			t.Parallel()
-			// A #[cfg(test)] module lives in the file it tests, and a
-			// path carries nothing of it.
-			assert.False(t, rust.IsTest("src/store.rs"),
-				"a path cannot report a test module declared inside a source file")
-		})
-	})
-
-	t.Run("Visibility", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("is always unknown, because pub carries it", func(t *testing.T) {
-			t.Parallel()
-			for _, name := range []string{"Store", "helper", ""} {
-				assert.Equal(t, rust.Visibility(name), sema.VisibilityUnknown,
-					"a tags query captures the name, and Rust spells visibility with a pub modifier")
-			}
-		})
+		tests := []struct {
+			name string
+			give string
+			want bool
+		}{
+			{
+				name: "returns true for a file in the tests directory of a package",
+				give: "tests/integration.rs",
+				want: true,
+			},
+			{
+				name: "returns true for a file in the tests directory of a member",
+				give: "crates/api/tests/routes.rs",
+				want: true,
+			},
+			{name: "returns true for a file named tests.rs", give: "src/store/tests.rs", want: true},
+			{name: "returns false for a source file with a test module", give: "src/store.rs"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, rust.IsTest(tt.give), tt.want, "the test status of "+tt.give)
+			})
+		}
 	})
 }

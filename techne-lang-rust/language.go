@@ -16,28 +16,29 @@ import (
 	"go.dokimi.dev/techne/lang/treesitter"
 )
 
-// Language is the wire form this module claims. It reaches a caller and,
-// through a sema identity, an index that outlives the process, so
-// changing it invalidates stored data.
+// Language is the language this module declares. Every sema.ID of a Rust
+// declaration contains it, so a change invalidates the IDs an index has
+// stored.
 const Language source.Language = "rust"
 
-// Upstream's query is vendored for diffing but not compiled in. It tags
-// a struct, an enum, a union and a type alias all @definition.class,
-// which collapses four shapes the vocabulary keeps apart. Concatenating
-// it would leave the kind of every Rust ADT to whichever pattern matched
-// first, because class and enum rank alike. Everything upstream captures
-// is covered below.
-
+// extendsQuery is the tags query that the module compiles in place of the
+// upstream query in queries/upstream.scm. Upstream captures structs,
+// enums, unions and type aliases as @definition.class, and sema.Kind tells
+// the four apart. The module keeps the upstream query to compare it with
+// the next release of the grammar.
+//
 //go:embed queries/extends.scm
 var extendsQuery string
 
-// Declaration states the facts about rust that hold whichever
-// engine serves it.
+// Declaration returns the declaration of Rust, whose comment forms include
+// the inner forms //! and /*! that document a module from inside it.
 func Declaration() lang.Declaration {
 	return lang.Declaration{
 		Language:   Language,
 		Extensions: []string{".rs"},
-		Manifests:  []string{"Cargo.toml"},
+		// The manifest of a Cargo package, and the file that describes a
+		// project of another build system to rust-analyzer.
+		Manifests: []string{"Cargo.toml", "rust-project.json"},
 		Comment: lang.CommentStyle{
 			Line: "// ", BlockOpen: "/*", BlockClose: "*/",
 			Doc: []lang.DocStyle{
@@ -49,13 +50,13 @@ func Declaration() lang.Declaration {
 		},
 		Blank:      map[string]bool{"_": true},
 		IsTest:     IsTest,
-		Namespace:  Namespace,
-		Visibility: Visibility,
+		Namespace:  lang.Stem,
+		Visibility: lang.VisibilityByModifier,
 	}
 }
 
-// Grammar pairs the compiled grammar with the tags query vendored from
-// upstream.
+// Grammar returns the tree-sitter grammar of Rust with the tags query of
+// the module.
 func Grammar() treesitter.Grammar {
 	return treesitter.Grammar{
 		Language: ts.NewLanguage(binding.Language()),
@@ -63,42 +64,31 @@ func Grammar() treesitter.Grammar {
 	}
 }
 
-// server is what runs this language's server.
-//
-// Named once and used twice, as the server's own name and as the command
-// to run: a declaration that spelt them differently would report one
-// thing about itself and start another. It needs no argument, because it
-// speaks the protocol over stdio and does nothing else.
+// server is the program of rust-analyzer, which is also the name of the
+// server.
 const server = "rust-analyzer"
 
-// Server is the language server this module declares.
-//
-// rust-analyzer is the official server and speaks the protocol over
-// stdio with no subcommand.
-//
-// Declared whether or not it is installed. Told nothing, a caller
-// concludes this language cannot be served at all; told the server is
-// missing, it knows what to install.
+// Server returns the declaration of rust-analyzer. rust-analyzer offers to
+// extract a variable, a constant, a static and a function, all four of the
+// kind refactor.extract, so the declaration selects the function by its
+// title.
 func Server() lsp.Server {
 	return lsp.Server{
 		Name:       server,
 		Command:    []string{server},
 		LanguageID: lsp.IdentityRust,
 		Serves:     lsp.Binding(),
-		// rust-analyzer offers extracting a variable, a constant, a
-		// static and a function, all four under refactor.extract, so
-		// the wording is what tells them apart.
 		Extracts: lsp.Refactor{
 			Kind: "refactor.extract", Titles: []string{"into function"},
 		},
+		// rust-analyzer does not report an undeclared lifetime, E0261, or a
+		// returned reference that does not live long enough. rustc reports both.
+		Unchecked: "lifetimes or borrows",
 	}
 }
 
-// Register adds rust to a registry and its engines to a catalogue.
-//
-// A composition root calls this. Which engines follow from a workspace
-// is settled in one place rather than ten, so a language cannot end up
-// served differently from its siblings by accident.
+// Register adds Rust to r and its engines to c: the tree-sitter engine,
+// and rust-analyzer for a workspace on disk.
 func Register(w lang.Workspace, r *lang.Registry, c *engine.Catalog) error {
 	return engines.Register(w, r, c, Declaration(), Grammar(), Server())
 }
