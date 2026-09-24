@@ -157,10 +157,37 @@ func TestTool(t *testing.T) {
 			assert.HasPrefix(t, err.Error(), "tool: ", "the error of Execute")
 		})
 
+		t.Run("returns an error for a field that the input schema does not declare", func(t *testing.T) {
+			t.Parallel()
+			_, err := greeter(t).Execute(t.Context(), json.RawMessage(`{"name":"world","query":"x","Times":2}`))
+			assert.HasError(t, err, "the error of Execute")
+			assert.Equal(t, err.Error(), `tool: greet does not take "Times", "query". It takes name, times`,
+				"the error of Execute")
+		})
+
+		t.Run("returns an error for an input without a required field", func(t *testing.T) {
+			t.Parallel()
+			_, err := greeter(t).Execute(t.Context(), json.RawMessage(`{"times":2}`))
+			assert.HasError(t, err, "the error of Execute")
+			assert.Equal(t, err.Error(), `tool: greet needs "name"`, "the error of Execute")
+		})
+
+		t.Run("reads an absent input as an empty object", func(t *testing.T) {
+			t.Parallel()
+			built, err := tool.New("t", "d", func(context.Context, struct{}) (greetOut, error) {
+				return greetOut{Greeting: "hello"}, nil
+			})
+			assert.NoError(t, err, "the error of New")
+			got, err := built.Execute(t.Context(), nil)
+			assert.NoError(t, err, "the error of Execute")
+			assert.Equal(t, string(got.Payload), `{"greeting":"hello"}`, "the payload")
+		})
+
 		t.Run("returns the error of the handler", func(t *testing.T) {
 			t.Parallel()
-			_, err := greeter(t).Execute(t.Context(), json.RawMessage(`{}`))
+			_, err := greeter(t).Execute(t.Context(), json.RawMessage(`{"name":""}`))
 			assert.HasError(t, err, "the error of Execute")
+			assert.Equal(t, err.Error(), "tool: greet needs a name", "the error of Execute")
 		})
 
 		t.Run("returns a failed result for an output that reports a failure", func(t *testing.T) {

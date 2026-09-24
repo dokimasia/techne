@@ -126,6 +126,23 @@ func TestCapabilities(t *testing.T) {
 			assert.Contains(t, got, "outline search", "the roles of gopls")
 		})
 
+		t.Run("aligns the columns of engines with names of different lengths", func(t *testing.T) {
+			t.Parallel()
+			served := func(language, engine string) tool.Capability {
+				return tool.Capability{
+					Language: language, Role: "resolve", Engine: engine, Fidelity: "resolved", Cost: "session",
+					Available: true,
+				}
+			}
+			got := tool.CapabilitiesOutput{Items: []tool.Capability{
+				served("go", "gopls"), served("javascript", "typescript-language-server"),
+			}}.Render()
+			lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+			assert.Length(t, lines, 2, "the lines of the render")
+			assert.Equal(t, strings.Index(lines[0], "resolved"), strings.Index(lines[1], "resolved"),
+				"the column of the fidelity of typescript-language-server")
+		})
+
 		t.Run("writes the reason of an engine that cannot run", func(t *testing.T) {
 			t.Parallel()
 			got := tool.CapabilitiesOutput{Items: []tool.Capability{{

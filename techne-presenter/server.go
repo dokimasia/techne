@@ -7,21 +7,25 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"runtime/debug"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.dokimi.dev/techne/tool"
 )
 
-// Info identifies this server to a client.
+// Info is the name and the version that a server reports to a client in its initialize
+// response.
 type Info struct {
 	Name    string
 	Version string
 }
 
-// NewServer builds a server offering every tool in a registry.
+// NewServer returns a server that offers every tool of r and identifies itself by about.
 //
-// It reports an error when a tool's schemas cannot be encoded, which is
-// a programming error in the tool rather than something a caller did.
+// It returns an error for a tool whose schemas do not encode, which is a fault of the tool.
+// It panics for a tool whose input schema is not of type object, as [mcp.Server.AddTool]
+// does.
 func NewServer(r *tool.Registry, about Info) (*mcp.Server, error) {
 	server := mcp.NewServer(&mcp.Implementation{Name: about.Name, Version: about.Version}, nil)
 
@@ -45,42 +49,46 @@ func NewServer(r *tool.Registry, about Info) (*mcp.Server, error) {
 	return server, nil
 }
 
-// handler drives one tool.
+// handler returns the handler of the calls of t.
 //
-// It never reads the payload. [tool.Result] says whether the answer is a
-// failure, so a change to what a tool returns does not reach here.
+// The structured content of a result is the payload of t, and the SDK writes the payload
+// into the response without decoding it. The text block is the render, or the payload for a
+// result without one. A failed result, an error of Execute and a panic in the goroutine of
+// the call return an error result. The stack of a panic goes to standard error.
+//
+// A payload that is not JSON returns a protocol error, because the SDK does not send a
+// response for a result that it cannot encode.
 func handler(t tool.Tool) mcp.ToolHandler {
-	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (called *mcp.CallToolResult, err error) {
+		defer func() {
+			if fault := recover(); fault != nil {
+				reason := fmt.Sprintf("presenter: %q panicked: %v", t.Name(), fault)
+				fmt.Fprintf(os.Stderr, "%s\n%s", reason, debug.Stack())
+				called, err = failure(reason+". The stack is on the standard error of the server."), nil
+			}
+		}()
+
 		result, err := t.Execute(ctx, req.Params.Arguments)
 		if err != nil {
-			// The model can correct a malformed argument or a refused
-			// path, so this reaches the model rather than the wire.
 			return failure(err.Error()), nil
 		}
-
-		var structured any
-		if err := json.Unmarshal(result.Payload, &structured); err != nil {
-			return nil, fmt.Errorf("presenter: %q produced output that is not JSON: %w", t.Name(), err)
+		if !json.Valid(result.Payload) {
+			return nil, fmt.Errorf("presenter: %q returned a payload that is not JSON", t.Name())
 		}
 
-		// The two halves of a result have different readers. A tool that
-		// renders itself is sent in the form each wants; one that does
-		// not falls back to the payload, which is what the specification
-		// asks for.
 		text := result.Rendered
 		if text == "" {
 			text = string(result.Payload)
 		}
-
 		return &mcp.CallToolResult{
 			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
-			StructuredContent: structured,
+			StructuredContent: result.Payload,
 			IsError:           result.Failed,
 		}, nil
 	}
 }
 
-// failure reports a fault the model can act on.
+// failure returns an error result whose text is reason.
 func failure(reason string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: reason}},
@@ -88,11 +96,8 @@ func failure(reason string) *mcp.CallToolResult {
 	}
 }
 
-// Serve runs a server over stdio until the context is cancelled or the
-// client disconnects.
-//
-// The transport lives here so a composition root never imports the SDK:
-// which wire a server speaks is this module's business.
+// Serve runs s over standard input and output. It returns nil when the client closes standard
+// input, and the error of ctx when ctx is done.
 func Serve(ctx context.Context, s *mcp.Server) error {
 	return s.Run(ctx, &mcp.StdioTransport{})
 }

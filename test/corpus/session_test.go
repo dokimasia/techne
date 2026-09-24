@@ -61,10 +61,16 @@ func TestSession(t *testing.T) {
 		t.Run("records the tool of each call", func(t *testing.T) {
 			t.Parallel()
 			s := session(t)
-			for _, name := range []string{"outline", "search"} {
+			for _, call := range []struct {
+				name      string
+				arguments map[string]any
+			}{
+				{"outline", map[string]any{"scope": "a.mock"}},
+				{"search", map[string]any{"scope": "a.mock", "text": "Store"}},
+			} {
 				var answer tool.Matches
-				_, err := s.Call(t.Context(), name, map[string]any{"scope": "a.mock", "text": "Store"}, &answer)
-				assert.NoError(t, err, "Call of "+name)
+				_, err := s.Call(t.Context(), call.name, call.arguments, &answer)
+				assert.NoError(t, err, "Call of "+call.name)
 			}
 			var got []string
 			for _, c := range s.Calls() {

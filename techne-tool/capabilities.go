@@ -37,8 +37,9 @@ type Capability struct {
 	Unavailable string `json:"unavailable,omitempty"`
 }
 
-// Render returns the capabilities as text: one line per language and engine, with the roles
-// of the engine, and the reason under an engine that cannot run.
+// Render returns the capabilities as text, one line per language and engine with the roles of
+// the engine. The reason of an engine that cannot run is on the line under it. Each column is
+// as wide as its longest cell.
 func (o CapabilitiesOutput) Render() string {
 	type row struct {
 		language, engine, fidelity, cost, unavailable string
@@ -61,13 +62,20 @@ func (o CapabilitiesOutput) Render() string {
 	if len(order) == 0 {
 		return "nothing is served\n"
 	}
+	var widths [4]int
+	for _, key := range order {
+		one := rows[key]
+		for i, cell := range [4]string{one.language, one.engine, one.fidelity, one.cost} {
+			widths[i] = max(widths[i], len(cell))
+		}
+	}
 	var b strings.Builder
 	for _, key := range order {
 		one := rows[key]
-		fmt.Fprintf(&b, "%-12s %-22s %-10s %-8s %s\n",
-			one.language, one.engine, one.fidelity, one.cost, strings.Join(one.roles, " "))
+		fmt.Fprintf(&b, "%-*s %-*s %-*s %-*s %s\n", widths[0], one.language, widths[1], one.engine,
+			widths[2], one.fidelity, widths[3], one.cost, strings.Join(one.roles, " "))
 		if one.unavailable != "" {
-			fmt.Fprintf(&b, "%-12s %s\n", "", one.unavailable)
+			fmt.Fprintf(&b, "%-*s %s\n", widths[0], "", one.unavailable)
 		}
 	}
 	return b.String()
