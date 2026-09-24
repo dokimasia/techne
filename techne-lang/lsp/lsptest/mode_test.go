@@ -12,14 +12,14 @@ import (
 
 // modes are every mode of the scripted server.
 var modes = []lsptest.Mode{
-	lsptest.Default, lsptest.Silent, lsptest.Dies, lsptest.Empty, lsptest.Unicode, lsptest.Flat,
-	lsptest.OneLocation, lsptest.Links, lsptest.Unresolved, lsptest.Pointed, lsptest.Unnameable,
-	lsptest.Strict, lsptest.Pushes, lsptest.PushesOne, lsptest.Asks, lsptest.Uncallable,
-	lsptest.Loading, lsptest.Stuck, lsptest.Hangs, lsptest.Ungated, lsptest.Thin, lsptest.Echoes,
-	lsptest.Moveless, lsptest.SilentMove, lsptest.Extracts, lsptest.Commands, lsptest.Watches,
-	lsptest.Opened, lsptest.Short, lsptest.Scoped, lsptest.Conflicts, lsptest.Unenclosed, lsptest.Compiles,
-	lsptest.Unbound, lsptest.WorkspaceDiagnostics, lsptest.Canonical, lsptest.Minified, lsptest.Receivers,
-	lsptest.Impls, lsptest.Wrapped, lsptest.Nested,
+	lsptest.Default, lsptest.Silent, lsptest.Dies, lsptest.Orphans, lsptest.Empty, lsptest.Unicode,
+	lsptest.Flat, lsptest.OneLocation, lsptest.Links, lsptest.Unresolved, lsptest.Pointed,
+	lsptest.Unnameable, lsptest.Strict, lsptest.Pushes, lsptest.PushesOne, lsptest.Quiet, lsptest.Asks,
+	lsptest.Uncallable, lsptest.Loading, lsptest.Stuck, lsptest.Created, lsptest.Hangs, lsptest.Ungated,
+	lsptest.Thin, lsptest.Echoes, lsptest.Moveless, lsptest.SilentMove, lsptest.Extracts, lsptest.Commands,
+	lsptest.Watches, lsptest.Opened, lsptest.Short, lsptest.Scoped, lsptest.Conflicts, lsptest.Unenclosed,
+	lsptest.Compiles, lsptest.DiskChecks, lsptest.DiskStuck, lsptest.Unbound, lsptest.WorkspaceDiagnostics,
+	lsptest.Canonical, lsptest.Receivers, lsptest.Impls, lsptest.Wrapped, lsptest.Minified, lsptest.Nested,
 }
 
 func TestMode(t *testing.T) {

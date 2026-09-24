@@ -217,7 +217,7 @@ func (e *Engine) corroborated(
 		if missed, short := e.uncovered(uses, changes); short {
 			return trust.ScopePartial, reaches, append(caveats, trust.Caveat{
 				Code: trust.CaveatUnrewritten,
-				Note: "the server names a use at " + missed + " that the rename does not rewrite",
+				Note: missed,
 			})
 		}
 		return covered, reaches, caveats
@@ -227,8 +227,11 @@ func (e *Engine) corroborated(
 	return covered, reaches, caveats
 }
 
-// uncovered returns the path and line of the first use in the workspace that no edit of
-// changes rewrites, and reports whether there is one.
+// uncovered returns the note of the caveat about the first use in the workspace that no edit of
+// changes rewrites, and reports whether there is one. A plan edits no file that [lang.Readable]
+// refuses, so each use in such a file is one: a use in a source that the build generates under
+// a directory that .gitignore excludes, for example. A use in a file that cannot be read for
+// another reason, such as a file that no longer exists, is left out.
 func (e *Engine) uncovered(uses []protocol.Location, changes []edit.Change) (string, bool) {
 	edits := map[source.Path][]edit.TextEdit{}
 	for _, c := range changes {
@@ -242,16 +245,20 @@ func (e *Engine) uncovered(uses []protocol.Location, changes []edit.Change) (str
 		if outside(p) {
 			continue
 		}
+		at := fmt.Sprintf("%s:%d", p, one.Range.Start.Line+1)
 		doc, read := docs[p]
 		if !read {
 			loaded, err := e.read(p)
-			if err != nil {
+			switch {
+			case refused(err):
+				return "the server names a use at " + at + " in a file that techne does not read", true
+			case err != nil:
 				continue
 			}
 			doc, docs[p] = loaded, loaded
 		}
 		if !rewrites(edits[p], doc.position(one.Range.Start).Offset) {
-			return fmt.Sprintf("%s:%d", p, one.Range.Start.Line+1), true
+			return "the server names a use at " + at + " that the rename does not rewrite", true
 		}
 	}
 	return "", false

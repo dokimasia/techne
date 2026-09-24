@@ -27,6 +27,11 @@ const starting = 10 * time.Second
 // leaving is how long a server has to answer shutdown and exit before [session.stop] kills it.
 const leaving = 5 * time.Second
 
+// draining is how long [session.stop] waits for the stderr of a server to close after the
+// process ends. A child of the server can keep it open: ruby-lsp runs bundle install in a child
+// that outlives a killed server.
+const draining = 500 * time.Millisecond
+
 // stderrSize is how many bytes of a server's stderr a session keeps.
 const stderrSize = 8 << 10
 
@@ -84,8 +89,10 @@ func start(ctx context.Context, declared Server, root string) (*session, error) 
 			cmd.Env = append(cmd.Env, name+"="+value)
 		}
 	}
-	// os/exec copies stderr into the tail and finishes the copy before Wait returns.
+	// os/exec copies stderr into the tail and finishes the copy before Wait returns, or closes
+	// the pipe draining after the process ends.
 	cmd.Stderr = held.stderr
+	cmd.WaitDelay = draining
 
 	out, err := cmd.StdoutPipe()
 	if err != nil {
@@ -158,9 +165,10 @@ func (o ordered) Read(ctx context.Context) (jsonrpc2.Message, int64, error) {
 // stop ends the server and returns the error of its shutdown.
 //
 // It sends shutdown and exit, closes the connection, and waits for the process. A server that
-// has not exited [leaving] after the call, or when ctx is done, is killed. Only the first call
-// stops the session, and every later call returns nil. A shutdown refused because ctx ended is
-// not an error.
+// has not exited [leaving] after the call, or when ctx is done, is killed. The wait for the
+// stderr of the server ends [draining] after the process ends. Only the first call stops the
+// session, and every later call returns nil. A shutdown refused because ctx ended is not an
+// error.
 func (s *session) stop(ctx context.Context) error {
 	var refused error
 	s.ends.Do(func() {

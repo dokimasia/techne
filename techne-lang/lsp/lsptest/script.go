@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
@@ -270,9 +271,20 @@ func (s *script) initialize(m message) (int, bool) {
 		}
 	case Created:
 		go s.load(CreateTime)
+	case Orphans:
+		orphan()
 	}
 	s.answer(m.ID, s.capabilities())
 	return 0, false
+}
+
+// orphan starts the child of the Orphans mode: the binary of the scripted server, which sleeps
+// for [OrphanTime] with the stderr of the server and exits. The server does not wait for it.
+func orphan() {
+	child := exec.Command(os.Args[0])
+	child.Env = append(os.Environ(), envOrphan+"=1")
+	child.Stderr = os.Stderr
+	_ = child.Start()
 }
 
 // progressed is a $/progress notification of the loading job with value.

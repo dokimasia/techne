@@ -77,6 +77,11 @@
 // of [lang.Lowered]. Only an error on a line that can hide a use of the name that the answer is
 // about lowers it to [trust.Indexed]. An extraction rewrites no reference and is never lowered.
 //
+// A rename is partial when the server reports a use that no edit of the plan rewrites. A use in a
+// file that [lang.Readable] refuses is always such a use, because a plan edits no file that
+// techne does not read. A source that a build generates under a directory that .gitignore
+// excludes is one such file.
+//
 // # Buffers
 //
 // A server analyses its buffers, not the files on disk. Before each question the engine sends
@@ -84,6 +89,10 @@
 // buffer whose file is gone. It compares the size and the modification time of each file, and
 // reads a file only when one of them changed. A server that declares [Server.DiskCheck] also
 // receives textDocument/didSave for a file that changed on disk since its last check.
+//
+// The diagnostics of a buffer are dropped when the engine replaces or releases the buffer. A
+// server can publish a report of a file after the release. The next open of the file drops that
+// report, because it describes no content that the engine sent.
 //
 // # Writes
 //

@@ -87,6 +87,25 @@ func TestEdit(t *testing.T) {
 			assert.Equal(t, got.Items[1].To, source.Path("vault.fake"), "the destination of the move")
 		})
 
+		t.Run("skips a rename that repeats a move of the edit", func(t *testing.T) {
+			t.Parallel()
+			moving := `{"kind":"rename","oldUri":"{file}","newUri":"{root}/vault.fake"}`
+			got, err := renamedAt(t, sample(), ordered(documentEdit("{file}", vault), moving, moving))
+			assert.NoError(t, err, "Plan of an edit and a repeated rename")
+			assert.Equal(t, kinds(got.Items), []edit.ChangeKind{edit.ChangeEdit, edit.ChangeMove},
+				"the changes of the plan")
+			assert.Equal(t, got.Items[1].To, source.Path("vault.fake"), "the destination of the move")
+		})
+
+		t.Run("refuses a rename onto a file that the edit changed", func(t *testing.T) {
+			t.Parallel()
+			files := map[string]string{"a.fake": lsptest.Content, "b.fake": lsptest.Content}
+			moving := `{"kind":"rename","oldUri":"{file}","newUri":"{root}/b.fake"}`
+			_, err := renamedAt(t, files, ordered(documentEdit("{root}/b.fake", vault), moving))
+			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of Plan")
+			assert.Contains(t, err.Error(), "which exists", "the error of Plan")
+		})
+
 		t.Run("addresses an edit of a renamed file to its old path", func(t *testing.T) {
 			t.Parallel()
 			got, err := renamedAt(t, sample(), ordered(

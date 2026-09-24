@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/edit"
@@ -234,6 +235,18 @@ func TestEngine(t *testing.T) {
 			_, err = e.Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
 			assert.NoError(t, err, "the Resolve after Close")
 			assert.Equal(t, starts(t, log), 2, "the number of servers started")
+		})
+
+		t.Run("returns while a child of the server keeps its stderr open", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, lsptest.Orphans, sample())
+			_, err := e.Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
+			assert.NoError(t, err, "Resolve starts the server")
+
+			began := time.Now()
+			assert.NoError(t, e.Close(t.Context()), "Close")
+			took := time.Since(began)
+			assert.True(t, took < lsptest.OrphanTime/2, "Close took "+took.String())
 		})
 
 		t.Run("stops the server while questions run", func(t *testing.T) {

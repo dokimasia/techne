@@ -10,6 +10,7 @@ import (
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
+	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/lang/lsp"
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
@@ -100,6 +101,18 @@ func TestEvidence(t *testing.T) {
 				Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
 			assert.NoError(t, err, "Resolve after the pulled report")
 			assert.Equal(t, got.Lowered, trust.Indexed, "the lowered tier of the answer")
+		})
+
+		t.Run("keeps the tier of an answer after a check of a file that is not on disk", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, lsptest.Compiles, sample())
+			_, err := e.Check(t.Context(), map[source.Path][]byte{"b.fake": []byte(naming)})
+			assert.NoError(t, err, "Check of a new file with an error")
+
+			got, err := e.Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
+			assert.NoError(t, err, "Resolve after the check")
+			assert.Equal(t, got.Lowered, trust.None, "the lowered tier of the answer")
+			assert.False(t, hasCaveat(got.Caveats, trust.CaveatBuildBroken), "the answer has a build caveat")
 		})
 
 		t.Run("returns the dynamic caveat", func(t *testing.T) {

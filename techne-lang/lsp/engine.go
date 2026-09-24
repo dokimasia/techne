@@ -153,8 +153,8 @@ func (e *Engine) running(ctx context.Context) (*session, error) {
 	defer done()
 	if err := e.handshake(handshaking, held); err != nil {
 		// The server did not finish initialize, so it has nothing to write out. stop kills
-		// it at once under a context that is already done, and waits until its stderr is
-		// read to the end.
+		// it at once under a context that is already done, and reads its stderr until the
+		// pipe closes or draining has passed.
 		now, kill := context.WithCancel(context.WithoutCancel(ctx))
 		kill()
 		_ = held.stop(now)
@@ -342,8 +342,8 @@ func (e *Engine) current(ctx context.Context, held *session) {
 }
 
 // release tells the server that the file at full is gone: textDocument/didClose for its
-// buffer and workspace/didChangeWatchedFiles for the file. It does nothing for a file without
-// a buffer.
+// buffer and workspace/didChangeWatchedFiles for the file. It drops the diagnostics of the
+// buffer with [reports.release]. It does nothing for a file without a buffer.
 func (*Engine) release(ctx context.Context, held *session, full string) {
 	held.opening.Lock()
 	_, open := held.opened[full]
@@ -359,6 +359,7 @@ func (*Engine) release(ctx context.Context, held *session, full string) {
 	_ = held.asks.DidChangeWatchedFiles(ctx, &protocol.DidChangeWatchedFilesParams{
 		Changes: []protocol.FileEvent{{URI: uri.File(full), Type: protocol.FileChangeTypeDeleted}},
 	})
+	held.reports.release(uri.File(full))
 }
 
 // open reads the file at p, sends it to the server when the buffer of the server differs, and
@@ -447,7 +448,8 @@ func (e *Engine) save(ctx context.Context, held *session, full string, at stamp)
 // nothing for a buffer with the same content. For a buffer with other content it sends
 // textDocument/didChange with the whole content, or for a [Server.Quiet] server the close and
 // the open of [Engine.reopen]. A replaced buffer drops the diagnostics that [reports.forget]
-// drops. The stamp is the zero stamp for content that is not on disk.
+// drops. An open drops the diagnostics that [reports.reopening] drops. The stamp is the zero
+// stamp for content that is not on disk.
 func (e *Engine) sync(
 	ctx context.Context,
 	held *session,
@@ -491,6 +493,7 @@ func (e *Engine) sync(
 		return true, nil
 	}
 
+	held.reports.reopening(uri.File(full))
 	if err := held.asks.DidOpen(ctx, &protocol.DidOpenTextDocumentParams{
 		TextDocument: protocol.TextDocumentItem{
 			URI:        uri.File(full),

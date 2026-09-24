@@ -5,6 +5,8 @@ package lsp_test
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -79,6 +81,23 @@ func TestVerify(t *testing.T) {
 			got, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
 			assert.NoError(t, err, "Verify after the check")
 			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the answer")
+		})
+
+		t.Run("reads the report of a file that returns after the engine released its buffer", func(t *testing.T) {
+			t.Parallel()
+			e, root := rooted(t, lsptest.Quiet, map[string]string{"a.fake": lsptest.Content, "b.fake": lsptest.Content})
+			_, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify opens a.fake")
+			assert.NoError(t, os.Remove(filepath.Join(root, "a.fake")), "Remove of a.fake")
+			// The question releases the buffer of a.fake. The server publishes an empty report of
+			// a.fake a QuietClose after the close, before the report of b.fake.
+			_, err = e.Verify(t.Context(), engine.Request{Scope: "b.fake"}, nil)
+			assert.NoError(t, err, "Verify of b.fake releases the buffer of a.fake")
+			rewrite(t, root, "a.fake", lsptest.Content+lsptest.Broken+"\n")
+
+			got, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify of a.fake after it returns")
+			assert.Equal(t, mentions(got.Items, lsptest.Broken), 1, "the findings of a.fake")
 		})
 
 		t.Run("returns within 3 seconds for ten files without a report", func(t *testing.T) {

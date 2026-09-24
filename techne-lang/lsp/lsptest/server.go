@@ -25,6 +25,8 @@ const (
 	envRequests = "TECHNE_LSPTEST_REQUESTS"
 	envOutside  = "TECHNE_LSPTEST_OUTSIDE"
 	envRenames  = "TECHNE_LSPTEST_RENAMES"
+	// envOrphan marks the child of the Orphans mode.
+	envOrphan = "TECHNE_LSPTEST_ORPHAN"
 )
 
 // closing is how long [Engine] waits for the scripted server to shut down when a test ends.
@@ -35,10 +37,14 @@ const closing = 5 * time.Second
 const Unchecked = "a name defined twice"
 
 // Main runs the scripted server and exits when the process was started by a declaration
-// from [Server]. Otherwise it runs the tests and exits with their status. A test package
-// calls it from TestMain.
+// from [Server]. The child of the Orphans mode sleeps for [OrphanTime] and exits. Otherwise
+// Main runs the tests and exits with their status. A test package calls it from TestMain.
 func Main(m *testing.M) {
-	if os.Getenv(envActing) == "" {
+	switch {
+	case os.Getenv(envOrphan) != "":
+		time.Sleep(OrphanTime)
+		os.Exit(0)
+	case os.Getenv(envActing) == "":
 		os.Exit(m.Run())
 	}
 	os.Exit(serve(Mode(os.Getenv(envMode))))

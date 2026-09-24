@@ -22,6 +22,11 @@ const (
 	// Dies writes [Dying] to stderr and exits with status 3 when it receives initialize.
 	Dies Mode = "dies"
 
+	// Orphans starts a child process that inherits its stderr and ends [OrphanTime] later, and
+	// responds as the Default mode does. ruby-lsp starts bundle install this way, and the child
+	// keeps the stderr of the server open after the server ends.
+	Orphans Mode = "orphans"
+
 	// Empty declares nothing in any file and responds to textDocument/formatting with no edits.
 	Empty Mode = "empty"
 
@@ -258,3 +263,7 @@ const (
 
 // Dying is the line that the Dies mode writes to stderr before it exits.
 const Dying = "lsptest: the scripted server exits during initialize"
+
+// OrphanTime is how long the child of the Orphans mode keeps the stderr of the scripted server
+// open.
+const OrphanTime = 10 * time.Second

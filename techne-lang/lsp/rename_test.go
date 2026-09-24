@@ -4,6 +4,8 @@
 package lsp_test
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -47,8 +49,21 @@ func TestRename(t *testing.T) {
 			got, err := renameWith(t, serving(t, lsptest.Short, both()))
 			assert.NoError(t, err, "Plan of a rename")
 			assert.Equal(t, got.Completeness, trust.ScopePartial, "the completeness of the plan")
-			assert.True(t, hasCaveat(got.Caveats, trust.CaveatUnrewritten), "the plan has an unrewritten caveat")
+			assert.True(t, unrewritten(got.Caveats, "b.fake:1 that the rename does not rewrite"),
+				"the plan has an unrewritten caveat that names b.fake:1")
 			assert.False(t, hasCaveat(got.Caveats, trust.CaveatIndexWarming), "the plan has a warming caveat")
+		})
+
+		t.Run("returns a partial plan for a use in a file that .gitignore excludes", func(t *testing.T) {
+			t.Parallel()
+			files := both()
+			files[".gitignore"] = "b.fake\n"
+			got, err := renameWith(t, serving(t, lsptest.Opened, files))
+			assert.NoError(t, err, "Plan of a rename")
+			assert.Equal(t, paths(got.Items), []source.Path{"a.fake"}, "the files the rename changes")
+			assert.Equal(t, got.Completeness, trust.ScopePartial, "the completeness of the plan")
+			assert.True(t, unrewritten(got.Caveats, "b.fake:1 in a file that techne does not read"),
+				"the plan has an unrewritten caveat that names b.fake:1")
 		})
 
 		t.Run("refuses a position the server cannot rename", func(t *testing.T) {
@@ -98,5 +113,13 @@ func TestRename(t *testing.T) {
 			assert.NoError(t, err, "Plan in a scope without a file of the language")
 			assert.True(t, got.Skipped, "Skipped of the plan")
 		})
+	})
+}
+
+// unrewritten reports whether caveats contain a [trust.CaveatUnrewritten] caveat whose note
+// contains text.
+func unrewritten(caveats []trust.Caveat, text string) bool {
+	return slices.ContainsFunc(caveats, func(one trust.Caveat) bool {
+		return one.Code == trust.CaveatUnrewritten && strings.Contains(one.Note, text)
 	})
 }

@@ -179,6 +179,8 @@ type reports struct {
 	ondisk bool
 	// kept are the published diagnostics, and pulls the pulled diagnostics, of each file.
 	kept, pulls map[uri.URI][]protocol.Diagnostic
+	// released are the files whose buffer the engine released and has not opened again.
+	released map[uri.URI]bool
 	// waking has one channel per file that a caller waits on, which the next publish closes.
 	waking map[uri.URI]chan struct{}
 }
@@ -187,10 +189,11 @@ type reports struct {
 // on disk.
 func newReports(ondisk bool) *reports {
 	return &reports{
-		ondisk: ondisk,
-		kept:   map[uri.URI][]protocol.Diagnostic{},
-		pulls:  map[uri.URI][]protocol.Diagnostic{},
-		waking: map[uri.URI]chan struct{}{},
+		ondisk:   ondisk,
+		kept:     map[uri.URI][]protocol.Diagnostic{},
+		pulls:    map[uri.URI][]protocol.Diagnostic{},
+		released: map[uri.URI]bool{},
+		waking:   map[uri.URI]chan struct{}{},
 	}
 }
 
@@ -227,6 +230,36 @@ func (r *reports) published(of uri.URI) []protocol.Diagnostic {
 func (r *reports) forget(of uri.URI) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.drop(of)
+}
+
+// release drops the diagnostics of the buffer of the file of, as [reports.forget] does. The
+// engine calls it when it releases the buffer, and calls [reports.reopening] before it opens a
+// buffer of the file again.
+func (r *reports) release(of uri.URI) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.drop(of)
+	r.released[of] = true
+}
+
+// reopening drops the diagnostics of the file of before the engine opens a buffer of it, when
+// the engine released its buffer before. A server can publish a report of the file after the
+// release, such as the empty report that jdtls publishes for a closed buffer. That report
+// describes no content that the engine sends. The report of a file whose buffer the engine
+// never released is kept, because a server publishes it for the file on disk.
+func (r *reports) reopening(of uri.URI) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.released[of] {
+		r.drop(of)
+		delete(r.released, of)
+	}
+}
+
+// drop deletes the pulled diagnostics of the file of, and its published diagnostics unless a
+// publish describes the file on disk. The caller has locked mu.
+func (r *reports) drop(of uri.URI) {
 	delete(r.pulls, of)
 	if !r.ondisk {
 		delete(r.kept, of)

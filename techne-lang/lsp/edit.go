@@ -38,7 +38,8 @@ import (
 // A range converts against the document in texts for a path it contains, and against the
 // file on disk otherwise. A create over an existing file, a rename onto an existing file or a
 // delete of a missing file returns [engine.ErrRefuse], unless its options allow the case. A
-// rename or a delete of a directory returns [engine.ErrRefuse].
+// rename that repeats a move of the edit is skipped. A rename or a delete of a directory
+// returns [engine.ErrRefuse].
 func (e *Engine) changes(
 	workspace *protocol.WorkspaceEdit,
 	texts map[source.Path]document,
@@ -170,10 +171,15 @@ func (d *draft) create(p source.Path, overwrite, ignore bool) error {
 	return nil
 }
 
-// rename applies a RenameFile operation, which moves the file at from to to. For a destination
-// that exists, ignore without overwrite skips the operation, and any other option returns
-// [engine.ErrRefuse], because a move of the write path does not overwrite a file.
+// rename applies a RenameFile operation, which moves the file at from to to. A rename that
+// repeats a move of the edit changes nothing and is skipped: ruby-lsp can send the move of a
+// file twice in one rename of a class. For a destination that exists, ignore without overwrite
+// skips the operation, and any other option returns [engine.ErrRefuse], because a move of the
+// write path does not overwrite a file.
 func (d *draft) rename(from, to source.Path, overwrite, ignore bool) error {
+	if d.repeats(from, to) {
+		return nil
+	}
 	if d.exists(to) {
 		if ignore && !overwrite {
 			return nil
@@ -193,6 +199,13 @@ func (d *draft) rename(from, to source.Path, overwrite, ignore bool) error {
 	f.at = to
 	d.files[to] = f
 	return nil
+}
+
+// repeats reports whether the edit has moved the file at from to to. No later operation of the
+// edit puts a file at from, because a create or a rename onto from finds the file on disk.
+func (d *draft) repeats(from, to source.Path) bool {
+	moved, known := d.files[to]
+	return known && moved.from == from
 }
 
 // remove applies a DeleteFile operation. With ignore it leaves a missing file alone.
