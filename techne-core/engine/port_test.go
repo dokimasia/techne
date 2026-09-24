@@ -33,6 +33,8 @@ type fake struct {
 	cost     engine.Cost
 	err      error
 	calls    *int
+	// skipped makes Outline return a skipped result.
+	skipped bool
 }
 
 func (f fake) Name() string                        { return f.name }
@@ -47,7 +49,7 @@ func (f fake) Outline(context.Context, engine.Request) (engine.Result[sema.Symbo
 	if f.err != nil {
 		return engine.Result[sema.Symbol]{}, f.err
 	}
-	return engine.Result[sema.Symbol]{Completeness: trust.ScopeTotal}, nil
+	return engine.Result[sema.Symbol]{Completeness: trust.ScopeTotal, Skipped: f.skipped}, nil
 }
 
 // complete is a fake that implements every port and Available. Available

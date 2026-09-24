@@ -13,28 +13,23 @@ import (
 	"go.dokimi.dev/techne/core/source"
 )
 
-// Router reports which languages exist and which one claims a path.
-//
-// It is re-exported rather than redeclared: a composition root naming
-// this service should not have to name the package the port lives in,
-// and two declarations of one port are two things to keep in step.
+// Router maps a path to the languages that a request is about. It is [engine.Router], so
+// the read path and the write path route a path by one rule.
 type Router = engine.Router
 
-// Service answers read questions.
-//
-// It is safe for concurrent use once built: nothing registers an engine
-// or a language after a composition root has finished.
+// Service serves the read roles over one catalogue. It is safe for concurrent use after
+// the composition root has registered every engine.
 type Service struct {
 	catalog *engine.Catalog
 	router  Router
 }
 
-// New returns a service over a catalogue and a router.
+// New returns a service over the engines of c and the languages of r.
 func New(c *engine.Catalog, r Router) *Service {
 	return &Service{catalog: c, router: r}
 }
 
-// Outline reports what the files in a scope declare.
+// Outline returns the declarations of the files in the scope of req.
 func (s *Service) Outline(ctx context.Context, req engine.Request) (engine.Answer[sema.Symbol], error) {
 	return ask(ctx, s, req, engine.RoleOutline,
 		func(e engine.Engine) (engine.Result[sema.Symbol], error) {
@@ -42,10 +37,8 @@ func (s *Service) Outline(ctx context.Context, req engine.Request) (engine.Answe
 		})
 }
 
-// Search reports the declarations in a scope matching a query.
-//
-// The order is the engine's own. A language server ranks with more to go
-// on than a parser has, and re-ranking here would throw that away.
+// Search returns the declarations in the scope of req that match q. The matches of each
+// language keep the order of its engine, and the languages follow the order of the router.
 func (s *Service) Search(
 	ctx context.Context,
 	req engine.Request,
@@ -57,12 +50,9 @@ func (s *Service) Search(
 		})
 }
 
-// Resolve reports what the name at a position denotes.
-//
-// More than one item means the name is ambiguous and the caller chooses.
-// An engine that binds through types returns one; a parser returns every
-// declaration that happens to share the name, which is why the tier on
-// the answer decides what the count is worth.
+// Resolve returns the declarations that the name at a position denotes. Two or more items
+// mean that the name is ambiguous. The tier of the answer states whether a type checker
+// bound the name or a parser matched it.
 func (s *Service) Resolve(
 	ctx context.Context,
 	req engine.Request,
@@ -74,12 +64,8 @@ func (s *Service) Resolve(
 		})
 }
 
-// Relate reports how a symbol connects to the rest, in one direction.
-//
-// The direction asked for is the direction answered. An engine storing
-// the other one returns the far end of what it stored rather than the
-// near end of what it was asked, and the kind on each edge is the
-// caller's word for it either way.
+// Relate returns the relations of kind from the declaration with the ID of, in the
+// direction that kind names.
 func (s *Service) Relate(
 	ctx context.Context,
 	req engine.Request,
@@ -92,11 +78,9 @@ func (s *Service) Relate(
 		})
 }
 
-// Verify reports what a language's own gate says about a scope.
-//
-// Suites names what to run in the language's own words. A scope holding
-// two languages is verified by both and the findings merge, because a
-// caller asking whether a directory builds is asking about the directory.
+// Verify returns the findings of the toolchain of each language of the scope of req.
+// suites names the checks in the words of the language. A scope of two languages returns
+// the findings of both.
 func (s *Service) Verify(
 	ctx context.Context,
 	req engine.Request,
@@ -108,13 +92,10 @@ func (s *Service) Verify(
 		})
 }
 
-// ask runs one read role through the shared path.
-//
-// It is generic over the item type so every role takes the same steps.
-// Resolving the language, taking the engines strongest first and
-// stamping what came back are [engine.AskEach]'s, so a read and a write
-// cannot come to different conclusions about who serves a file. What is
-// left here is the one thing a read does with several answers.
+// ask runs one read role through [engine.AskEach] and merges the answers. It returns an
+// unsupported answer with the reasons of the engines that declined when every answer is
+// skipped. It returns an unsupported answer about the scope when no engine answered or
+// declined.
 func ask[T any](
 	ctx context.Context,
 	s *Service,
@@ -123,18 +104,13 @@ func ask[T any](
 	call func(engine.Engine) (engine.Result[T], error),
 ) (engine.Answer[T], error) {
 	answered, declined, err := engine.AskEach(ctx, s.catalog, s.router, req, role, call)
-	if err != nil {
+	switch {
+	case err != nil:
 		return engine.Answer[T]{}, err
-	}
-	if len(answered) == 0 {
-		// What an engine said about why it could not answer is often the
-		// only actionable thing in the exchange, and is a different fact
-		// from nothing serving the file at all.
-		if why := declined.Reason(); why != "" {
-			return engine.Unsupported[T](why), nil
-		}
-		return engine.Unsupported[T](fmt.Sprintf(
-			"no engine serves %q for this role", req.Scope)), nil
+	case !spoke(answered) && len(declined) > 0:
+		return engine.Unsupported[T](declined.Reason()), nil
+	case len(answered) == 0:
+		return engine.Unsupported[T](fmt.Sprintf("no engine serves %q for this role", req.Scope)), nil
 	}
 	return merge(answered, req.Preferred, declined), nil
 }

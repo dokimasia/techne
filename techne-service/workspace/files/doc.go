@@ -1,32 +1,32 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: MIT
 
-// Package files is the workspace as a directory that can be written to.
+// Package files opens the directory of a workspace for the engines, which read it, and for
+// the write path, which changes it. [Root] serves both from one [os.Root], so a plan is
+// written back to the directory that it was computed from.
 //
-// # Reading and writing are one root
+// # Paths inside the directory
 //
-// An engine reads through an [io/fs.FS], which cannot write. [Root]
-// supplies both halves from one open directory, so the bytes a plan was
-// computed against and the bytes it is written back over come from the
-// same place.
+// [os.Root] refuses a path that leaves the directory, through .. or through a symbolic link.
+// [Root.Write] follows a link inside the directory and changes the file that it links to.
 //
-// # A path cannot leave the root
+// # Writes
 //
-// [Root] is an [os.Root], so a path that climbs out or follows a symlink
-// out is refused by the operating system. A check written here would
-// have to be right every time; this one is right because it is not this
-// package's to get wrong.
+// [Root.Write] stages the content beside the file, with the suffix [Partial], and renames it
+// over the file. A rename in one directory is atomic, so a process that stops leaves the
+// original file. A file keeps its mode, and a new file gets 0644 less the umask of the
+// process. [Root.Move] renames a file with its mode.
 //
-// # A write is all or nothing
+// # The lock of a workspace
 //
-// [Root.Write] stages the content beside the target and renames it over,
-// which is atomic on every filesystem techne runs on. A process that
-// stops partway leaves the original file rather than half of each, and
-// the staged file it leaves behind carries a suffix no language claims.
+// [Root.Lock] takes an advisory lock of the operating system, which one writer of the
+// workspace takes at a time in every techne process: flock(2) on Linux, macOS and the BSDs,
+// and LockFileEx on Windows. The lock file is under the user cache directory, outside the
+// workspace, and the operating system releases the lock of a process that exits.
 //
 // # Dependency position
 //
-// Imports the standard library and core/source. It satisfies the write
-// path's Files port without importing it: the port is declared where it
-// is consumed.
+// Imports the standard library, core/source, and golang.org/x/sys/windows on Windows. It
+// implements the Files port of the write path without importing it, because a port is
+// declared where it is consumed.
 package files

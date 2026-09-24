@@ -1,67 +1,55 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: MIT
 
-// Package change applies an operation to the workspace, or reports what
-// applying it would do.
+// Package change applies an operation to the workspace, or reports what applying it would
+// do.
 //
-// # One pipeline, whatever the operation
+// # One pipeline for every operation
 //
-// [Service.Apply] validates the request against the operation's spec,
-// asks a language for a plan, pins the content that plan was computed
-// against, puts it to the policy, projects it, gates the projection and
-// only then writes. Every operation takes the same steps, so what counts
-// as safe cannot drift between a rename and a comment.
+// [Service.Apply] and [Service.Commit] take every operation through the same steps:
 //
-// # The gate runs before the write
+//  1. Apply checks the request against the spec of the operation, and asks the languages of
+//     the scope for a plan. A skipped answer states that the scope contains no file of its
+//     language, so the next language is asked.
+//  2. The paths of the plan are locked in this process. Apply reads and seals the content
+//     that the plan depends on. Commit reads the files again and refuses a plan whose files
+//     changed since the preview.
+//  3. A plan that creates a file or moves a file onto a path where a file is gets refused,
+//     and so does a plan that [edit.Policy.Admit] refuses.
+//  4. The projection is the workspace as the plan leaves it, and a gate checks it.
+//  5. A dry run keeps the plan and its request under a handle for Commit. Every other call
+//     writes the projection.
 //
-// RFC-0004 draws the gate after the apply, with a rollback behind it,
-// because a build gate needs files on disk. A gate that reads content
-// rather than the workspace does not, and running it first means a
-// refused change never touches a file. The rollback stays for the
-// narrower case it is still needed in: a write that fails partway
-// through a multi-file change.
+// # The gate
 //
-// # A gate is worth what it refuses
+// The engine of the strongest tier that checks the language judges the projection: a type
+// checker or a language server judges whether the result compiles, and a parser judges
+// whether it parses. The evidence of that engine is the gate of the outcome. The gate
+// refuses a change whose projection has more errors than the content it replaces:
 //
-// What gates a change is whatever serves [go.dokimi.dev/techne/core/engine.Checker]
-// for the language, and today that is a parser. It refuses a change that
-// stopped the file being the language it was, which is how writing a
-// comment fails: the text ends the comment early and the rest becomes
-// code. It does not refuse a change that still parses and no longer
-// compiles, and it is more forgiving than a compiler even about syntax.
-// A change reports which gate ran, so nobody reads "it parses" as "it
-// builds".
+//   - A gate at [trust.Resolved] counts every error of the files that it checks.
+//   - A parser counts every error of a file that parsed before the change.
+//   - For a file with errors before the change, a parser counts the errors on the lines
+//     that the change edits. An edit elsewhere in such a file can change how the grammar
+//     recovers from a fault that the file contained.
+//   - The gate of a plan that moves a file leaves out each error inside an edit of another
+//     file. Such an edit rewrites an import of the moved file, which a server resolves on
+//     disk before the write. A [trust.CaveatPartialCheck] caveat of the gate lists them.
 //
-// # A dry run is gated, not previewed
+// A change is written with the status [trust.Degraded] when no engine checks its language.
 //
-// A dry run is the same call without the write. The projection it gates
-// is byte-for-byte what an apply would put on disk, so a dry run whose
-// gate passed is a promise about the apply rather than a diff to read.
+// # Writes
 //
-// # What is pinned, and what that is worth
-//
-// [Service.Apply] seals the content itself rather than trusting a
-// planner to, because a planner that forgets produces a plan that
-// applies cleanly to a file it never saw. It seals after planning, so a
-// file rewritten between the planner's read and the seal is pinned as it
-// is now and not as the planner saw it. The gate is what catches that:
-// offsets computed against other bytes describe other code, which
-// stops parsing. Locks are held from the seal to the write, so nothing
-// in this process can open that window.
-//
-// # What a plan may say, and what it may not
-//
-// A plan is a planner's claim and is checked here rather than trusted.
-// Content is settled before anything is relocated, so a file the plan
-// both rewrites and moves arrives at its destination rewritten. A move
-// named twice is the one move it describes, because a server may repeat
-// it once per site it found; one path moved to two destinations names
-// two results and is refused rather than resolved.
+// A write takes the lock of [Files], which one writer of the workspace takes at a time in
+// every techne process. Right before it changes a file, the write reads the file again and
+// compares its digest with the precondition of the plan. A file that changed refuses the
+// change. A file whose projected content equals its content is not written. A write that
+// stops puts back the files that it changed, and its refusal or error states whether that
+// succeeded.
 //
 // # Dependency position
 //
-// Imports core/diag, core/edit, core/engine, core/source and
-// core/trust. [Router] and [Files] are ports: the registry that knows
-// which language claims a path lives in another module, and core names
-// no language and opens no file.
+// Imports the standard library, core/diag, core/edit, core/engine, core/source and
+// core/trust. [Router] and [Files] are ports: the language registry and the directory of the
+// workspace are in other modules.
 package change

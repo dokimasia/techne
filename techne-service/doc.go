@@ -1,19 +1,20 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: MIT
 
-// Package service is the root of the half of techne that drives the
-// ports: the read path, the write path, and the workspace they run
-// over. It declares nothing itself; the packages beneath it do.
+// Package service is the root of the module that calls the ports of core. The root
+// declares nothing, and these packages contain the services:
 //
-// # Why this is not core
+//   - [go.dokimi.dev/techne/service/query] serves the read roles.
+//   - [go.dokimi.dev/techne/service/change] plans, gates and writes a change.
+//   - [go.dokimi.dev/techne/service/workspace/files] reads and writes the directory of a
+//     workspace.
 //
-// core declares what an engine implements. This consumes it. Keeping
-// the two apart is what stops a port growing a dependency on the thing
-// that calls it, which is how a tool came to hold a service and a
-// service came to hold a copy of another service's rules.
+// core declares the ports that an engine implements, and this module calls them, so no
+// port depends on a caller of it.
 //
 // # Dependency position
 //
-// Imports core and nothing else in this repository. It names no
-// language, holds no transport and derives no schema.
+// Imports the standard library and core, and golang.org/x/sys/windows for the lock of a
+// workspace on Windows. The module does not import a language module, a transport or a
+// schema library.
 package service

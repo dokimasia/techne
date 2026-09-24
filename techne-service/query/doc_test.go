@@ -12,25 +12,19 @@ import (
 	"go.dokimi.dev/techne/service/query"
 )
 
-// TestDoc covers the claim the package comment makes: nothing to ask is
-// an answer, and a fault is not.
 func TestDoc(t *testing.T) {
 	t.Parallel()
 
-	t.Run("a capability gap", func(t *testing.T) {
+	t.Run("Outline", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("is routed around, not raised", func(t *testing.T) {
+		t.Run("returns an unsupported answer without an error for a language without an engine", func(t *testing.T) {
 			t.Parallel()
-			// A caller can pick a different tool when told a language is
-			// not served. It can do nothing with an error.
 			got, err := query.New(engine.NewCatalog(), router{}).
 				Outline(t.Context(), engine.Request{Scope: "a.fx", Language: fixture})
-
-			assert.NoError(t, err, "having nothing to ask is not a fault")
-			assert.Equal(t, got.Status, trust.Unsupported, "the caller is told the gap exists")
-			assert.False(t, got.Provenance.SupportsNegativeClaim(),
-				"an answer nothing produced proves nothing about what is there")
+			assert.NoError(t, err, "Outline of a.fx")
+			assert.Equal(t, got.Status, trust.Unsupported, "the status of the answer")
+			assert.False(t, got.Provenance.SupportsNegativeClaim(), "the negative claim of the answer")
 		})
 	})
 }

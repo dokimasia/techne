@@ -1,34 +1,38 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: MIT
 
-// Package query answers read questions by selecting an engine and
-// publishing what it returns.
+// Package query serves the read roles of techne: outline, search, resolve, relate and
+// verify. [Service] asks the engines of each language that a request is about and merges
+// their answers.
 //
 // # One path for every role
 //
-// [Service] dispatches every read role through the same steps: resolve
-// the language, take the engines the catalogue offers strongest first,
-// ask each until one answers, and stamp the result. What counts as
-// degraded is decided in one place, so the rule cannot drift between
-// outline and relations.
+// The read roles take the same steps. [engine.AskEach] selects the languages of the scope
+// and asks the engines of each language strongest first, and the service merges the
+// answers. A merged answer claims the weakest tier and the weakest completeness of the
+// answers that read a file of the scope, and names each engine behind them.
 //
-// # Declining is not failing
+// # Declines, skips and failures
 //
-// An engine returning [engine.ErrDecline] serves the role but cannot
-// answer this request, so the next engine gets a turn. Any other error
-// stops the search and reaches the caller: answering from a weaker
-// engine when the stronger one is broken hides the breakage for as long
-// as anyone believes the answer.
+//   - An engine that returns [engine.ErrDecline] serves the role but not this request, so
+//     the next engine of its language is asked. A language whose engines all decline makes
+//     the merged answer partial, with a caveat that contains their reasons.
+//   - A skipped answer states that the scope contains no file of its language, and the
+//     merge leaves it out of the evidence.
+//   - Any other error stops the engines of its language, because a weaker answer would hide
+//     a broken engine. The other languages still answer.
 //
-// # Nothing to ask is an answer
+// # Unsupported answers
 //
-// A language nothing serves, and a path no language claims, both produce
-// [trust.Unsupported] with no payload rather than an error. A caller
-// routes around a capability gap; it cannot route around a fault.
+// These requests return [trust.Unsupported] with a caveat that contains the reason, and no
+// error:
+//
+//   - a language without an engine
+//   - a path of an extension that the router does not claim
+//   - a scope without an answer, or where every answer is skipped and a language declined
 //
 // # Dependency position
 //
-// Imports core/engine, core/sema, core/source and core/trust. [Router]
-// is a port: the registry that knows which language claims a path lives
-// in another module, and core names no language.
+// Imports the standard library, core/edit, core/engine, core/sema, core/source and
+// core/trust.
 package query

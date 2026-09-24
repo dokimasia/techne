@@ -10,12 +10,10 @@ import (
 	"go.dokimi.dev/techne/core/source"
 )
 
-// preview reads a plan's edits back against the content they were
-// computed on.
-//
-// Only the ranges within a file are read. Creating, deleting and moving
-// a file are what the change itself says they are, and putting a whole
-// file's bytes in a preview would cost more than reading the file.
+// preview returns a rewrite for each edit of the plan, at the one-based line where the edit
+// starts. Was is the text that the edit replaces in the sealed content, and Now is the text
+// that it writes. A create, a deletion and a move have no rewrite, and the changes of the
+// outcome list them.
 func preview(plan edit.Plan, sealed map[source.Path][]byte) []edit.Rewrite {
 	var out []edit.Rewrite
 	for _, c := range plan.Changes {
@@ -29,21 +27,22 @@ func preview(plan edit.Plan, sealed map[source.Path][]byte) []edit.Rewrite {
 			if start >= 0 && end <= len(content) && start < end {
 				was = string(content[start:end])
 			}
-			out = append(out, edit.Rewrite{
-				Path: c.Path,
-				Line: lineAt(content, start),
-				Was:  was,
-				Now:  e.New,
-			})
+			out = append(out, edit.Rewrite{Path: c.Path, Line: lineAt(content, start), Was: was, Now: e.New})
 		}
 	}
 	return out
 }
 
-// lineAt returns the line an offset sits on, counting from one.
+// lineAt returns the one-based line of offset in content, or 0 for an offset outside
+// content.
 func lineAt(content []byte, offset int) int {
 	if offset < 0 || offset > len(content) {
 		return 0
 	}
-	return bytes.Count(content[:offset], []byte("\n")) + 1
+	return row(content, offset) + 1
+}
+
+// row returns the zero-based line of offset in content, with offset clamped to content.
+func row(content []byte, offset int) int {
+	return bytes.Count(content[:min(max(offset, 0), len(content))], []byte("\n"))
 }

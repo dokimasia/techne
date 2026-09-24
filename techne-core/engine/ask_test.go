@@ -129,7 +129,7 @@ func TestAsk(t *testing.T) {
 			assert.Equal(t, declined, engine.Declined{"checker: not loaded", "parser: no grammar"}, "Declined")
 		})
 
-		t.Run("names the engine once when the reason contains the name", func(t *testing.T) {
+		t.Run("names the engine once when the reason starts with the name", func(t *testing.T) {
 			t.Parallel()
 			c := catalog(t, fake{name: "checker", fidelity: trust.Resolved, err: declining("checker: not loaded")})
 			_, _, declined, err := engine.Ask(t.Context(), c, fixture, engine.RoleOutline, trust.None, outline)
@@ -137,7 +137,15 @@ func TestAsk(t *testing.T) {
 			assert.Equal(t, strings.Count(declined.Reason(), "checker"), 1, "engine names")
 		})
 
-		t.Run("returns no reasons when an engine answers", func(t *testing.T) {
+		t.Run("names the engine when the reason contains the name inside a word", func(t *testing.T) {
+			t.Parallel()
+			c := catalog(t, fake{name: "ot", fidelity: trust.Resolved, err: declining("not loaded")})
+			_, _, declined, err := engine.Ask(t.Context(), c, fixture, engine.RoleOutline, trust.None, outline)
+			assert.NoError(t, err, "Ask")
+			assert.Equal(t, declined, engine.Declined{"ot: not loaded"}, "Declined")
+		})
+
+		t.Run("returns no reasons when an engine returns an answer", func(t *testing.T) {
 			t.Parallel()
 			c := catalog(t, fake{name: "parser", fidelity: trust.Syntactic})
 			_, _, declined, err := engine.Ask(t.Context(), c, fixture, engine.RoleOutline, trust.None, outline)
@@ -232,7 +240,7 @@ func TestAsk(t *testing.T) {
 
 		directory := engine.Request{Scope: "src"}
 
-		t.Run("returns the answer of the first language that answers", func(t *testing.T) {
+		t.Run("returns the answer of the first language with an answer", func(t *testing.T) {
 			t.Parallel()
 			calls := 0
 			c := catalog(t,
@@ -257,6 +265,27 @@ func TestAsk(t *testing.T) {
 			assert.Equal(t, declined, engine.Declined{"fixture: no match"}, "Declined")
 		})
 
+		t.Run("asks the next language after a skipped answer", func(t *testing.T) {
+			t.Parallel()
+			c := catalog(t,
+				fake{name: "fixture", fidelity: trust.Resolved, skipped: true},
+				fake{name: "other", language: other, fidelity: trust.Syntactic})
+			got, ok, _, err := engine.AskAny(t.Context(), c, router{}, directory, engine.RoleOutline, outline)
+			assert.NoError(t, err, "AskAny")
+			assert.True(t, ok, "answered")
+			assert.Equal(t, got.Provenance.Engine, "other", "engine")
+		})
+
+		t.Run("returns false when every language skips the scope", func(t *testing.T) {
+			t.Parallel()
+			c := catalog(t,
+				fake{name: "fixture", fidelity: trust.Resolved, skipped: true},
+				fake{name: "other", language: other, fidelity: trust.Syntactic, skipped: true})
+			_, ok, _, err := engine.AskAny(t.Context(), c, router{}, directory, engine.RoleOutline, outline)
+			assert.NoError(t, err, "AskAny")
+			assert.False(t, ok, "answered")
+		})
+
 		t.Run("stops at the first language that fails", func(t *testing.T) {
 			t.Parallel()
 			broken := errors.New("broken")
@@ -269,7 +298,7 @@ func TestAsk(t *testing.T) {
 			assert.Equal(t, calls, 0, "other calls")
 		})
 
-		t.Run("returns false when no language answers", func(t *testing.T) {
+		t.Run("returns false when no language returns an answer", func(t *testing.T) {
 			t.Parallel()
 			_, ok, _, err := engine.AskAny(t.Context(), catalog(t), router{}, directory, engine.RoleOutline, outline)
 			assert.NoError(t, err, "AskAny")

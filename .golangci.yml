@@ -102,6 +102,9 @@ linters:
             - go.dokimi.dev/assert
             - go.dokimi.dev/techne/core
             - go.dokimi.dev/techne/service
+            # LockFileEx, the advisory lock of a file on Windows, which the lock of a
+            # workspace takes.
+            - golang.org/x/sys/windows
 
         # The surface an agent calls. It takes a service through an
         # interface it declares itself, so techne-service is absent from

@@ -4,9 +4,14 @@
 package change_test
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
+	"path"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -20,315 +25,209 @@ import (
 	"go.dokimi.dev/techne/service/change"
 )
 
-func TestService(t *testing.T) {
-	t.Parallel()
+const (
+	fixture  = source.Language("fixture")
+	other    = source.Language("other")
+	original = "one\ntwo\n"
+)
 
-	t.Run("Apply", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("writes what a plan describes", func(t *testing.T) {
-			t.Parallel()
-			files, s := serving(t, planner{}, clean())
-			got, err := s.Apply(t.Context(), asking(false))
-
-			assert.NoError(t, err, "a change that plans and gates cleanly is applied")
-			assert.True(t, got.Applied, "the caller is told the workspace changed")
-			assert.Equal(t, got.Status, trust.OK, "a change nothing objected to is not degraded")
-			assert.Equal(t, got.Changed, []source.Path{"a.fx"}, "the result names what it wrote")
-			assert.Equal(t, files.at("a.fx"), "// Doc.\none\ntwo\n", "the edit landed where it said")
-		})
-
-		t.Run("writes nothing for a dry run", func(t *testing.T) {
-			t.Parallel()
-			// A dry run is the real call without the write, so what it
-			// reports is what an apply would do, not a diff to read.
-			files, s := serving(t, planner{}, clean())
-			got, err := s.Apply(t.Context(), asking(true))
-
-			assert.NoError(t, err, "previewing a change that plans cleanly succeeds")
-			assert.False(t, got.Applied, "a dry run leaves the workspace alone")
-			assert.Empty(t, got.Changed, "nothing was written, so nothing is named as written")
-			assert.Equal(t, files.at("a.fx"), original, "every byte is where it was")
-			assert.Length(t, got.Rewrites, 1, "the caller still reads what would change")
-		})
-
-		t.Run("refuses a change that stops the file parsing", func(t *testing.T) {
-			t.Parallel()
-			files, s := serving(t, planner{}, faults("this does not parse"))
-			got, err := s.Apply(t.Context(), asking(false))
-
-			assert.NoError(t, err, "a gate that objects is an answer, not a fault")
-			assert.False(t, got.Applied, "a change the gate refused is not written")
-			assert.Equal(t, got.Status, trust.Refused, "the caller is told it was refused")
-			assert.Length(t, got.Diagnostics, 1, "the refusal carries what was wrong")
-			assert.Equal(t, files.at("a.fx"), original, "a refused change leaves every file as it was")
-		})
-
-		t.Run("does not blame a change for what it inherited", func(t *testing.T) {
-			t.Parallel()
-			// The gate judges what the change replaces as well as what it
-			// produces. Refusing on faults that were already there would
-			// make the code that most wants fixing the code nothing may
-			// touch.
-			files, s := serving(t, planner{}, always())
-			got, err := s.Apply(t.Context(), asking(false))
-
-			assert.NoError(t, err, "a file that already had faults can still be changed")
-			assert.True(t, got.Applied, "the change added no fault, so it is not the reason for one")
-			assert.Equal(t, files.at("a.fx"), "// Doc.\none\ntwo\n", "the edit landed")
-		})
-
-		t.Run("reports a change nothing could judge as degraded", func(t *testing.T) {
-			t.Parallel()
-			files, s := serving(t, planner{})
-			got, err := s.Apply(t.Context(), asking(false))
-
-			assert.NoError(t, err, "a language with no gate is not refused")
-			assert.True(t, got.Applied, "refusing would make the language unwritable")
-			assert.Equal(t, got.Status, trust.Degraded,
-				"the caller is holding a change that was admitted rather than verified")
-			assert.NotEmpty(t, got.Provenance.Caveats, "and is told why")
-			assert.Equal(t, files.at("a.fx"), "// Doc.\none\ntwo\n", "the edit still landed")
-		})
-
-		t.Run("refuses an operation nobody declared", func(t *testing.T) {
-			t.Parallel()
-			_, s := serving(t, planner{})
-			req := asking(true)
-			req.Operation = "document.everything"
-			got, err := s.Apply(t.Context(), req)
-
-			assert.NoError(t, err, "a name nobody declared is something the caller can correct")
-			assert.Equal(t, got.Status, trust.Refused, "nothing was attempted")
-			assert.Contains(t, got.Reason, "document.everything", "the refusal names what was asked for")
-		})
-
-		t.Run("refuses a target the operation cannot be pointed at", func(t *testing.T) {
-			t.Parallel()
-			// Validated against the spec before any language is
-			// consulted, so a malformed request produces one refusal
-			// whatever would have served it.
-			_, s := serving(t, planner{})
-			req := asking(true)
-			req.Target = edit.Target{Kind: edit.TargetFile, Path: "a.fx"}
-			got, err := s.Apply(t.Context(), req)
-
-			assert.NoError(t, err, "pointing an operation at the wrong thing is correctable")
-			assert.Equal(t, got.Status, trust.Refused, "no planner was asked")
-			assert.Contains(t, got.Reason, "a file", "the refusal says what it was pointed at")
-		})
-
-		t.Run("refuses a request missing an argument the operation needs", func(t *testing.T) {
-			t.Parallel()
-			_, s := serving(t, planner{})
-			req := asking(true)
-			req.Args = edit.Args{}
-			got, err := s.Apply(t.Context(), req)
-
-			assert.NoError(t, err, "a missing argument is correctable")
-			assert.Contains(t, got.Reason, string(edit.ArgDoc), "the refusal names the argument")
-		})
-
-		t.Run("refuses an argument no operation reads", func(t *testing.T) {
-			t.Parallel()
-			// A key nobody reads is an operation that silently does
-			// something other than what was asked, which is worse than
-			// being told the name is wrong.
-			_, s := serving(t, planner{})
-			req := asking(true)
-			req.Args = edit.Args{edit.ArgDoc: "x", edit.ArgKey("documentation"): "y"}
-			got, err := s.Apply(t.Context(), req)
-
-			assert.NoError(t, err, "a mistyped key is correctable")
-			assert.Contains(t, got.Reason, "documentation", "the refusal names the key nobody reads")
-		})
-
-		t.Run("says nothing serves an operation no engine plans", func(t *testing.T) {
-			t.Parallel()
-			// A capability gap is routed around. A refusal is corrected.
-			// A caller told only "no" cannot tell them apart.
-			_, s := serving(t, planner{declines: true})
-			got, err := s.Apply(t.Context(), asking(true))
-
-			assert.NoError(t, err, "having nothing to ask is not a fault")
-			assert.Equal(t, got.Status, trust.Unsupported, "no engine planned it")
-			assert.False(t, got.Provenance.SupportsNegativeClaim(),
-				"an answer nothing produced proves nothing")
-		})
-
-		t.Run("passes back a planner's refusal rather than raising it", func(t *testing.T) {
-			t.Parallel()
-			_, s := serving(t, planner{refuses: "the text closes its own comment"})
-			got, err := s.Apply(t.Context(), asking(true))
-
-			assert.NoError(t, err, "a planner that will not serve a request is not a broken planner")
-			assert.Equal(t, got.Status, trust.Refused, "the caller is told it was refused")
-			assert.Equal(t, got.Reason, "the text closes its own comment",
-				"the reason reaches the caller without the error value that carried it")
-		})
-
-		t.Run("raises a planner that is broken", func(t *testing.T) {
-			t.Parallel()
-			_, s := serving(t, planner{breaks: true})
-			_, err := s.Apply(t.Context(), asking(true))
-			assert.HasError(t, err, "a caller can act on a refusal and can do nothing with a fault")
-		})
-
-		t.Run("refuses a plan whose evidence is too weak", func(t *testing.T) {
-			t.Parallel()
-			_, s := serving(t, planner{})
-			req := asking(true)
-			req.Operation = edit.RenameSymbol
-			req.Target = edit.Target{Kind: edit.TargetSymbol, Symbol: "x"}
-			req.Args = edit.Args{edit.ArgNewName: "y"}
-			got, err := s.Apply(t.Context(), req)
-
-			assert.NoError(t, err, "being told the evidence is too weak is an answer")
-			assert.Equal(t, got.Status, trust.Refused, "a parser cannot rename")
-			assert.NotEmpty(t, got.Reason, "and the caller is told what it would take")
-		})
-	})
-}
-
-// asking is a well-formed document.symbol request.
+// asking returns a request to document the declaration at the start of a.fx.
 func asking(dry bool) edit.Request {
 	return edit.Request{
 		Operation: edit.DocumentSymbol,
 		Scope:     "a.fx",
 		Language:  fixture,
-		Target: edit.Target{Kind: edit.TargetSpan, Span: source.Span{
-			Path: "a.fx", Start: source.Position{Offset: 0},
-		}},
-		Args:   edit.Args{edit.ArgDoc: "Doc."},
-		DryRun: dry,
+		Target:    edit.Target{Kind: edit.TargetSpan, Span: source.Span{Path: "a.fx"}},
+		Args:      edit.Args{edit.ArgDoc: "Doc."},
+		DryRun:    dry,
 	}
 }
 
-const (
-	fixture  = source.Language("fixture")
-	original = "one\ntwo\n"
-)
-
-// serving builds a service over one file and the engines given.
-func serving(t *testing.T, engines ...engine.Engine) (*held, *change.Service) {
+// serving returns a service over engines and a workspace that contains a.fx.
+func serving(t *testing.T, engines ...engine.Engine) (*workspace, *change.Service) {
 	t.Helper()
 	catalogue := engine.NewCatalog()
 	for _, e := range engines {
-		assert.NoError(t, catalogue.Add(e), "a test engine registers")
+		assert.NoError(t, catalogue.Add(e), "Add of "+e.Name())
 	}
-	files := &held{content: map[source.Path]string{"a.fx": original}}
+	files := &workspace{content: map[source.Path]string{"a.fx": original}}
 	return files, change.New(catalogue, router{}, files)
 }
 
-// held is a workspace in memory, so the whole pipeline runs without a
-// directory and a test reads back what landed.
-//
-// It takes a lock of its own. The write path holds one per path, which
-// leaves two callers changing different files running at once, and a
-// real workspace serves both: os.Root is documented safe for concurrent
-// use. A bare map is not, on different keys or on the same one, so a
-// double without this models a filesystem nobody has.
-type held struct {
+// workspace is a directory in memory. Its methods are safe for concurrent use, like the
+// methods of a directory. Its lock admits one writer at a time.
+type workspace struct {
 	mu      sync.Mutex
 	content map[source.Path]string
-	// refuse is the path this workspace will not take a write for, so a
-	// change that fails partway through can be driven.
+	// refuse is the path that Write and Move refuse, so a case can fail a write partway.
 	refuse source.Path
-	// wrote counts the writes per path, so a case can see a file
-	// rewritten to itself rather than only the content that resulted.
+	// wrote counts the writes of each path.
 	wrote map[source.Path]int
+	// moves counts the calls of Move.
+	moves int
+	// outside counts the changes made while no writer has the lock.
+	outside int
+	// locked reports whether a writer has the lock.
+	locked bool
+	// jammed is the error of Lock, when it is set.
+	jammed error
+	// meanwhile runs once, when the first writer takes the lock, so a case can change a
+	// file after the plan read it.
+	meanwhile func(*workspace)
+	// writer is the lock of the workspace.
+	writer sync.Mutex
 }
 
-// writes is how many times this workspace was asked to write a path.
-func (h *held) writes(p source.Path) int {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.wrote[p]
+// at returns the content of the file at p, or the empty string for none.
+func (w *workspace) at(p source.Path) string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.content[p]
 }
 
-func (h *held) at(p source.Path) string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.content[p]
+// has reports whether a file is at p.
+func (w *workspace) has(p source.Path) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_, found := w.content[p]
+	return found
 }
 
-func (h *held) Read(p source.Path) ([]byte, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	text, there := h.content[p]
-	if !there {
-		return nil, fs.ErrNotExist
+// put sets the content of the file at p, as another writer does.
+func (w *workspace) put(p source.Path, text string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.content[p] = text
+}
+
+// writes returns the number of writes of p.
+func (w *workspace) writes(p source.Path) int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.wrote[p]
+}
+
+func (w *workspace) Read(p source.Path) ([]byte, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	text, found := w.content[p]
+	if !found {
+		return nil, fmt.Errorf("read %s: %w", p, fs.ErrNotExist)
 	}
 	return []byte(text), nil
 }
 
-func (h *held) Write(p source.Path, content []byte) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if p == h.refuse {
-		return fmt.Errorf("this workspace will not take a write to %s", p)
+func (w *workspace) Write(p source.Path, content []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if p == w.refuse {
+		return fmt.Errorf("the workspace does not take a write to %s", p)
 	}
-	if h.wrote == nil {
-		h.wrote = map[source.Path]int{}
+	w.changed()
+	if w.wrote == nil {
+		w.wrote = map[source.Path]int{}
 	}
-	h.wrote[p]++
-	h.content[p] = string(content)
+	w.wrote[p]++
+	w.content[p] = string(content)
 	return nil
 }
 
-func (h *held) Remove(p source.Path) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	delete(h.content, p)
+func (w *workspace) Remove(p source.Path) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.changed()
+	delete(w.content, p)
 	return nil
 }
 
-// router claims one extension, as a language registry does.
+func (w *workspace) Move(from, to source.Path) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	text, found := w.content[from]
+	_, taken := w.content[to]
+	switch {
+	case to == w.refuse:
+		return fmt.Errorf("the workspace does not take a move to %s", to)
+	case !found:
+		return fmt.Errorf("move %s: %w", from, fs.ErrNotExist)
+	case taken:
+		return fmt.Errorf("move %s: a file is at %s", from, to)
+	}
+	w.changed()
+	w.moves++
+	w.content[to] = text
+	delete(w.content, from)
+	return nil
+}
+
+func (w *workspace) Lock(context.Context) (func(), error) {
+	if w.jammed != nil {
+		return nil, w.jammed
+	}
+	w.writer.Lock()
+	w.mu.Lock()
+	w.locked = true
+	meanwhile := w.meanwhile
+	w.meanwhile = nil
+	w.mu.Unlock()
+	if meanwhile != nil {
+		meanwhile(w)
+	}
+	return func() {
+		w.mu.Lock()
+		w.locked = false
+		w.mu.Unlock()
+		w.writer.Unlock()
+	}, nil
+}
+
+// changed counts a change made while no writer has the lock. The caller has locked mu.
+func (w *workspace) changed() {
+	if !w.locked {
+		w.outside++
+	}
+}
+
+// router routes a file by its extension, .fx to fixture and .ot to other, and asks both
+// languages about a directory.
 type router struct{}
 
 func (router) LanguageOf(p source.Path) (source.Language, bool) {
-	return fixture, strings.HasSuffix(string(p), ".fx")
+	switch path.Ext(string(p)) {
+	case ".fx":
+		return fixture, true
+	case ".ot":
+		return other, true
+	}
+	return "", false
 }
 
-func (router) Languages() []source.Language { return []source.Language{fixture} }
+func (router) Languages() []source.Language { return []source.Language{fixture, other} }
 
-// planner is an engine that writes one comment at the top of a file.
+// planner is an engine that plans the changes of a case, or one comment at the top of the
+// file of the request when changes is nil. Its name is planner, its language fixture and
+// its tier syntactic unless the case sets them.
 type planner struct {
+	name     string
+	language source.Language
+	fidelity trust.Fidelity
+	changes  []edit.Change
+	empty    bool
+	skipped  bool
 	declines bool
-	refuses  string
 	breaks   bool
-	// also is a second file the plan changes, so a change that fails
-	// partway through has something to have already written.
-	also source.Path
-	// makes is a file the plan creates, which is a change that reads
-	// back as nothing.
-	makes source.Path
-	// idle plans an edit whose result is what is already there, which
-	// is what a rename to the same name and a comment already written
-	// both produce.
-	idle bool
-	// moves is where the plan takes the file it edits. One change list
-	// that both rewrites a file and relocates it is what moving a Java
-	// file produces, because the language ties a class's name to the
-	// file holding it.
-	moves source.Path
-	// twice repeats the move, which ruby-lsp does once per site it
-	// found when a rename of a class renames the file too.
-	twice bool
-	// astray moves the file somewhere else as well, which is a plan
-	// that does not describe one result.
-	astray source.Path
+	refuses  string
 }
 
-func (planner) Name() string                        { return "planner" }
-func (planner) Language() source.Language           { return fixture }
-func (planner) Fidelity(engine.Role) trust.Fidelity { return trust.Syntactic }
-func (planner) Cost(engine.Role) engine.Cost        { return engine.CostParse }
+func (p planner) Name() string                        { return cmp.Or(p.name, "planner") }
+func (p planner) Language() source.Language           { return cmp.Or(p.language, fixture) }
+func (p planner) Fidelity(engine.Role) trust.Fidelity { return cmp.Or(p.fidelity, trust.Syntactic) }
+func (planner) Cost(engine.Role) engine.Cost          { return engine.CostParse }
 
 func (p planner) Plan(
 	_ context.Context,
 	req engine.Request,
-	op edit.Operation,
+	_ edit.Operation,
 	_ edit.Target,
 	args edit.Args,
 ) (engine.Result[edit.Change], error) {
@@ -338,112 +237,227 @@ func (p planner) Plan(
 	case p.refuses != "":
 		return engine.Result[edit.Change]{}, fmt.Errorf("%w: %s", engine.ErrRefuse, p.refuses)
 	case p.breaks:
-		return engine.Result[edit.Change]{}, fmt.Errorf("the planner is broken")
+		return engine.Result[edit.Change]{}, errors.New("the planner is broken")
+	case p.skipped:
+		return engine.Result[edit.Change]{Completeness: trust.ScopeTotal, Skipped: true}, nil
+	case p.empty:
+		return engine.Result[edit.Change]{Completeness: trust.ScopeTotal}, nil
+	case p.changes != nil:
+		return engine.Result[edit.Change]{Items: p.changes, Completeness: trust.ScopeTotal}, nil
 	}
-	written := []edit.TextEdit{{New: "// " + args[edit.ArgDoc] + "\n"}}
-	if p.idle {
-		// Replaces the first line with itself.
-		written = []edit.TextEdit{{
-			Span: source.Span{End: source.Position{Offset: 4}}, New: "one\n",
-		}}
-	}
-	out := []edit.Change{{Kind: edit.ChangeEdit, Path: req.Scope, Edits: written}}
-	if p.also != "" {
-		out = append(out, edit.Change{Kind: edit.ChangeEdit, Path: p.also, Edits: written})
-	}
-	if p.makes != "" {
-		out = append(out, edit.Change{
-			Kind: edit.ChangeCreate, Path: p.makes, Content: []byte("made\n"),
-		})
-	}
-	if p.moves != "" {
-		out = append(out, edit.Change{Kind: edit.ChangeMove, Path: req.Scope, To: p.moves})
-	}
-	if p.twice {
-		out = append(out, edit.Change{Kind: edit.ChangeMove, Path: req.Scope, To: p.moves})
-	}
-	if p.astray != "" {
-		out = append(out, edit.Change{Kind: edit.ChangeMove, Path: req.Scope, To: p.astray})
-	}
-	return engine.Result[edit.Change]{Items: out, Completeness: trust.ScopeTotal}, nil
+	return engine.Result[edit.Change]{Items: comment(req.Scope, args[edit.ArgDoc]), Completeness: trust.ScopeTotal}, nil
 }
 
-// checker is an engine that objects to whatever it is told to.
+// comment returns the change that inserts a comment of doc at the start of the file at p.
+func comment(p source.Path, doc string) []edit.Change {
+	return []edit.Change{{Kind: edit.ChangeEdit, Path: p, Edits: []edit.TextEdit{{New: "// " + doc + "\n"}}}}
+}
+
+// replacing returns the edit of the file at p that replaces the bytes from start to end
+// with text.
+func replacing(p source.Path, start, end int, text string) edit.Change {
+	return edit.Change{Kind: edit.ChangeEdit, Path: p, Edits: []edit.TextEdit{{
+		Span: source.Span{Path: p, Start: source.Position{Offset: start}, End: source.Position{Offset: end}},
+		New:  text,
+	}}}
+}
+
+// checker is a gate of the language fixture. Its tier is syntactic unless the case sets
+// one, and faults returns the errors of each file, or none when faults is nil.
 type checker struct {
-	name    string
-	message string
-	// inherited makes it object to the content the change replaces as
-	// well, which is the case where the fault was there first.
-	inherited bool
+	name     string
+	fidelity trust.Fidelity
+	faults   func(p source.Path, content string) []diag.Diagnostic
 }
 
-// clean finds nothing wrong with anything.
+// clean returns a gate that does not find an error.
 func clean() checker { return checker{name: "clean"} }
 
-// faults objects to what the change produces and not to what it
-// replaces, which is a change that broke something whole.
-func faults(message string) checker { return checker{name: "faults", message: message} }
+// marking returns a gate that finds an error on each line that contains mark.
+func marking(mark string) checker { return checker{name: "marking", faults: marked(mark)} }
 
-// always objects to both, which is a file that did not parse before the
-// change either.
-func always() checker {
-	return checker{name: "always", message: "this does not parse", inherited: true}
-}
+func (c checker) Name() string                        { return c.name }
+func (checker) Language() source.Language             { return fixture }
+func (c checker) Fidelity(engine.Role) trust.Fidelity { return cmp.Or(c.fidelity, trust.Syntactic) }
+func (checker) Cost(engine.Role) engine.Cost          { return engine.CostParse }
 
-func (c checker) Name() string            { return c.name }
-func (checker) Language() source.Language { return fixture }
-
-func (checker) Fidelity(engine.Role) trust.Fidelity { return trust.Syntactic }
-func (checker) Cost(engine.Role) engine.Cost        { return engine.CostParse }
-
-func (c checker) Check(
-	_ context.Context,
-	files map[source.Path][]byte,
-) (engine.Result[edit.Finding], error) {
+func (c checker) Check(_ context.Context, files map[source.Path][]byte) (engine.Result[edit.Finding], error) {
 	var out []edit.Finding
-	for p, content := range files {
-		if c.message == "" {
+	for _, p := range slices.Sorted(maps.Keys(files)) {
+		if files[p] == nil || c.faults == nil {
 			continue
 		}
-		if !c.inherited && !strings.HasPrefix(string(content), "// ") {
-			continue
+		for _, one := range c.faults(p, string(files[p])) {
+			out = append(out, edit.Finding{Diagnostic: one})
 		}
-		out = append(out, edit.Finding{Diagnostic: diag.Diagnostic{
-			Severity: diag.SeverityError, Code: "parse",
-			Message: c.message, Span: source.Span{Path: p}, Source: c.name,
-		}})
 	}
 	return engine.Result[edit.Finding]{Items: out, Completeness: trust.ScopeTotal}, nil
 }
 
-func TestIdleChange(t *testing.T) {
+// marked returns the faults of an error on each line that contains mark.
+func marked(mark string) func(source.Path, string) []diag.Diagnostic {
+	return func(p source.Path, content string) []diag.Diagnostic {
+		var out []diag.Diagnostic
+		for i, line := range strings.Split(content, "\n") {
+			if strings.Contains(line, mark) {
+				out = append(out, fault(p, content, i))
+			}
+		}
+		return out
+	}
+}
+
+// fault returns an error that covers the zero-based line of content.
+func fault(p source.Path, content string, line int) diag.Diagnostic {
+	lines := strings.SplitAfter(content, "\n")
+	start := 0
+	for _, one := range lines[:line] {
+		start += len(one)
+	}
+	end := start + len(strings.TrimSuffix(lines[line], "\n"))
+	return diag.Diagnostic{
+		Severity: diag.SeverityError,
+		Code:     "parse",
+		Message:  "this does not parse",
+		Span: source.Span{
+			Path:  p,
+			Start: source.Position{Offset: start, Line: line},
+			End:   source.Position{Offset: end, Line: line, Column: end - start},
+		},
+	}
+}
+
+func TestService(t *testing.T) {
 	t.Parallel()
 
-	t.Run("a plan whose result is already there", func(t *testing.T) {
+	t.Run("Apply", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("names no file as written", func(t *testing.T) {
+		t.Run("writes the changes of a plan", func(t *testing.T) {
 			t.Parallel()
-			// Reported as written, a caller believes something happened
-			// and acts on it. A monkey run caught this as a change that
-			// said it wrote a file whose bytes never moved.
-			files, s := serving(t, planner{idle: true}, clean())
+			files, s := serving(t, planner{}, clean())
 			got, err := s.Apply(t.Context(), asking(false))
-
-			assert.NoError(t, err, "a change that plans and gates cleanly is not a fault")
-			assert.Empty(t, got.Changed, "nothing differed, so nothing is named as written")
-			assert.Equal(t, files.at("a.fx"), original, "and the file is as it was")
+			assert.NoError(t, err, "Apply")
+			assert.True(t, got.Applied, "the application of the change")
+			assert.Equal(t, got.Status, trust.OK, "the status of the outcome")
+			assert.Equal(t, got.Changed, []source.Path{"a.fx"}, "the files written")
+			assert.Equal(t, files.at("a.fx"), "// Doc.\n"+original, "the content of a.fx")
 		})
 
-		t.Run("leaves the file untouched rather than rewriting it", func(t *testing.T) {
+		t.Run("writes no file for a dry run", func(t *testing.T) {
 			t.Parallel()
-			// Rewriting a file to itself moves its timestamp, which is
-			// what every build and watcher in the workspace keys on.
-			files, s := serving(t, planner{idle: true}, clean())
-			_, err := s.Apply(t.Context(), asking(false))
+			files, s := serving(t, planner{}, clean())
+			got, err := s.Apply(t.Context(), asking(true))
+			assert.NoError(t, err, "Apply")
+			assert.False(t, got.Applied, "the application of the change")
+			assert.Empty(t, got.Changed, "the files written")
+			assert.Equal(t, files.at("a.fx"), original, "the content of a.fx")
+			assert.Length(t, got.Rewrites, 1, "the rewrites of the outcome")
+		})
 
-			assert.NoError(t, err, "applying succeeds")
-			assert.Equal(t, files.writes("a.fx"), 0, "the write path did not touch it")
+		t.Run("refuses an operation that no spec declares", func(t *testing.T) {
+			t.Parallel()
+			_, s := serving(t, planner{})
+			req := asking(true)
+			req.Operation = "document.everything"
+			got, err := s.Apply(t.Context(), req)
+			assert.NoError(t, err, "Apply")
+			assert.Equal(t, got.Status, trust.Refused, "the status of the outcome")
+			assert.Contains(t, got.Reason, "document.everything", "the reason of the refusal")
+		})
+
+		t.Run("refuses a target that the operation does not accept", func(t *testing.T) {
+			t.Parallel()
+			_, s := serving(t, planner{})
+			req := asking(true)
+			req.Target = edit.Target{Kind: edit.TargetFile, Path: "a.fx"}
+			got, err := s.Apply(t.Context(), req)
+			assert.NoError(t, err, "Apply")
+			assert.Equal(t, got.Status, trust.Refused, "the status of the outcome")
+			assert.Contains(t, got.Reason, "a file", "the reason of the refusal")
+		})
+
+		t.Run("refuses a request without an argument that the operation requires", func(t *testing.T) {
+			t.Parallel()
+			_, s := serving(t, planner{})
+			req := asking(true)
+			req.Args = edit.Args{}
+			got, err := s.Apply(t.Context(), req)
+			assert.NoError(t, err, "Apply")
+			assert.Contains(t, got.Reason, string(edit.ArgDoc), "the reason of the refusal")
+		})
+
+		t.Run("refuses an argument that the operation does not read", func(t *testing.T) {
+			t.Parallel()
+			_, s := serving(t, planner{})
+			req := asking(true)
+			req.Args = edit.Args{edit.ArgDoc: "x", edit.ArgKey("documentation"): "y"}
+			got, err := s.Apply(t.Context(), req)
+			assert.NoError(t, err, "Apply")
+			assert.Contains(t, got.Reason, "documentation", "the reason of the refusal")
+		})
+
+		t.Run("returns unsupported when no engine plans the operation", func(t *testing.T) {
+			t.Parallel()
+			_, s := serving(t, planner{declines: true})
+			got, err := s.Apply(t.Context(), asking(true))
+			assert.NoError(t, err, "Apply")
+			assert.Equal(t, got.Status, trust.Unsupported, "the status of the outcome")
+			assert.False(t, got.Provenance.SupportsNegativeClaim(), "the negative claim of the outcome")
+		})
+
+		t.Run("returns the reason of a planner that refuses", func(t *testing.T) {
+			t.Parallel()
+			_, s := serving(t, planner{refuses: "the text closes its own comment"})
+			got, err := s.Apply(t.Context(), asking(true))
+			assert.NoError(t, err, "Apply")
+			assert.Equal(t, got.Status, trust.Refused, "the status of the outcome")
+			assert.Equal(t, got.Reason, "the text closes its own comment", "the reason of the refusal")
+		})
+
+		t.Run("returns the error of a planner that fails", func(t *testing.T) {
+			t.Parallel()
+			_, s := serving(t, planner{breaks: true})
+			_, err := s.Apply(t.Context(), asking(true))
+			assert.HasError(t, err, "the error of Apply")
+		})
+
+		t.Run("refuses a plan below the tier of the operation", func(t *testing.T) {
+			t.Parallel()
+			_, s := serving(t, planner{})
+			req := asking(true)
+			req.Operation = edit.RenameSymbol
+			req.Target = edit.Target{Kind: edit.TargetSymbol, Symbol: "x"}
+			req.Args = edit.Args{edit.ArgNewName: "y"}
+			got, err := s.Apply(t.Context(), req)
+			assert.NoError(t, err, "Apply")
+			assert.Equal(t, got.Status, trust.Refused, "the status of the outcome")
+			assert.Contains(t, got.Reason, "evidence", "the reason of the refusal")
+		})
+
+		t.Run("refuses a plan without a change", func(t *testing.T) {
+			t.Parallel()
+			_, s := serving(t, planner{empty: true}, clean())
+			got, err := s.Apply(t.Context(), asking(true))
+			assert.NoError(t, err, "Apply")
+			assert.Equal(t, got.Status, trust.Refused, "the status of the outcome")
+			assert.Equal(t, got.Reason, "planner planned no change", "the reason of the refusal")
+			assert.Empty(t, got.Handle, "the handle of the outcome")
+		})
+
+		t.Run("asks the next language after a skipped plan", func(t *testing.T) {
+			t.Parallel()
+			files, s := serving(t,
+				planner{skipped: true},
+				planner{name: "other", language: other, changes: comment("b.ot", "Other.")},
+			)
+			files.put("b.ot", original)
+			req := asking(false)
+			req.Scope, req.Language = "src", ""
+			got, err := s.Apply(t.Context(), req)
+			assert.NoError(t, err, "Apply")
+			assert.Equal(t, got.Provenance.Engine, "other", "the engine of the plan")
+			assert.Equal(t, files.at("b.ot"), "// Other.\n"+original, "the content of b.ot")
 		})
 	})
 }

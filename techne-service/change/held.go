@@ -7,36 +7,37 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"sync"
 
 	"go.dokimi.dev/techne/core/edit"
 )
 
-// held keeps the plans previews computed, so applying one costs no
-// second planning run.
-//
-// A handle rather than the plan itself, because the plan goes to an
-// agent and comes back: a rename over thirty sites is several kilobytes
-// that a model would have to reproduce exactly, and reproducing bytes
-// exactly is the least reliable thing a model does. What crosses the
-// wire is sixteen bytes of hex.
-//
-// The cost is that a plan does not outlive the process. A caller whose
-// handle is gone previews again, which is the call it just made.
+// held keeps the plans of previews under their handles, so a commit does not plan again. It
+// keeps the latest heldLimit plans in memory, and a caller whose handle is gone previews
+// again. It is safe for concurrent use.
 type held struct {
 	mu    sync.Mutex
-	plans map[string]edit.Plan
-	// order is the handles oldest first, so the bound drops the plan
-	// least likely to still be wanted.
+	plans map[string]kept
+	// order are the handles of plans, oldest first.
 	order []string
 }
 
-func newHeld() *held {
-	return &held{plans: map[string]edit.Plan{}}
+// kept is the plan of a preview with the request of the preview. A commit checks the plan
+// through the language of the request, which the preview asked.
+type kept struct {
+	request edit.Request
+	plan    edit.Plan
 }
 
-// keep stores a plan and returns the handle it is fetched by.
-func (h *held) keep(plan edit.Plan) (string, error) {
+// newHeld returns an empty held.
+func newHeld() *held {
+	return &held{plans: map[string]kept{}}
+}
+
+// keep stores the plan of req and returns its handle. It drops the oldest plan beyond
+// heldLimit.
+func (h *held) keep(req edit.Request, plan edit.Plan) (string, error) {
 	handle, err := handle()
 	if err != nil {
 		return "", err
@@ -44,8 +45,7 @@ func (h *held) keep(plan edit.Plan) (string, error) {
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
-
-	h.plans[handle] = plan
+	h.plans[handle] = kept{request: req, plan: plan}
 	h.order = append(h.order, handle)
 	for len(h.order) > heldLimit {
 		delete(h.plans, h.order[0])
@@ -54,35 +54,22 @@ func (h *held) keep(plan edit.Plan) (string, error) {
 	return handle, nil
 }
 
-// take fetches a plan and forgets it.
-//
-// Once, because applying is not something to do twice by accident: a
-// handle replayed after the files moved on would be admitted against
-// preconditions that no longer describe the workspace, and refused, but
-// a handle replayed immediately would apply the same change again.
-func (h *held) take(handle string) (edit.Plan, bool) {
+// take returns the plan under handle and removes it, so a handle applies once. It reports
+// whether a plan was under handle.
+func (h *held) take(handle string) (kept, bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-
-	plan, there := h.plans[handle]
-	if !there {
-		return edit.Plan{}, false
+	one, found := h.plans[handle]
+	if !found {
+		return kept{}, false
 	}
 	delete(h.plans, handle)
-	for i, one := range h.order {
-		if one == handle {
-			h.order = append(h.order[:i], h.order[i+1:]...)
-			break
-		}
-	}
-	return plan, true
+	h.order = slices.DeleteFunc(h.order, func(other string) bool { return other == handle })
+	return one, true
 }
 
-// handle returns a name no caller could have guessed.
-//
-// Unguessable rather than sequential: a handle is the authority to write
-// a change somebody else previewed, and a counter would let a caller
-// apply a plan it never saw.
+// handle returns 16 random bytes as 32 hexadecimal characters. A handle authorises the
+// write of the plan of a preview, so no handle can be derived from another.
 func handle() (string, error) {
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {
@@ -91,7 +78,5 @@ func handle() (string, error) {
 	return hex.EncodeToString(raw[:]), nil
 }
 
-// heldLimit is how many previews are kept. A session previews far more
-// often than it applies, and a plan nobody came back for is one the
-// caller changed its mind about.
+// heldLimit is the number of plans that the service keeps.
 const heldLimit = 32

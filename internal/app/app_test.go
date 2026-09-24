@@ -4,6 +4,7 @@
 package app_test
 
 import (
+	"context"
 	"encoding/json"
 	"io/fs"
 	"strings"
@@ -37,6 +38,18 @@ func (h held) Remove(p source.Path) error {
 	delete(h.files, string(p))
 	return nil
 }
+
+func (h held) Move(from, to source.Path) error {
+	one, there := h.files[string(from)]
+	if !there {
+		return fs.ErrNotExist
+	}
+	h.files[string(to)] = one
+	delete(h.files, string(from))
+	return nil
+}
+
+func (held) Lock(context.Context) (func(), error) { return func() {}, nil }
 
 // workspace holds one file per language techne ships with, plus one it
 // serves for no language.

@@ -10,20 +10,15 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// keep adds the caveats a caller has not already been given.
-//
-// Every language answering a directory carries the limits of its own
-// tier, and five parsers say the same thing about it. Repeating one
-// caveat per language spends a caller's context on no extra fact.
-//
-// A caveat naming paths is kept as it stands, because the paths are what
-// it is about and two of them differing is two facts.
+// keep appends to into the caveats of from that into does not contain. A caveat without
+// paths is left out when into contains one with its code and note. A caveat with paths is
+// always kept, because two answers name different files.
 func keep(into, from []trust.Caveat) []trust.Caveat {
 	for _, add := range from {
 		seen := false
-		for _, held := range into {
-			seen = seen || (len(add.Paths) == 0 && len(held.Paths) == 0 &&
-				held.Code == add.Code && held.Note == add.Note)
+		for _, one := range into {
+			seen = seen || (len(add.Paths) == 0 && len(one.Paths) == 0 &&
+				one.Code == add.Code && one.Note == add.Note)
 		}
 		if !seen {
 			into = append(into, add)
@@ -32,38 +27,16 @@ func keep(into, from []trust.Caveat) []trust.Caveat {
 	return into
 }
 
-// merge combines what several languages answered about one scope, and
-// says what none of them covered.
-//
-// A merged answer claims only the weakest evidence behind it. Half an
-// answer from a parser makes the whole of it a parser's answer, because
-// a caller trusting the tier would trust every item in the list.
-//
-// The engine field names each contributor. Naming one would say a
-// different engine produced items it never saw.
-//
-// # A language that said nothing is not in parts
-//
-// It is in the declines, which is why they come in beside the answers.
-// An engine that declined contributed no items and no provenance, so
-// nothing in the merge is lowered by it, and the answer would claim
-// total coverage of a scope it covered part of.
-//
-// Measured: relations over a TypeScript directory, with no language
-// named, was answered by six servers for languages the directory holds
-// none of, while both TypeScript engines declined. The answer was "0
-// sites, resolved, total coverage, an empty answer here means there are
-// none" — a negative claim made by the languages that were not there,
-// about the one that was.
+// merge combines the answers of the languages of one scope, of which parts contains at
+// least one. It returns one answer unchanged, and [combined] of two or more. A language in
+// silent, whose engines declined,
+// makes the merged answer partial, with a [trust.CaveatUnsupported] caveat that contains
+// their reasons.
 func merge[T any](
 	parts []engine.Answer[T],
 	want trust.Fidelity,
 	silent engine.Declined,
 ) engine.Answer[T] {
-	if len(parts) == 0 {
-		return engine.Answer[T]{}
-	}
-
 	merged := parts[0]
 	if len(parts) > 1 {
 		merged = combined(parts, want)
@@ -72,9 +45,6 @@ func merge[T any](
 		return merged
 	}
 
-	// Nothing answered for a language that could have. That is a gap in
-	// the scope rather than a fact about it, so the answer stops
-	// claiming to cover the whole and says which language is missing.
 	merged.Provenance.Completeness = trust.ScopePartial
 	merged.Provenance.Caveats = keep(merged.Provenance.Caveats, []trust.Caveat{{
 		Code: trust.CaveatUnsupported,
@@ -84,7 +54,11 @@ func merge[T any](
 	return merged
 }
 
-// combined folds several languages' answers into one.
+// combined merges two or more answers: the items of every answer, and the weakest tier,
+// the weakest completeness, the caveats and the engine names of the answers that read a
+// file. A skipped answer did not read a file, so it counts only when every answer is
+// skipped. A scope without a file of any language then claims the weakest tier of the
+// engines asked.
 func combined[T any](parts []engine.Answer[T], want trust.Fidelity) engine.Answer[T] {
 	merged := engine.Answer[T]{
 		Provenance: trust.Provenance{
@@ -92,17 +66,6 @@ func combined[T any](parts []engine.Answer[T], want trust.Fidelity) engine.Answe
 			Completeness: trust.ScopeTotal,
 		},
 	}
-
-	// Only the engines that read something decide what the answer is
-	// worth. A directory with no Ruby in it tells you nothing about
-	// Ruby, and letting a parser that read no file lower the tier of a
-	// type checker beside it reports resolved evidence as text-matched
-	// and withdraws a negative claim the caller had earned.
-	//
-	// Reading a scope and finding nothing is a different answer, and it
-	// counts: an engine that searched forty files and matched none still
-	// cannot say there are no others, and its silence is what stops the
-	// merged answer claiming there are.
 	read := spoke(parts)
 
 	names := make([]string, 0, len(parts))
@@ -122,8 +85,8 @@ func combined[T any](parts []engine.Answer[T], want trust.Fidelity) engine.Answe
 	return merged
 }
 
-// statused is what an answer's own evidence makes it, so a merged answer
-// says the same thing a single-engine answer at this tier would.
+// statused returns the status of an answer with provenance p, by the rule of
+// [engine.Publish]: degraded below want, partial for partial coverage, and OK otherwise.
 func statused(p trust.Provenance, want trust.Fidelity) trust.Status {
 	switch {
 	case p.Fidelity < want:
@@ -135,11 +98,8 @@ func statused(p trust.Provenance, want trust.Fidelity) trust.Status {
 	}
 }
 
-// spoke reports whether any engine read a file.
-//
-// Where none did, every answer is left in. A scope holding no source at
-// all is one nothing examined, and reporting the strongest tier among
-// engines that read nothing would claim evidence none of them gathered.
+// spoke reports whether an answer of parts read a file of the scope, which a skipped
+// answer did not.
 func spoke[T any](parts []engine.Answer[T]) bool {
 	for _, part := range parts {
 		if !part.Skipped {

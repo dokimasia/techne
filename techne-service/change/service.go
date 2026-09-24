@@ -8,45 +8,43 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/fs"
 	"slices"
 	"strings"
 
-	"go.dokimi.dev/techne/core/diag"
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// Router reports which languages exist and which one claims a path.
-//
-// It is the port the read path takes, re-exported rather than
-// redeclared: a read and a write that disagreed about which language
-// owns a file would plan a change with one engine and gate it with
-// another.
+// Router maps a path to the languages that a request is about. It is [engine.Router], so
+// the read path and the write path route a path by one rule.
 type Router = engine.Router
 
-// Files is the workspace as something that can be written to.
-//
-// An engine reads through an [io/fs.FS], which cannot write. This is the
-// other half, and it is a port so a test can drive the whole pipeline
-// without a directory and so the one implementation that touches disk is
-// in the composition root.
-//
-// A move is a write and a remove rather than a rename, so an
-// implementation has one way to put bytes somewhere and one way to take
-// a file away.
+// Files is the directory of the workspace, as the write path reads and changes it. The
+// engines read the same directory through an [io/fs.FS].
 type Files interface {
+	// Read returns the content of the file at p. It returns an error that wraps
+	// [fs.ErrNotExist] for a path without a file.
 	Read(p source.Path) ([]byte, error)
+	// Write replaces the content of the file at p and keeps its mode, or creates the file
+	// and the directories that it needs.
 	Write(p source.Path, content []byte) error
+	// Remove deletes the file at p. A path without a file is not an error.
 	Remove(p source.Path) error
+	// Move renames the file at from to to, with its mode, and creates the directories of
+	// to. It returns an error when a file is at to.
+	Move(from, to source.Path) error
+	// Lock takes the lock of the workspace and returns the function that releases it. One
+	// writer of the workspace takes the lock at a time, in this process and in every other.
+	// Lock returns an error when ctx ends before the lock is free.
+	Lock(ctx context.Context) (func(), error)
 }
 
-// Service applies operations to one workspace.
-//
-// It is safe for concurrent use: the per-path locks are what serialise
-// two callers changing the same files, and nothing else here is mutable
-// once a composition root has finished.
+// Service applies operations to one workspace. It is safe for concurrent use: a change
+// locks its paths in this process from the seal to the write, and [Files.Lock] serialises
+// the writes of every process.
 type Service struct {
 	catalog *engine.Catalog
 	router  Router
@@ -56,22 +54,25 @@ type Service struct {
 	held    *held
 }
 
-// New returns a service over a catalogue, a router and a workspace.
+// New returns a service over the engines of c, the languages of r and the workspace f.
 func New(c *engine.Catalog, r Router, f Files) *Service {
 	return &Service{catalog: c, router: r, files: f, locks: newLocks(), held: newHeld()}
 }
 
-// Apply runs one operation through the write path.
-//
-// A refusal is a result rather than an error, because a caller can act
-// on being told the evidence was too weak or the gate failed, and can do
-// nothing with a fault. An error means the workspace could not be read
-// or written, which is not something the caller got wrong.
+// unchecked is the caveat of a change whose language has no checker.
+var unchecked = trust.Caveat{
+	Code: trust.CaveatUnsupported,
+	Note: "no engine checks this language, so the change was not verified",
+}
+
+// Apply plans the operation of req and takes the plan through the write path, or previews
+// it for a dry run. A refusal returns an outcome with the status [trust.Refused] and the
+// reason, because the caller can change the request. An error means that the workspace
+// could not be read or written.
 func (s *Service) Apply(ctx context.Context, req edit.Request) (edit.Outcome, error) {
 	spec, declared := edit.SpecFor(req.Operation)
 	if !declared {
-		return refused(req.Operation, fmt.Sprintf(
-			"no operation is named %q", req.Operation)), nil
+		return refused(req.Operation, fmt.Sprintf("no operation is named %q", req.Operation)), nil
 	}
 	if err := accepts(spec, req.Target, req.Args); err != nil {
 		return refused(req.Operation, err.Error()), nil
@@ -80,50 +81,83 @@ func (s *Service) Apply(ctx context.Context, req edit.Request) (edit.Outcome, er
 	plan, declined, err := s.plan(ctx, req, spec)
 	switch {
 	case errors.Is(err, engine.ErrRefuse):
-		// The planner understood the request and will not serve it, so
-		// the reason is the answer rather than a fault.
 		return refused(req.Operation, trimmed(err)), nil
 	case err != nil:
 		return edit.Outcome{}, err
-	case len(plan.Changes) == 0 && plan.Provenance.Engine == "" && declined.Reason() != "":
-		// What an engine said about why it could not plan is often the
-		// only actionable thing in the exchange, and is a different fact
-		// from nothing planning this operation at all.
+	case plan.Provenance.Engine == "" && len(declined) > 0:
 		return unsupported(req.Operation, declined.Reason()), nil
-	case len(plan.Changes) == 0 && plan.Provenance.Engine == "":
-		return unsupported(req.Operation, fmt.Sprintf(
-			"no engine plans %s for %q", req.Operation, req.Scope)), nil
+	case plan.Provenance.Engine == "":
+		return unsupported(req.Operation, fmt.Sprintf("no engine plans %s for %q", req.Operation, req.Scope)), nil
+	case len(plan.Changes) == 0:
+		return refusedBy(plan, plan.Provenance.Engine+" planned no change"), nil
 	}
 
-	// From here to the write the plan's paths are held, so nothing in
-	// this process can rewrite a file between the content being pinned
-	// and the same content being written back changed.
 	release := s.locks.hold(plan.Paths())
 	defer release()
-
 	sealed, err := s.seal(&plan)
 	if err != nil {
 		return edit.Outcome{}, err
 	}
+	return s.run(ctx, req, spec, plan, sealed)
+}
+
+// Commit applies the plan that a preview kept under handle, once. It takes the steps of the
+// preview again with the request of the preview, over the files as they are now, and
+// refuses a plan whose files changed since the preview.
+func (s *Service) Commit(ctx context.Context, handle string) (edit.Outcome, error) {
+	preview, found := s.held.take(handle)
+	if !found {
+		return refused("", "no preview is held under that handle: preview again to get one"), nil
+	}
+	spec, _ := edit.SpecFor(preview.plan.Operation)
+
+	release := s.locks.hold(preview.plan.Paths())
+	defer release()
+	sealed, drifted, err := s.unchanged(preview.plan)
+	switch {
+	case err != nil:
+		return edit.Outcome{}, err
+	case drifted != "":
+		return refusedBy(preview.plan, drifted), nil
+	}
+	req := preview.request
+	req.DryRun = false
+	return s.run(ctx, req, spec, preview.plan, sealed)
+}
+
+// run takes a sealed plan through the steps that Apply and Commit share: the paths that it
+// creates, [edit.Policy.Admit], the projection, the gate, and the write or, for a dry run,
+// a handle. A change gets the status [trust.Degraded] when no engine checks its language.
+func (s *Service) run(
+	ctx context.Context,
+	req edit.Request,
+	spec edit.Spec,
+	plan edit.Plan,
+	sealed map[source.Path][]byte,
+) (edit.Outcome, error) {
+	switch why, err := s.occupied(plan); {
+	case err != nil:
+		return edit.Outcome{}, err
+	case why != "":
+		return refusedBy(plan, why), nil
+	}
 	if refusal := s.policy.Admit(spec, plan); refusal != nil {
 		return refusedBy(plan, reason(refusal)), nil
 	}
-
 	projected, err := project(plan, sealed)
 	if err != nil {
 		return refusedBy(plan, reason(err)), nil
 	}
 
-	gated, err := s.gate(ctx, req, sealed, projected)
+	gated, err := s.gate(ctx, req, plan, sealed, projected)
 	if err != nil {
 		return edit.Outcome{}, err
 	}
+	rewrites := preview(plan, sealed)
 	if gated.worse {
-		out := refusedBy(plan, fmt.Sprintf(
-			"the change stops %s %s, so it was not written",
+		out := refusedBy(plan, fmt.Sprintf("the change stops %s %s, so it was not written",
 			where(gated.found), judging(gated.by)))
-		out.Diagnostics, out.Rewrites = gated.found, preview(plan, sealed)
-		out.Gate = &gated.by
+		out.Diagnostics, out.Rewrites, out.Gate = gated.found, rewrites, &gated.by
 		return out, nil
 	}
 
@@ -131,132 +165,41 @@ func (s *Service) Apply(ctx context.Context, req edit.Request) (edit.Outcome, er
 		Operation:  plan.Operation,
 		Status:     trust.OK,
 		Changes:    plan.Changes,
-		Rewrites:   preview(plan, sealed),
+		Rewrites:   rewrites,
 		Provenance: plan.Provenance,
 	}
 	if gated.checked {
 		out.Gate = &gated.by
-	}
-	if !gated.checked {
-		// Nothing judged the result, so the caller is holding a change
-		// that was admitted rather than one that was verified.
+	} else {
 		out.Status = trust.Degraded
-		out.Provenance.Caveats = append(out.Provenance.Caveats, trust.Caveat{
-			Code: trust.CaveatUnsupported,
-			Note: "nothing checks this language, so the change was not verified",
-		})
+		out.Provenance.Caveats = append(slices.Clone(out.Provenance.Caveats), unchecked)
 	}
 	if req.DryRun {
-		// The plan is kept so applying it costs no second planning run,
-		// and the preconditions sealed above are what say the files have
-		// not moved on when the caller comes back.
-		handle, err := s.held.keep(plan)
-		if err != nil {
-			return edit.Outcome{}, err
+		handle, failed := s.held.keep(req, plan)
+		if failed != nil {
+			return edit.Outcome{}, failed
 		}
 		out.Handle = handle
 		return out, nil
 	}
 
-	written, failed := s.write(plan, sealed, projected)
-	if failed != nil {
-		return edit.Outcome{}, failed
+	written, why, err := s.write(ctx, plan, sealed, projected)
+	switch {
+	case err != nil:
+		return edit.Outcome{}, err
+	case why != "":
+		stopped := refusedBy(plan, why)
+		stopped.Rewrites = rewrites
+		return stopped, nil
 	}
 	out.Applied, out.Changed = true, written
 	return out, nil
 }
 
-// Commit applies a plan a preview computed and kept.
-//
-// It runs the same checks the preview ran, over the files as they are
-// now rather than as they were: a plan whose file moved on describes
-// code that is no longer there, and byte ranges over other bytes usually
-// still compile.
-func (s *Service) Commit(ctx context.Context, handle string) (edit.Outcome, error) {
-	plan, kept := s.held.take(handle)
-	if !kept {
-		return refused("", "no preview is held under that handle: preview again to get one"), nil
-	}
-	spec, declared := edit.SpecFor(plan.Operation)
-	if !declared {
-		return refused(plan.Operation, fmt.Sprintf(
-			"no operation is named %q", plan.Operation)), nil
-	}
-
-	release := s.locks.hold(plan.Paths())
-	defer release()
-
-	sealed, drifted, err := s.unchanged(plan)
-	switch {
-	case err != nil:
-		return edit.Outcome{}, err
-	case drifted != "":
-		return refusedBy(plan, drifted), nil
-	}
-	if refusal := s.policy.Admit(spec, plan); refusal != nil {
-		return refusedBy(plan, reason(refusal)), nil
-	}
-
-	projected, err := project(plan, sealed)
-	if err != nil {
-		return refusedBy(plan, reason(err)), nil
-	}
-	gated, err := s.gate(ctx, edit.Request{Scope: plan.Paths()[0]}, sealed, projected)
-	if err != nil {
-		return edit.Outcome{}, err
-	}
-	if gated.worse {
-		out := refusedBy(plan, fmt.Sprintf(
-			"the change stops %s %s, so it was not written",
-			where(gated.found), judging(gated.by)))
-		out.Diagnostics, out.Rewrites = gated.found, preview(plan, sealed)
-		out.Gate = &gated.by
-		return out, nil
-	}
-
-	written, failed := s.write(plan, sealed, projected)
-	if failed != nil {
-		return edit.Outcome{}, failed
-	}
-	out := edit.Outcome{
-		Operation:  plan.Operation,
-		Status:     trust.OK,
-		Applied:    true,
-		Changed:    written,
-		Changes:    plan.Changes,
-		Rewrites:   preview(plan, sealed),
-		Provenance: plan.Provenance,
-	}
-	if gated.checked {
-		out.Gate = &gated.by
-	}
-	return out, nil
-}
-
-// unchanged reads the files a plan depends on and reports which of them
-// moved on since it was computed.
-func (s *Service) unchanged(plan edit.Plan) (map[source.Path][]byte, string, error) {
-	sealed := map[source.Path][]byte{}
-	for _, pinned := range plan.Preconditions {
-		content, err := s.files.Read(pinned.Path)
-		if err != nil {
-			return nil, "", fmt.Errorf("change: read %s: %w", pinned.Path, err)
-		}
-		if sha256.Sum256(content) != pinned.Digest {
-			return nil, fmt.Sprintf(
-				"%s changed since it was previewed, so the change describes code that "+
-					"is no longer there: preview again", pinned.Path), nil
-		}
-		sealed[pinned.Path] = content
-	}
-	return sealed, "", nil
-}
-
-// plan asks the languages a request could be about for the edits it
-// would need.
-//
-// The first that answers wins. A symbol is declared in one language, so
-// a second answer would be about a second symbol.
+// plan asks the languages of the scope of req for the changes of the operation, and returns
+// the plan of the first language whose answer is not skipped. A declaration belongs to one
+// language, so a second answer would be about another declaration. It returns an empty plan
+// and the reasons of the engines that declined when no language returns a plan.
 func (s *Service) plan(
 	ctx context.Context,
 	req edit.Request,
@@ -282,177 +225,101 @@ func (s *Service) plan(
 	}, nil, nil
 }
 
-// seal pins the content the plan depends on and hands it back.
-//
-// The same read serves three purposes: the digest the policy checks, the
-// bytes the projection is built from, and the snapshot a rollback
-// restores. Reading three times would let the file differ between them.
+// seal reads the content of each path that the plan reads, and adds its digest to the
+// preconditions of the plan. The projection is built from the same bytes, and a write that
+// stops writes them back.
 func (s *Service) seal(plan *edit.Plan) (map[source.Path][]byte, error) {
-	held := map[source.Path][]byte{}
+	out := map[source.Path][]byte{}
 	for _, p := range plan.Reads() {
 		content, err := s.files.Read(p)
 		if err != nil {
 			return nil, fmt.Errorf("change: read %s: %w", p, err)
 		}
-		held[p] = content
+		out[p] = content
 		plan.Preconditions = append(plan.Preconditions, edit.Precondition{
 			Path: p, Digest: sha256.Sum256(content),
 		})
 	}
-	return held, nil
+	return out, nil
 }
 
-// verdict is what the gate made of a projection.
-type verdict struct {
-	// checked reports that something judged it. Nothing judging it is
-	// not the same as nothing being wrong.
-	checked bool
-	// worse reports that the change broke something that was whole.
-	worse bool
-	found []edit.Finding
-	// by is which engine judged it and at what tier, which is not the
-	// engine that planned it: a parser gates what a type checker planned
-	// whenever no server is running.
-	by trust.Provenance
+// unchanged reads the files of the preconditions of the plan of a preview. It returns a
+// refusal about the first file that changed since the preview.
+func (s *Service) unchanged(plan edit.Plan) (map[source.Path][]byte, string, error) {
+	out := map[source.Path][]byte{}
+	for _, pinned := range plan.Preconditions {
+		content, why, err := s.current(plan, pinned.Path)
+		switch {
+		case err != nil:
+			return nil, "", err
+		case why != "":
+			return nil, why + ", so the plan describes code that the file does not contain: preview again", nil
+		}
+		out[pinned.Path] = content
+	}
+	return out, "", nil
 }
 
-// gate judges the projection, and judges what it replaces, so a change
-// is refused for what it broke rather than for what it inherited.
-//
-// A file that did not parse before the change does not fail because of
-// it, and refusing on what was already there would make the code that
-// most wants fixing the code nothing may touch. The comparison is by
-// count: a change that trades one fault for another passes, which is the
-// price of not matching messages whose line numbers the change moved.
-func (s *Service) gate(
-	ctx context.Context,
-	req edit.Request,
-	sealed, projected map[source.Path][]byte,
-) (verdict, error) {
-	after, by, checked, err := s.check(ctx, req, projected)
-	if err != nil || !checked {
-		return verdict{checked: checked}, err
+// current reads the file at p, and returns a refusal that names p when the file is gone or
+// its digest differs from the precondition of p in the plan.
+func (s *Service) current(plan edit.Plan, p source.Path) ([]byte, string, error) {
+	content, err := s.files.Read(p)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil, fmt.Sprintf("%s was deleted after the plan read it", p), nil
+	case err != nil:
+		return nil, "", fmt.Errorf("change: read %s: %w", p, err)
 	}
-	if len(after) == 0 {
-		return verdict{checked: true, by: by}, nil
-	}
-
-	// Only the files the change touches, and only as they were. A fault
-	// anywhere else is nothing this change did.
-	was := map[source.Path][]byte{}
-	for p := range projected {
-		if content, held := sealed[p]; held {
-			was[p] = content
+	for _, pinned := range plan.Preconditions {
+		if pinned.Path == p && sha256.Sum256(content) != pinned.Digest {
+			return nil, fmt.Sprintf("%s changed after the plan read it", p), nil
 		}
 	}
-	before, _, _, err := s.check(ctx, req, was)
-	if err != nil {
-		return verdict{}, err
-	}
-	return verdict{
-		checked: true, worse: len(after) > len(before), found: after, by: by,
-	}, nil
+	return content, "", nil
 }
 
-// check asks whatever serves this language what is wrong with content,
-// and reports which engine answered.
-//
-// Whichever reaches furthest: a language server judges what the result
-// means and a parser judges only that it is still the language it was.
-// The catalogue orders them, so a workspace with a server running gates
-// on a compiler and the same workspace without one gates on a grammar,
-// and the answer says which.
-func (s *Service) check(
-	ctx context.Context,
-	req edit.Request,
-	files map[source.Path][]byte,
-) ([]edit.Finding, trust.Provenance, bool, error) {
-	if len(files) == 0 {
-		return nil, trust.Provenance{}, true, nil
-	}
-	asking := engine.Request{Scope: req.Scope, Language: req.Language}
-	answered, ok, _, err := engine.AskAny(ctx, s.catalog, s.router, asking, engine.RoleCheck,
-		func(e engine.Engine) (engine.Result[edit.Finding], error) {
-			return e.(engine.Checker).Check(ctx, files)
-		})
-	if err != nil || !ok {
-		return nil, trust.Provenance{}, false, err
-	}
-	// A gate that did not cover everything it was shown has not said the
-	// content is clean, and a caller acts on a clean gate by writing.
-	if answered.Provenance.Completeness == trust.ScopePartial {
-		return errorsIn(answered.Items), answered.Provenance, false, nil
-	}
-	return errorsIn(answered.Items), answered.Provenance, true, nil
-}
-
-// errorsIn keeps the findings that stop a change being written.
-// A warning about the code is not a reason to refuse a comment.
-func errorsIn(found []edit.Finding) []edit.Finding {
-	var out []edit.Finding
-	for _, one := range found {
-		if one.Diagnostic.Severity >= diag.SeverityError {
-			out = append(out, one)
+// occupied returns a refusal about the first path that the plan creates or moves a file to
+// while a file is at it.
+func (s *Service) occupied(plan edit.Plan) (string, error) {
+	for _, p := range arrivals(plan) {
+		if why, err := s.vacant(p); why != "" || err != nil {
+			return why, err
 		}
 	}
-	return out
+	return "", nil
 }
 
-// trimmed reads a refusal's reason without the sentinel it was wrapped
-// in. A caller is told what to change, not which error value said so.
-func trimmed(err error) string {
-	out := err.Error()
-	if _, why, cut := strings.Cut(out, engine.ErrRefuse.Error()+": "); cut {
-		return why
+// vacant returns a refusal that names p when a file is at p.
+func (s *Service) vacant(p source.Path) (string, error) {
+	_, err := s.files.Read(p)
+	switch {
+	case err == nil:
+		return fmt.Sprintf("a file is at %s, and the change does not replace a file", p), nil
+	case errors.Is(err, fs.ErrNotExist):
+		return "", nil
 	}
-	return reason(err)
+	return "", fmt.Errorf("change: read %s: %w", p, err)
 }
 
-// reason is an error as a caller reads it, without the package that
-// raised it.
-//
-// The repository's convention puts a package name in front of every
-// error so a log says where it came from. A refusal is not a log line:
-// it is an instruction to whoever asked, and "edit:" in front of it
-// names something the caller has never heard of.
-func reason(err error) string {
-	out := err.Error()
-	for _, prefix := range []string{"edit: ", "change: ", "mock: "} {
-		out = strings.TrimPrefix(out, prefix)
-	}
-	return out
-}
-
-// judging is what the gate did to the content, in the words a refusal
-// reads with: a parser says it stopped being the language it was, and a
-// type checker says it stopped meaning anything.
-func judging(by trust.Provenance) string {
-	if by.Fidelity >= trust.Resolved {
-		return "compiling"
-	}
-	return "parsing"
-}
-
-// where names the files a set of diagnostics is about, for a refusal a
-// caller reads.
-func where(found []edit.Finding) string {
-	var named []string
-	for _, one := range found {
-		if !slices.Contains(named, string(one.Diagnostic.Span.Path)) {
-			named = append(named, string(one.Diagnostic.Span.Path))
+// arrivals returns the paths that the plan creates or moves a file to, sorted.
+func arrivals(plan edit.Plan) []source.Path {
+	var out []source.Path
+	for _, c := range plan.Changes {
+		switch c.Kind {
+		case edit.ChangeCreate:
+			out = append(out, c.Path)
+		case edit.ChangeMove:
+			out = append(out, c.To)
+		case edit.ChangeUnset, edit.ChangeEdit, edit.ChangeDelete:
 		}
 	}
-	if len(named) == 0 {
-		return "the file"
-	}
-	return strings.Join(named, ", ")
+	slices.Sort(out)
+	return slices.Compact(out)
 }
 
-// accepts reports why a request does not match what the operation
-// declares, or nil.
-//
-// It runs before any language is consulted, so a malformed request
-// produces one refusal whatever would have served it.
+// accepts returns an error that states why a request does not match the spec of its
+// operation, or nil. It checks the kind of the target, the required arguments, and that
+// each argument is one that the operation reads.
 func accepts(spec edit.Spec, target edit.Target, args edit.Args) error {
 	if !slices.Contains(spec.Accepts, target.Kind) {
 		return fmt.Errorf("%s cannot be pointed at %s", spec.Operation, named(target.Kind))
@@ -462,9 +329,6 @@ func accepts(spec edit.Spec, target edit.Target, args edit.Args) error {
 			return fmt.Errorf("%s needs %q", spec.Operation, key)
 		}
 	}
-	// A key nobody reads is an operation that silently does something
-	// other than what was asked, which is worse than being told the name
-	// is wrong.
 	for key := range args {
 		if !slices.Contains(spec.Required, key) && !slices.Contains(spec.Optional, key) {
 			return fmt.Errorf("%s takes no argument named %q", spec.Operation, key)
@@ -473,7 +337,7 @@ func accepts(spec edit.Spec, target edit.Target, args edit.Args) error {
 	return nil
 }
 
-// named is the wire form of a target kind, for a refusal a caller reads.
+// named returns the words for a target kind in a refusal.
 func named(k edit.TargetKind) string {
 	switch k {
 	case edit.TargetSymbol:
@@ -482,21 +346,39 @@ func named(k edit.TargetKind) string {
 		return "a file"
 	case edit.TargetSpan:
 		return "a span"
-	case edit.TargetUnset:
-		return "nothing"
 	default:
 		return "nothing"
 	}
 }
 
-// refused is the result when the request itself is wrong.
+// trimmed returns the reason of a refusal of a planner without the text of
+// [engine.ErrRefuse].
+func trimmed(err error) string {
+	if _, why, cut := strings.Cut(err.Error(), engine.ErrRefuse.Error()+": "); cut {
+		return why
+	}
+	return reason(err)
+}
+
+// reason returns the text of err without the name of the package of the write path that
+// raised it, edit or change. A refusal is read by the caller of a tool, which does not know
+// those packages.
+func reason(err error) string {
+	out := err.Error()
+	for _, prefix := range []string{"edit: ", "change: "} {
+		out = strings.TrimPrefix(out, prefix)
+	}
+	return out
+}
+
+// refused returns the outcome of a request that the write path refuses before it has a
+// plan.
 func refused(op edit.Operation, why string) edit.Outcome {
 	return edit.Outcome{Operation: op, Status: trust.Refused, Reason: why}
 }
 
-// refusedBy is the result when a plan existed and was not admitted or
-// did not survive the gate. It carries the plan's evidence, because why
-// the evidence was not enough is the answer.
+// refusedBy returns the outcome of a plan that the write path refuses, with the changes and
+// the evidence of the plan.
 func refusedBy(plan edit.Plan, why string) edit.Outcome {
 	return edit.Outcome{
 		Operation:  plan.Operation,
@@ -507,12 +389,8 @@ func refusedBy(plan edit.Plan, why string) edit.Outcome {
 	}
 }
 
-// unsupported is the result when nothing serves the operation here.
-//
-// It is separate from a refusal: a caller routes around a capability gap
-// and corrects a malformed request. The evidence comes from where a
-// read's does, so both say the same thing about an answer nothing
-// produced.
+// unsupported returns the outcome of an operation without a planner for the scope, with the
+// evidence of [engine.Unsupported].
 func unsupported(op edit.Operation, why string) edit.Outcome {
 	nothing := engine.Unsupported[edit.Change](why)
 	return edit.Outcome{

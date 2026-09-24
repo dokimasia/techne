@@ -62,8 +62,8 @@ func (d Declined) Reason() string { return strings.Join(d, "; ") }
 // search and is returned, because an answer from a weaker engine would hide
 // a broken stronger one.
 //
-// call invokes the port of role on one engine. If no engine answers, Ask
-// returns false and the reasons of the engines that declined.
+// call invokes the port of role on one engine. If no engine returns an
+// answer, Ask returns false and the reasons of the engines that declined.
 func Ask[T any](
 	ctx context.Context,
 	c *Catalog,
@@ -127,10 +127,11 @@ func AskEach[T any](
 }
 
 // AskAny asks the languages the request is about, in order, and returns the
-// first answer and true. Any error stops the search and is returned. The
-// first language that answers defines the result, so asking the next
-// language after a failure can return an answer about a different
-// declaration.
+// first answer that is not skipped, and true. A skipped answer states that
+// the scope contains no file of its language, so AskAny asks the next
+// language. Any error stops the search and is returned. The answer of the
+// first language defines the result, so asking the next language after a
+// failure can return an answer about a different declaration.
 //
 // The write path calls AskAny to plan a change and to check it.
 func AskAny[T any](
@@ -144,8 +145,11 @@ func AskAny[T any](
 	var declined Declined
 	for _, language := range Languages(r, req) {
 		answered, ok, why, err := Ask(ctx, c, language, role, req.Preferred, call)
-		if err != nil || ok {
-			return answered, ok, declined, err
+		switch {
+		case err != nil:
+			return Answer[T]{}, false, declined, err
+		case ok && !answered.Skipped:
+			return answered, true, declined, nil
 		}
 		declined = append(declined, why...)
 	}
@@ -164,9 +168,9 @@ func Unsupported[T any](reason string) Answer[T] {
 }
 
 // attributed prefixes a decline reason with the engine name unless the
-// reason already contains it.
+// reason already starts with it.
 func attributed(name, why string) string {
-	if strings.Contains(why, name) {
+	if strings.HasPrefix(why, name) {
 		return why
 	}
 	return name + ": " + why

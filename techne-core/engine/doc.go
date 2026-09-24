@@ -29,8 +29,10 @@
 //
 //   - AskEach asks every language for the read path. A failed language is
 //     recorded in [Declined], and the other languages still answer.
-//   - AskAny returns the first answer for the write path. Any error stops
-//     it, because the next language can answer about a different
+//   - AskAny returns the first answer for the write path that is not
+//     skipped. A skipped answer moves on to the next language, because the
+//     scope contains no file of the language that skipped it. Any error
+//     stops it, because the next language can answer about a different
 //     declaration.
 //
 // # Dependency position

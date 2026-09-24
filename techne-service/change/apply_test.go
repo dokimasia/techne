@@ -4,133 +4,222 @@
 package change_test
 
 import (
+	"errors"
 	"sync"
 	"testing"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/techne/core/edit"
+	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 )
+
+// moving returns the change that moves a.fx to to.
+func moving(to source.Path) edit.Change {
+	return edit.Change{Kind: edit.ChangeMove, Path: "a.fx", To: to}
+}
+
+// twice returns the changes that insert the comment Doc. at the start of a.fx and of b.fx.
+func twice() []edit.Change {
+	return append(comment("a.fx", "Doc."), comment("b.fx", "Doc.")...)
+}
+
+// relocated returns the changes that insert the comment Doc. at the start of a.fx and move
+// a.fx to b.fx.
+func relocated() []edit.Change {
+	return append(comment("a.fx", "Doc."), moving("b.fx"))
+}
+
+// made returns the change that creates b.fx.
+func made() []edit.Change {
+	return []edit.Change{{Kind: edit.ChangeCreate, Path: "b.fx", Content: []byte("made\n")}}
+}
 
 func TestApply(t *testing.T) {
 	t.Parallel()
 
-	t.Run("a write that fails partway", func(t *testing.T) {
+	t.Run("Apply", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("puts back what it had already written", func(t *testing.T) {
+		t.Run("puts back the files already written when a write fails", func(t *testing.T) {
 			t.Parallel()
-			// Half a change compiles about as often as none of it, and
-			// is far harder to find.
-			files, s := serving(t, planner{also: "b.fx"}, clean())
-			files.content["b.fx"] = original
+			files, s := serving(t, planner{changes: twice()}, clean())
+			files.put("b.fx", original)
 			files.refuse = "b.fx"
-
 			_, err := s.Apply(t.Context(), asking(false))
-			assert.HasError(t, err, "a filesystem that will not take the write is a fault")
-			assert.Equal(t, files.at("a.fx"), original,
-				"the file that was written before the failure is put back")
-			assert.Equal(t, files.at("b.fx"), original, "and the one that was not is untouched")
+			assert.HasError(t, err, "the error of Apply")
+			assert.Contains(t, err.Error(), "the files already written were put back", "the error of Apply")
+			assert.Equal(t, files.at("a.fx"), original, "the content of a.fx")
+			assert.Equal(t, files.at("b.fx"), original, "the content of b.fx")
 		})
 
-		t.Run("says whether the workspace was put back", func(t *testing.T) {
+		t.Run("writes the edit of a moved file at its destination", func(t *testing.T) {
 			t.Parallel()
-			// A caller told only that the write failed does not know
-			// whether it is holding a workspace that was restored or one
-			// left half changed.
-			files, s := serving(t, planner{also: "b.fx"}, clean())
-			files.content["b.fx"] = original
+			files, s := serving(t, planner{changes: relocated()}, clean())
+			got, err := s.Apply(t.Context(), asking(false))
+			assert.NoError(t, err, "Apply")
+			assert.Equal(t, got.Changed, []source.Path{"a.fx", "b.fx"}, "the files written")
+			assert.Equal(t, files.at("b.fx"), "// Doc.\n"+original, "the content of b.fx")
+			assert.False(t, files.has("a.fx"), "the file at a.fx")
+		})
+
+		t.Run("moves a file without writing its content", func(t *testing.T) {
+			t.Parallel()
+			files, s := serving(t, planner{changes: []edit.Change{moving("b.fx")}}, clean())
+			_, err := s.Apply(t.Context(), asking(false))
+			assert.NoError(t, err, "Apply")
+			assert.Equal(t, files.at("b.fx"), original, "the content of b.fx")
+			assert.Equal(t, files.writes("b.fx"), 0, "the writes of b.fx")
+			assert.Equal(t, files.moves, 1, "the moves of the workspace")
+		})
+
+		t.Run("puts a moved file back when the write of its destination fails", func(t *testing.T) {
+			t.Parallel()
+			files, s := serving(t, planner{changes: relocated()}, clean())
 			files.refuse = "b.fx"
-
 			_, err := s.Apply(t.Context(), asking(false))
-			assert.Contains(t, err.Error(), "put back", "the failure says what state the workspace is in")
+			assert.HasError(t, err, "the error of Apply")
+			assert.Equal(t, files.at("a.fx"), original, "the content of a.fx")
+			assert.False(t, files.has("b.fx"), "the file at b.fx")
 		})
-	})
 
-	t.Run("a plan that both rewrites a file and moves it", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("puts the rewrite at the destination", func(t *testing.T) {
+		t.Run("moves a file once for a move that the plan repeats", func(t *testing.T) {
 			t.Parallel()
-			// Moving a Java file renames the class inside it, so the
-			// server answers with one change list holding both. Carrying
-			// the file over as it was sealed would drop the rename,
-			// silently and in the one language where it matters.
-			files, s := serving(t, planner{moves: "b.fx"}, clean())
+			files, s := serving(t, planner{changes: []edit.Change{moving("b.fx"), moving("b.fx")}}, clean())
 			got, err := s.Apply(t.Context(), asking(false))
-
-			assert.NoError(t, err, "a move the gate passed is applied")
-			assert.True(t, got.Applied, "the workspace changed")
-			assert.Equal(t, files.at("b.fx"), "// Doc.\none\ntwo\n",
-				"the file arrived rewritten rather than as it was")
-			assert.Equal(t, files.at("a.fx"), "", "and is gone from where it was")
+			assert.NoError(t, err, "Apply")
+			assert.True(t, got.Applied, "the application of the change")
+			assert.Equal(t, files.at("b.fx"), original, "the content of b.fx")
+			assert.Equal(t, files.moves, 1, "the moves of the workspace")
 		})
 
-		t.Run("puts the file back when the write fails partway", func(t *testing.T) {
+		t.Run("refuses a plan that moves a file to two destinations", func(t *testing.T) {
 			t.Parallel()
-			// A move is a remove and a write. Failing between them leaves
-			// the workspace holding neither copy, which is the one
-			// outcome worse than not moving it.
-			files, s := serving(t, planner{moves: "b.fx"}, clean())
-			files.refuse = "b.fx"
+			_, s := serving(t, planner{changes: []edit.Change{moving("b.fx"), moving("c.fx")}}, clean())
+			got, err := s.Apply(t.Context(), asking(false))
+			assert.NoError(t, err, "Apply")
+			assert.Equal(t, got.Status, trust.Refused, "the status of the outcome")
+			assert.Contains(t, got.Reason, "moved to both", "the reason of the refusal")
+		})
 
+		t.Run("writes an empty file for a create without content", func(t *testing.T) {
+			t.Parallel()
+			files, s := serving(t, planner{changes: []edit.Change{{Kind: edit.ChangeCreate, Path: "b.fx"}}}, clean())
+			got, err := s.Apply(t.Context(), asking(false))
+			assert.NoError(t, err, "Apply")
+			assert.Equal(t, got.Changed, []source.Path{"b.fx"}, "the files written")
+			assert.True(t, files.has("b.fx"), "the file at b.fx")
+			assert.Empty(t, files.at("b.fx"), "the content of b.fx")
+		})
+
+		t.Run("refuses a create of a path with a file", func(t *testing.T) {
+			t.Parallel()
+			files, s := serving(t, planner{changes: made()}, clean())
+			files.put("b.fx", "kept\n")
+			got, err := s.Apply(t.Context(), asking(false))
+			assert.NoError(t, err, "Apply")
+			assert.Equal(t, got.Status, trust.Refused, "the status of the outcome")
+			assert.Contains(t, got.Reason, "b.fx", "the reason of the refusal")
+			assert.Equal(t, files.at("b.fx"), "kept\n", "the content of b.fx")
+		})
+
+		t.Run("refuses a dry run of a create of a path with a file", func(t *testing.T) {
+			t.Parallel()
+			files, s := serving(t, planner{changes: made()}, clean())
+			files.put("b.fx", "kept\n")
+			got, err := s.Apply(t.Context(), asking(true))
+			assert.NoError(t, err, "Apply")
+			assert.Equal(t, got.Status, trust.Refused, "the status of the outcome")
+			assert.Empty(t, got.Handle, "the handle of the outcome")
+		})
+
+		t.Run("refuses a move onto a path with a file", func(t *testing.T) {
+			t.Parallel()
+			files, s := serving(t, planner{changes: []edit.Change{moving("b.fx")}}, clean())
+			files.put("b.fx", "kept\n")
+			got, err := s.Apply(t.Context(), asking(false))
+			assert.NoError(t, err, "Apply")
+			assert.Equal(t, got.Status, trust.Refused, "the status of the outcome")
+			assert.Equal(t, files.at("b.fx"), "kept\n", "the content of b.fx")
+			assert.Equal(t, files.at("a.fx"), original, "the content of a.fx")
+		})
+
+		t.Run("refuses a change to a file that changed after the plan read it", func(t *testing.T) {
+			t.Parallel()
+			files, s := serving(t, planner{}, clean())
+			files.meanwhile = func(w *workspace) { w.put("a.fx", "somebody else\n") }
+			got, err := s.Apply(t.Context(), asking(false))
+			assert.NoError(t, err, "Apply")
+			assert.Equal(t, got.Status, trust.Refused, "the status of the outcome")
+			assert.Equal(t, got.Reason, "a.fx changed after the plan read it, and nothing had been written",
+				"the reason of the refusal")
+			assert.Equal(t, files.at("a.fx"), "somebody else\n", "the content of a.fx")
+		})
+
+		t.Run("puts back the files already written when a later file changed", func(t *testing.T) {
+			t.Parallel()
+			files, s := serving(t, planner{changes: twice()}, clean())
+			files.put("b.fx", original)
+			files.meanwhile = func(w *workspace) { w.put("b.fx", "somebody else\n") }
+			got, err := s.Apply(t.Context(), asking(false))
+			assert.NoError(t, err, "Apply")
+			assert.Equal(t, got.Reason,
+				"b.fx changed after the plan read it, and the files already written were put back",
+				"the reason of the refusal")
+			assert.Equal(t, files.at("a.fx"), original, "the content of a.fx")
+			assert.Equal(t, files.at("b.fx"), "somebody else\n", "the content of b.fx")
+		})
+
+		t.Run("refuses a create of a path that a file took after the plan", func(t *testing.T) {
+			t.Parallel()
+			files, s := serving(t, planner{changes: made()}, clean())
+			files.meanwhile = func(w *workspace) { w.put("b.fx", "somebody else\n") }
+			got, err := s.Apply(t.Context(), asking(false))
+			assert.NoError(t, err, "Apply")
+			assert.Equal(t, got.Status, trust.Refused, "the status of the outcome")
+			assert.Equal(t, files.at("b.fx"), "somebody else\n", "the content of b.fx")
+		})
+
+		t.Run("writes every file under the lock of the workspace", func(t *testing.T) {
+			t.Parallel()
+			files, s := serving(t, planner{changes: append(relocated(), comment("c.fx", "Doc.")...)}, clean())
+			files.put("c.fx", original)
+			got, err := s.Apply(t.Context(), asking(false))
+			assert.NoError(t, err, "Apply")
+			assert.True(t, got.Applied, "the application of the change")
+			assert.Equal(t, files.outside, 0, "the changes made without the lock")
+		})
+
+		t.Run("returns an error when it cannot take the lock of the workspace", func(t *testing.T) {
+			t.Parallel()
+			files, s := serving(t, planner{}, clean())
+			files.jammed = errors.New("the lock file is on a read-only disk")
 			_, err := s.Apply(t.Context(), asking(false))
-			assert.HasError(t, err, "a filesystem that will not take the write is a fault")
-			assert.Equal(t, files.at("a.fx"), original, "the file is back where it was")
-			assert.Equal(t, files.at("b.fx"), "", "and nothing is at the destination")
+			assert.ErrorIs(t, err, files.jammed, "the error of Apply")
+			assert.Equal(t, files.at("a.fx"), original, "the content of a.fx")
 		})
-	})
 
-	t.Run("a plan that names one move more than once", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("moves the file once", func(t *testing.T) {
+		t.Run("names no file for a plan whose result equals the content", func(t *testing.T) {
 			t.Parallel()
-			// ruby-lsp answers a rename of a class with the file rename
-			// repeated per site it found. Performed in turn, the second
-			// reads what the first left behind — a path with nothing at
-			// it — and the file is gone from both ends. Driving a rename
-			// over a Ruby class lost the file.
-			files, s := serving(t, planner{moves: "b.fx", twice: true}, clean())
+			files, s := serving(t, planner{changes: []edit.Change{replacing("a.fx", 0, 4, "one\n")}}, clean())
 			got, err := s.Apply(t.Context(), asking(false))
-
-			assert.NoError(t, err, "a move said twice is the move it describes")
-			assert.True(t, got.Applied, "the workspace changed")
-			assert.Equal(t, files.at("b.fx"), "// Doc.\none\ntwo\n",
-				"the file arrived, with what the plan left in it")
-			assert.Equal(t, files.at("a.fx"), "", "and is gone from where it was")
+			assert.NoError(t, err, "Apply")
+			assert.Empty(t, got.Changed, "the files written")
+			assert.Equal(t, files.writes("a.fx"), 0, "the writes of a.fx")
 		})
 
-		t.Run("refuses one that names two destinations", func(t *testing.T) {
+		t.Run("writes the changes of concurrent callers of one file in turn", func(t *testing.T) {
 			t.Parallel()
-			// Two results rather than one said twice. Picking between
-			// them is guessing which the planner meant.
-			_, s := serving(t, planner{moves: "b.fx", astray: "c.fx"}, clean())
-			got, err := s.Apply(t.Context(), asking(false))
-
-			assert.NoError(t, err, "a plan that cannot mean one thing is answerable")
-			assert.Equal(t, got.Status, trust.Refused, "so it is refused rather than resolved")
-			assert.Contains(t, got.Reason, "both", "and the reason names the two")
-		})
-	})
-
-	t.Run("two callers changing one file", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("do not interleave", func(t *testing.T) {
-			t.Parallel()
-			// Locks are held from the content being pinned to the same
-			// content being written back changed. Without them one
-			// caller reads what the other is halfway through writing.
-			_, s := serving(t, planner{}, clean())
-
+			files, s := serving(t, planner{}, clean())
 			var wg sync.WaitGroup
 			for range 8 {
 				wg.Go(func() {
 					_, err := s.Apply(t.Context(), asking(false))
-					assert.NoError(t, err, "every caller either writes or is refused, and none faults")
+					assert.NoError(t, err, "Apply")
 				})
 			}
 			wg.Wait()
+			assert.Equal(t, files.outside, 0, "the changes made without the lock")
 		})
 	})
 }
