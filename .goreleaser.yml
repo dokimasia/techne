@@ -130,7 +130,7 @@ homebrew_casks:
   - name: techne
     binaries:
       - techne
-    homepage: 'https://github.com/thesm-os/techne'
+    homepage: 'https://github.com/dokimasia/techne'
     description: 'Serves code intelligence and refactoring of ten languages to AI agents over MCP'
     # Homebrew keeps com.apple.quarantine on a binary of a cask, and Gatekeeper then stops the
     # unsigned binary at its first run on Apple Silicon. The hook removes the attribute.
@@ -140,10 +140,10 @@ homebrew_casks:
           if OS.mac?
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/techne"]
           end
-    # The tap is github.com/thesm-os/homebrew-tap. The release workflow passes a token with
+    # The tap is github.com/dokimasia/homebrew-tap. The release workflow passes a token with
     # contents:write on it as HOMEBREW_TAP_TOKEN.
     repository:
-      owner: thesm-os
+      owner: dokimasia
       name: homebrew-tap
       branch: main
       token: '{{ .Env.HOMEBREW_TAP_TOKEN }}'
