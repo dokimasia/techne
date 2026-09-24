@@ -4,12 +4,14 @@
 package corpus_test
 
 import (
+	"cmp"
 	"errors"
 	"testing"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
+	"go.dokimi.dev/techne/lang/c"
 	"go.dokimi.dev/techne/test/corpus"
 	"go.dokimi.dev/techne/tool"
 )
@@ -143,6 +145,8 @@ func TestCheck(t *testing.T) {
 			"b.go": "package b\n\nfunc use() { a.Get() }\n",
 			"c.js": "class Get {\n  static init() { return this; }\n  static thisway() {}\n}\n",
 			"d.rs": "impl Get {\n    fn new() -> Self { Self {} }\n}\n",
+			"f.c":  "\tSTEMMER_MODULE(porter, PG_LATIN1, ISO_8859_1),\n",
+			"g.go": "\tSTEMMER_MODULE(porter, PG_LATIN1, ISO_8859_1),\n",
 		}
 		read := func(p string) ([]byte, error) {
 			if text, found := files[p]; found {
@@ -150,9 +154,13 @@ func TestCheck(t *testing.T) {
 			}
 			return nil, errors.New("no such file")
 		}
+		// pasting are the extensions of C, whose preprocessor pastes tokens into names.
+		pasting := c.Declaration().Extensions
 
 		tests := []struct {
-			name  string
+			name string
+			// of is the name of the declaration, and Get when empty.
+			of    string
 			edge  tool.Connected
 			clean bool
 		}{
@@ -191,11 +199,27 @@ func TestCheck(t *testing.T) {
 				name: "reports a file that cannot be read",
 				edge: tool.Connected{Name: "use", Path: "e.go", Line: 1},
 			},
+			{
+				name:  "returns no problem for a C site whose macro argument starts the name",
+				of:    "porter_ISO_8859_1_stem",
+				edge:  tool.Connected{Name: "modules", Path: "f.c", Line: 1},
+				clean: true,
+			},
+			{
+				name: "reports a macro argument that starts the name in a file that is not C",
+				of:   "porter_ISO_8859_1_stem",
+				edge: tool.Connected{Name: "modules", Path: "g.go", Line: 1},
+			},
+			{
+				name: "reports a C site whose words do not start the name",
+				of:   "english_ISO_8859_1_stem",
+				edge: tool.Connected{Name: "modules", Path: "f.c", Line: 1},
+			},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				problems := corpus.Sites("Get", []tool.Connected{tt.edge}, read)
+				problems := corpus.Sites(cmp.Or(tt.of, "Get"), []tool.Connected{tt.edge}, read, pasting)
 				assert.Equal(t, len(problems) == 0, tt.clean, "the problems of the site")
 			})
 		}

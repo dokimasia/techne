@@ -6,6 +6,8 @@ package corpus
 import (
 	"bytes"
 	"fmt"
+	"path"
+	"slices"
 	"strings"
 
 	"go.dokimi.dev/techne/core/source"
@@ -81,13 +83,21 @@ func Ranked(text string, items []tool.Declaration) []string {
 	return nil
 }
 
-// Sites returns a problem for each edge of items whose line shows neither
-// name, nor the name at the far end of the edge, nor a receiver keyword such
-// as this, and for each edge whose Via differs from its line. A receiver
-// keyword refers to a type inside its own members, as this does in a static
-// method of JavaScript and Self in an impl of Rust. read returns the content
-// of a path of an answer.
-func Sites(name string, items []tool.Connected, read func(string) ([]byte, error)) []string {
+// Sites returns a problem for each edge of items whose line shows none of
+// these, and for each edge whose Via differs from its line:
+//
+//   - name, or the name at the far end of the edge
+//   - a receiver keyword such as this, which refers to a type inside its own
+//     members, as this does in a static method of JavaScript and Self in an
+//     impl of Rust
+//   - in a file of an extension of pasting, a macro argument that token
+//     pasting extends into name, as porter in
+//     STEMMER_MODULE(porter, PG_LATIN1, ISO_8859_1) becomes
+//     porter_ISO_8859_1_stem in C
+//
+// read returns the content of a path of an answer. pasting are the extensions
+// of the files whose preprocessor pastes tokens into names.
+func Sites(name string, items []tool.Connected, read func(string) ([]byte, error), pasting []string) []string {
 	var out []string
 	for _, edge := range items {
 		content, err := read(edge.Path)
@@ -96,10 +106,12 @@ func Sites(name string, items []tool.Connected, read func(string) ([]byte, error
 			continue
 		}
 		written, found := Line(content, edge.Line)
+		shown := strings.Contains(written, name) || strings.Contains(written, edge.Name) || receiver(written) ||
+			slices.Contains(pasting, path.Ext(edge.Path)) && pasted(written, name)
 		switch {
 		case !found:
 			out = append(out, fmt.Sprintf("%s has no line %d", edge.Path, edge.Line))
-		case !strings.Contains(written, name) && !strings.Contains(written, edge.Name) && !receiver(written):
+		case !shown:
 			out = append(out, fmt.Sprintf("%s:%d shows neither %s nor %s", edge.Path, edge.Line, name, edge.Name))
 		case edge.Via != "" && edge.Via != strings.TrimSpace(written):
 			out = append(out, fmt.Sprintf("%s:%d reads %q, and the edge quotes %q",
@@ -123,6 +135,26 @@ func receiver(line string) bool {
 			}
 			at = end + next
 		}
+	}
+	return false
+}
+
+// pasted reports whether a word of line starts name and an underscore follows
+// the word in name.
+func pasted(line, name string) bool {
+	for start := 0; start < len(line); {
+		if !identifying(line, start) {
+			start++
+			continue
+		}
+		end := start
+		for identifying(line, end) {
+			end++
+		}
+		if strings.HasPrefix(name, line[start:end]+"_") {
+			return true
+		}
+		start = end
 	}
 	return false
 }
