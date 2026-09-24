@@ -50,7 +50,7 @@ const Twins = "package a\n\ntype Store struct{}\n\nfunc (s *Store) Get() int { r
 
 // Bundle returns a file with a package clause on line 0 and n+1 functions on line 1: F0 to
 // F<n-1>, then After, which calls F0. A minifier writes a program on one line this way. The
-// Minified mode reads the declarations and the uses of F0 from this file.
+// Minified and Nested modes read the declarations and the uses of F0 from this file.
 func Bundle(n int) string {
 	var out strings.Builder
 	out.WriteString("package a\n")

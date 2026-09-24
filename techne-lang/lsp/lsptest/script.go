@@ -422,6 +422,8 @@ func (s *script) symbols() string {
 		return functions(s.holding[s.seen])
 	case Minified:
 		return bundled(s.holding[s.seen])
+	case Nested:
+		return nested(s.holding[s.seen])
 	case Receivers:
 		return "[" + strings.Join([]string{
 			symbol("Store", kindStruct, "", ranged(2, 0, 19), ranged(2, 5, 10), ""),
@@ -488,7 +490,7 @@ func (s *script) definition(params json.RawMessage) string {
 	case Pointed, Receivers, Impls, Wrapped:
 		line, character := position(params)
 		return "[" + location(s.seen, point(line, character)) + "]"
-	case Minified:
+	case Minified, Nested:
 		found := called(s.holding[s.seen], bundleCallee)
 		if len(found) == 0 {
 			return "null"
@@ -521,7 +523,7 @@ func (s *script) references() string {
 		return "[]"
 	case s.mode == Receivers || s.mode == Impls:
 		return "[]"
-	case s.mode == Minified:
+	case s.mode == Minified || s.mode == Nested:
 		var out []string
 		for _, doc := range s.files() {
 			for _, at := range called(s.view(doc), bundleCallee) {
@@ -759,7 +761,7 @@ func (s *script) diagnose(doc string) string {
 			}
 		}
 		return "[" + strings.Join(out, ",") + "]"
-	case Minified:
+	case Minified, Nested:
 		return "[]"
 	}
 	return problems
@@ -994,6 +996,23 @@ const bundleCallee = "F0"
 // bundled is the answer to textDocument/documentSymbol in the Minified mode: one function for
 // each func keyword of text, from the keyword to the brace that closes its body.
 func bundled(text string) string {
+	return bodied(text, func(name, whole, selection string) string {
+		return symbol(name, kindFunction, "", whole, selection, "")
+	})
+}
+
+// nested is the answer to textDocument/documentSymbol in the Nested mode: for each func keyword
+// of text, a class that contains one method, both with the name and the range of the function.
+func nested(text string) string {
+	return bodied(text, func(name, whole, selection string) string {
+		return symbol(name, kindClass, "", whole, selection, symbol(name, kindMethod, "", whole, selection, ""))
+	})
+}
+
+// bodied returns the list of the symbols that render returns for each func keyword of text. It
+// passes the name of the function, its range from the keyword to the brace that closes its body,
+// and the range of its name.
+func bodied(text string, render func(name, whole, selection string) string) string {
 	const keyword = "func "
 	var out []string
 	for i, line := range strings.Split(text, "\n") {
@@ -1010,7 +1029,7 @@ func bundled(text string) string {
 			}
 			end += at + 1
 			start := at + len(keyword)
-			out = append(out, symbol(name, kindFunction, "", ranged(i, at, end), ranged(i, start, start+len(name)), ""))
+			out = append(out, render(name, ranged(i, at, end), ranged(i, start, start+len(name))))
 			from = end
 		}
 	}

@@ -372,9 +372,7 @@ func (e *Engine) declarations(ctx context.Context, held *session, p source.Path)
 	if !provides(held.capable.DocumentSymbolProvider) {
 		return nil, e.unsupported("textDocument/documentSymbol")
 	}
-	answered, err := held.asks.DocumentSymbol(ctx, &protocol.DocumentSymbolParams{
-		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(p))},
-	})
+	answered, err := e.documentSymbols(ctx, held, p)
 	if err != nil {
 		return nil, fmt.Errorf("lsp: %s: symbols of %s: %w", e.server.Name, p, err)
 	}

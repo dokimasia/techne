@@ -6,6 +6,7 @@ package lsp_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -167,6 +168,25 @@ func TestSymbol(t *testing.T) {
 				"the signature of F0 starts at its line: "+signature)
 			assert.True(t, len(signature) <= lang.LineLimit+len("…"),
 				"the signature of F0 is at most lang.LineLimit bytes and an ellipsis: "+signature)
+		})
+
+		t.Run("decodes the symbols of 5000 nested classes in less than 512 MiB", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, lsptest.Nested, map[string]string{"a.fake": lsptest.Bundle(5000)})
+			request, at := engine.Request{Scope: "a.fake"}, source.Position{Line: 1, Column: 5}
+			// The first question starts the server and waits for it to settle.
+			_, err := e.Resolve(t.Context(), request, at)
+			assert.NoError(t, err, "the first Resolve of F0 in a nested bundle")
+
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			got, err := e.Resolve(t.Context(), request, at)
+			runtime.ReadMemStats(&after)
+			assert.NoError(t, err, "the second Resolve of F0 in a nested bundle")
+			assert.Equal(t, names(got.Items), []string{"F0"}, "the declarations that F0 denotes")
+			allocated := after.TotalAlloc - before.TotalAlloc
+			assert.True(t, allocated < 512<<20,
+				"the bytes that the second Resolve allocates: "+strconv.FormatUint(allocated, 10))
 		})
 	})
 

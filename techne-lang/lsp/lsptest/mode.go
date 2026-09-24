@@ -182,6 +182,10 @@ const (
 	// declaration of F0 as the definition of every position. It reports each occurrence of F0
 	// before a parenthesis in the files with the [Extension] suffix as a reference.
 	Minified Mode = "minified"
+
+	// Nested describes a [Bundle] as the Minified mode does, and reports each function as a
+	// class of the same name and range that contains one method.
+	Nested Mode = "nested"
 )
 
 // LoadTime is how long the Loading mode takes to end its progress job.

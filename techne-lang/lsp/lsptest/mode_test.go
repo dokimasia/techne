@@ -19,7 +19,7 @@ var modes = []lsptest.Mode{
 	lsptest.Moveless, lsptest.SilentMove, lsptest.Extracts, lsptest.Commands, lsptest.Watches,
 	lsptest.Opened, lsptest.Short, lsptest.Scoped, lsptest.Conflicts, lsptest.Unenclosed, lsptest.Compiles,
 	lsptest.Unbound, lsptest.WorkspaceDiagnostics, lsptest.Canonical, lsptest.Minified, lsptest.Receivers,
-	lsptest.Impls, lsptest.Wrapped,
+	lsptest.Impls, lsptest.Wrapped, lsptest.Nested,
 }
 
 func TestMode(t *testing.T) {

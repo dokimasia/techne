@@ -5,6 +5,7 @@ package lsp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -31,9 +32,7 @@ func (e *Engine) symbols(ctx context.Context, held *session, doc document) ([]se
 	if !provides(held.capable.DocumentSymbolProvider) {
 		return nil, e.unsupported("textDocument/documentSymbol")
 	}
-	answered, err := held.asks.DocumentSymbol(ctx, &protocol.DocumentSymbolParams{
-		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(doc.path))},
-	})
+	answered, err := e.documentSymbols(ctx, held, doc.path)
 	if err != nil {
 		return nil, fmt.Errorf("lsp: %s: symbols of %s: %w", e.server.Name, doc.path, err)
 	}
@@ -47,6 +46,112 @@ func (e *Engine) symbols(ctx context.Context, held *session, doc document) ([]se
 		e.list(&out, reported, doc, unit)
 	}
 	return out, nil
+}
+
+// documentSymbols returns the answer of the server to textDocument/documentSymbol for the file
+// at p. It decodes the reply into [wireSymbol] entries with encoding/json, which allocates in
+// proportion to the reply. The decoder of go.lsp.dev/protocol v1.0.1 reserves up to 4,096
+// symbols for each nested array of children, which is 2.30 GB for a reply of 1.99 MB.
+func (e *Engine) documentSymbols(
+	ctx context.Context,
+	held *session,
+	p source.Path,
+) (protocol.DocumentSymbolResult, error) {
+	var raw json.RawMessage
+	err := protocol.Call(ctx, held.conn, protocol.MethodTextDocumentDocumentSymbol,
+		&protocol.DocumentSymbolParams{TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(p))}},
+		&raw)
+	if err != nil {
+		return nil, err
+	}
+	return decodedSymbols(raw)
+}
+
+// wireSymbol is one entry of a reply to textDocument/documentSymbol in either form of LSP 3.17:
+// a DocumentSymbol, with its range and its children, or a SymbolInformation, with its location
+// and the name of its container. It has the fields that [Engine.nest] and [Engine.list] read,
+// in the types of the wire and without decoder methods, so encoding/json decodes it by its
+// fields. A type of go.lsp.dev/protocol has decoder methods, which encoding/json calls.
+type wireSymbol struct {
+	Name           string        `json:"name"`
+	Detail         *string       `json:"detail"`
+	Kind           uint32        `json:"kind"`
+	Range          wireRange     `json:"range"`
+	SelectionRange wireRange     `json:"selectionRange"`
+	Children       []wireSymbol  `json:"children"`
+	Location       *wireLocation `json:"location"`
+	ContainerName  *string       `json:"containerName"`
+}
+
+// wireLocation is a Location of LSP 3.17 in the types of the wire.
+type wireLocation struct {
+	URI   string    `json:"uri"`
+	Range wireRange `json:"range"`
+}
+
+// wireRange is a Range of LSP 3.17 in the types of the wire.
+type wireRange struct {
+	Start wirePosition `json:"start"`
+	End   wirePosition `json:"end"`
+}
+
+// wirePosition is a Position of LSP 3.17 in the types of the wire.
+type wirePosition struct {
+	Line      uint32 `json:"line"`
+	Character uint32 `json:"character"`
+}
+
+// decodedSymbols returns raw, a reply to textDocument/documentSymbol, as SymbolInformation
+// entries when its first entry has a location, and as DocumentSymbol entries otherwise. A null
+// reply has no entry.
+func decodedSymbols(raw json.RawMessage) (protocol.DocumentSymbolResult, error) {
+	var entries []wireSymbol
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, fmt.Errorf("lsp: decode the symbols of a reply: %w", err)
+	}
+	if len(entries) > 0 && entries[0].Location != nil {
+		out := make(protocol.SymbolInformationSlice, 0, len(entries))
+		for _, one := range entries {
+			if one.Location == nil {
+				continue
+			}
+			out = append(out, protocol.SymbolInformation{
+				Name:          one.Name,
+				Kind:          protocol.SymbolKind(one.Kind),
+				ContainerName: one.ContainerName,
+				Location:      protocol.Location{URI: uri.URI(one.Location.URI), Range: one.Location.Range.converted()},
+			})
+		}
+		return out, nil
+	}
+	return documented(entries), nil
+}
+
+// documented returns entries as DocumentSymbol entries, with their children.
+func documented(entries []wireSymbol) protocol.DocumentSymbolSlice {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make(protocol.DocumentSymbolSlice, len(entries))
+	for i, one := range entries {
+		out[i] = protocol.DocumentSymbol{
+			Name:           one.Name,
+			Detail:         one.Detail,
+			Kind:           protocol.SymbolKind(one.Kind),
+			Range:          one.Range.converted(),
+			SelectionRange: one.SelectionRange.converted(),
+			Children:       documented(one.Children),
+		}
+	}
+	return out
+}
+
+// converted returns r as a Range of go.lsp.dev/protocol.
+func (r wireRange) converted() protocol.Range {
+	return protocol.Range{
+		Start: protocol.Position{Line: r.Start.Line, Character: r.Start.Character},
+		End:   protocol.Position{Line: r.End.Line, Character: r.End.Character},
+	}
 }
 
 // nest appends the declarations of a DocumentSymbol tree to into, depth first, with parent as
