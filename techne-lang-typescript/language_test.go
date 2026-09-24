@@ -104,6 +104,11 @@ func TestLanguage(t *testing.T) {
 			t.Parallel()
 			assert.True(t, typescript.Server().Scoped, "the scope of typescript-language-server")
 		})
+
+		t.Run("declares the server quiet", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, typescript.Server().Quiet, "Quiet of typescript-language-server")
+		})
 	})
 
 	t.Run("Native", func(t *testing.T) {
@@ -122,6 +127,11 @@ func TestLanguage(t *testing.T) {
 		t.Run("declares no extraction", func(t *testing.T) {
 			t.Parallel()
 			assert.False(t, typescript.Native().Extracts.Offered(), "the extraction of tsc")
+		})
+
+		t.Run("declares that tsc publishes a report after every change", func(t *testing.T) {
+			t.Parallel()
+			assert.False(t, typescript.Native().Quiet, "Quiet of tsc")
 		})
 	})
 

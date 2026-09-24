@@ -34,7 +34,7 @@ var extendsQuery string
 
 // Declaration returns the declaration of TypeScript. It claims .tsx,
 // because the server and the type checker read a .tsx file as TypeScript.
-// A rename that crosses the two extensions stays within one language.
+// A rename across the two extensions is a rename within one language.
 func Declaration() lang.Declaration {
 	return lang.Declaration{
 		Language:   Language,
@@ -100,6 +100,10 @@ func Server() lsp.Server {
 		// project contains a file, so it opens the files that write a name for
 		// every rename and move.
 		Scoped: true,
+		// typescript-language-server 6.0.0 publishes no report for a change
+		// after which a kind of diagnostics is still empty. It publishes a
+		// report of each kind for a file that it opens.
+		Quiet: true,
 	}
 }
 

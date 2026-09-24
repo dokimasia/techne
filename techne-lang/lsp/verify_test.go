@@ -68,6 +68,19 @@ func TestVerify(t *testing.T) {
 			assert.False(t, hasCaveat(got.Caveats, trust.CaveatIndexWarming), "the answer has a warming caveat")
 		})
 
+		t.Run("returns a total answer after a check of clean content with a quiet server", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, lsptest.Quiet, sample())
+			_, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify opens a.fake")
+			_, err = e.Check(t.Context(), map[source.Path][]byte{"a.fake": []byte(lsptest.Content + "\n")})
+			assert.NoError(t, err, "Check of clean content")
+
+			got, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify after the check")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the answer")
+		})
+
 		t.Run("returns within 3 seconds for ten files without a report", func(t *testing.T) {
 			t.Parallel()
 			files := map[string]string{}

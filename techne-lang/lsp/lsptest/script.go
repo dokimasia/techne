@@ -100,11 +100,16 @@ type script struct {
 	mode Mode
 	in   *bufio.Reader
 
-	// sending guards out and loaded. In the Loading mode a timer goroutine writes the end
-	// of the progress job.
+	// sending guards out, loaded, reported and opens. In the Loading mode a timer goroutine
+	// writes the end of the progress job, and in the Quiet mode a goroutine publishes the report
+	// of an open.
 	sending sync.Mutex
 	out     io.Writer
 	loaded  bool
+	// reported is the report of each open document in the Quiet mode. opens counts the opens
+	// and the closes of each document, so a delayed report of an earlier open is dropped.
+	reported map[string]string
+	opens    map[string]int
 
 	// root is the workspace URI of initialize. seen is the document URI of the latest
 	// request with a text document.
@@ -142,6 +147,8 @@ func serve(mode Mode) int {
 		replies:  map[string]string{},
 		holding:  map[string]string{},
 		versions: map[string]int{},
+		reported: map[string]string{},
+		opens:    map[string]int{},
 		synced:   true,
 		outside:  os.Getenv(envOutside),
 		renames:  os.Getenv(envRenames),
@@ -200,6 +207,9 @@ func (s *script) handle(m message) (int, bool) {
 	case "textDocument/didClose":
 		delete(s.holding, s.seen)
 		delete(s.versions, s.seen)
+		if s.mode == Quiet {
+			s.quietClose(s.seen)
+		}
 	case "workspace/didChangeWatchedFiles":
 		s.synced = true
 	default:
@@ -266,8 +276,8 @@ func (s *script) isLoaded() bool {
 	return s.loaded
 }
 
-// opened keeps the buffer and the version of a didOpen notification. The Pushes and PushesOne
-// modes publish diagnostics for the file.
+// opened keeps the buffer and the version of a didOpen notification. The Pushes, PushesOne and
+// Quiet modes publish diagnostics for the file.
 func (s *script) opened(params json.RawMessage) {
 	var held struct {
 		TextDocument struct {
@@ -289,7 +299,55 @@ func (s *script) opened(params json.RawMessage) {
 		s.publish(s.seen, faults)
 	case s.mode == Pushes && s.declares("capabilities", "textDocument", "publishDiagnostics"):
 		s.publish(s.seen, problems)
+	case s.mode == Quiet:
+		s.sending.Lock()
+		s.reported[s.seen] = reportOf(held.TextDocument.Text)
+		s.opens[s.seen]++
+		opened := s.opens[s.seen]
+		s.sending.Unlock()
+		go s.delayed(s.seen, opened)
 	}
+}
+
+// reportOf returns the report of the Quiet mode for text, which lists an error at each
+// occurrence of [Broken].
+func reportOf(text string) string { return "[" + strings.Join(broken(text), ",") + "]" }
+
+// delayed publishes the report of the document doc in the Quiet mode after [QuietDelay],
+// unless the client closed or opened doc again after the open that opens counted as opened.
+func (s *script) delayed(doc string, opened int) {
+	time.Sleep(QuietDelay)
+	s.sending.Lock()
+	defer s.sending.Unlock()
+	if s.opens[doc] != opened {
+		return
+	}
+	write(s.out, published(doc, s.reported[doc]))
+}
+
+// quietChange keeps the report of the buffer of the document doc in the Quiet mode, and
+// publishes it unless the last and the new report are both empty.
+func (s *script) quietChange(doc string) {
+	fresh := reportOf(s.holding[doc])
+	s.sending.Lock()
+	defer s.sending.Unlock()
+	last := s.reported[doc]
+	s.reported[doc] = fresh
+	if last == "[]" && fresh == "[]" {
+		return
+	}
+	write(s.out, published(doc, fresh))
+}
+
+// quietClose drops the report of the document doc in the Quiet mode and the delayed report of
+// its open, and publishes an empty report for it after [QuietClose].
+func (s *script) quietClose(doc string) {
+	s.sending.Lock()
+	delete(s.reported, doc)
+	s.opens[doc]++
+	s.sending.Unlock()
+	time.Sleep(QuietClose)
+	s.publish(doc, "[]")
 }
 
 // changed keeps the buffer and the version of a didChange notification. Every change replaces
@@ -308,8 +366,11 @@ func (s *script) changed(params json.RawMessage) {
 	}
 	s.holding[s.seen] = held.ContentChanges[len(held.ContentChanges)-1].Text
 	s.versions[s.seen] = held.TextDocument.Version
-	if s.mode == Watches {
+	switch s.mode {
+	case Watches:
 		s.synced = false
+	case Quiet:
+		s.quietChange(s.seen)
 	}
 }
 
@@ -384,7 +445,7 @@ func (s *script) capabilities() string {
 		`"renameProvider":{"prepareProvider":true}`,
 	}
 	switch s.mode {
-	case Pushes, Ungated, SilentMove, Opened, Short:
+	case Pushes, Ungated, SilentMove, Opened, Short, Quiet:
 	default:
 		fields = append(fields, fmt.Sprintf(
 			`"diagnosticProvider":{"interFileDependencies":true,"workspaceDiagnostics":%t}`,
@@ -847,9 +908,13 @@ func note(message string) string {
 }
 
 // publish sends textDocument/publishDiagnostics for the document doc.
-func (s *script) publish(doc, diagnostics string) {
-	s.send(fmt.Sprintf(`{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics",`+
-		`"params":{"uri":%q,"diagnostics":%s}}`, doc, diagnostics))
+func (s *script) publish(doc, diagnostics string) { s.send(published(doc, diagnostics)) }
+
+// published is the textDocument/publishDiagnostics notification of diagnostics for the
+// document doc.
+func published(doc, diagnostics string) string {
+	return fmt.Sprintf(`{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics",`+
+		`"params":{"uri":%q,"diagnostics":%s}}`, doc, diagnostics)
 }
 
 // view is the text the server analyses for the document doc: the buffer the client gave it,

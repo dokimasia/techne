@@ -84,6 +84,28 @@ func TestCheck(t *testing.T) {
 			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Check")
 		})
 
+		t.Run("returns a report of clean content from a quiet server", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, lsptest.Quiet, sample())
+			_, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify opens a.fake")
+
+			got, err := e.Check(t.Context(), map[source.Path][]byte{"a.fake": []byte(lsptest.Content + "\n")})
+			assert.NoError(t, err, "Check of clean content")
+			assert.Empty(t, got.Items, "the findings of clean content")
+		})
+
+		t.Run("reads the report of new content after the empty report of a close", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, lsptest.Quiet, sample())
+			_, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify opens a.fake")
+
+			got, err := e.Check(t.Context(), faulty)
+			assert.NoError(t, err, "Check of faulty content")
+			assert.Length(t, got.Items, 1, "the findings of faulty content")
+		})
+
 		t.Run("declines content the server reports nothing about", func(t *testing.T) {
 			t.Parallel()
 			_, err := serving(t, lsptest.Ungated, sample()).Check(t.Context(), faulty)

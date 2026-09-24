@@ -68,10 +68,10 @@ type Server struct {
 	// then has a [trust.CaveatPartialCheck] caveat.
 	Unchecked string
 
-	// Answering is how long a question waits for the server to answer, from the moment the
+	// Answering is how long a question waits for the reply of the server, from the moment the
 	// server runs. Zero waits one minute. A question that waits the whole time returns
-	// [engine.ErrDecline], so the next engine answers, and the server receives a
-	// $/cancelRequest for the request it did not answer.
+	// [engine.ErrDecline], so the next engine serves it, and the server receives a
+	// $/cancelRequest for the request without a reply.
 	Answering time.Duration
 
 	// Scoped reports that the server loads only the files that it has open and the files that
@@ -80,6 +80,13 @@ type Server struct {
 	// rename or a move, the engine opens the files of the workspace that write the name, so
 	// the server finds the uses in them.
 	Scoped bool
+
+	// Quiet reports that the server publishes no report for a change after which a kind of the
+	// diagnostics of a file is still empty, as typescript-language-server 6.0.0 does, so a
+	// change to clean content gets no report. The engine replaces a buffer of such a server
+	// with textDocument/didClose and textDocument/didOpen, and the server publishes a report of
+	// each kind for the file that it opens.
+	Quiet bool
 }
 
 // Refactor names the code action of a server that performs one refactoring.

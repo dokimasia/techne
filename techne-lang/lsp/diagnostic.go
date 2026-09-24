@@ -163,13 +163,20 @@ func coded(code protocol.ProgressToken) string {
 type reports struct {
 	mu   sync.Mutex
 	kept map[uri.URI][]protocol.Diagnostic
+	// counted is the number of reports of each file since the session started, which
+	// [reports.forget] does not reset.
+	counted map[uri.URI]int
 	// waking has one channel per file that a caller waits on, which the next report closes.
 	waking map[uri.URI]chan struct{}
 }
 
 // newReports returns an empty store.
 func newReports() *reports {
-	return &reports{kept: map[uri.URI][]protocol.Diagnostic{}, waking: map[uri.URI]chan struct{}{}}
+	return &reports{
+		kept:    map[uri.URI][]protocol.Diagnostic{},
+		counted: map[uri.URI]int{},
+		waking:  map[uri.URI]chan struct{}{},
+	}
 }
 
 // keep stores the diagnostics of the file of, and wakes the callers that wait for them.
@@ -177,9 +184,51 @@ func (r *reports) keep(of uri.URI, diagnostics []protocol.Diagnostic) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.kept[of] = slices.Clone(diagnostics)
+	r.counted[of]++
 	if waking, waiting := r.waking[of]; waiting {
 		close(waking)
 		delete(r.waking, of)
+	}
+}
+
+// count returns the number of reports of the file of since the session started.
+func (r *reports) count(of uri.URI) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.counted[of]
+}
+
+// after waits until the file of has more than before reports, until by or until ctx ends, and
+// reports whether it has.
+func (r *reports) after(ctx context.Context, of uri.URI, before int, by time.Time) bool {
+	for {
+		r.mu.Lock()
+		if r.counted[of] > before {
+			r.mu.Unlock()
+			return true
+		}
+		left := time.Until(by)
+		if left <= 0 {
+			r.mu.Unlock()
+			return false
+		}
+		waking, waiting := r.waking[of]
+		if !waiting {
+			waking = make(chan struct{})
+			r.waking[of] = waking
+		}
+		r.mu.Unlock()
+
+		timer := time.NewTimer(left)
+		select {
+		case <-waking:
+			timer.Stop()
+		case <-timer.C:
+			return false
+		case <-ctx.Done():
+			timer.Stop()
+			return false
+		}
 	}
 }
 

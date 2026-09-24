@@ -406,10 +406,11 @@ func (e *Engine) told(ctx context.Context, held *session, full string, content [
 }
 
 // sync makes content the buffer of the server for the file at full, and reports whether it
-// replaced a different buffer. It sends textDocument/didOpen for a file without a
-// buffer, textDocument/didChange with the whole content for a buffer with other content, and
-// nothing for a buffer with the same content. A replaced buffer drops the diagnostics the
-// server published for it. The stamp is the zero stamp for content that is not on disk.
+// replaced a different buffer. It sends textDocument/didOpen for a file without a buffer, and
+// nothing for a buffer with the same content. For a buffer with other content it sends
+// textDocument/didChange with the whole content, or for a [Server.Quiet] server the close and
+// the open of [Engine.reopen]. A replaced buffer drops the diagnostics the server published for
+// it. The stamp is the zero stamp for content that is not on disk.
 func (e *Engine) sync(
 	ctx context.Context,
 	held *session,
@@ -427,6 +428,14 @@ func (e *Engine) sync(
 		was.stamp = at
 		held.opened[full] = was
 		return false, nil
+	case open && e.server.Quiet:
+		if err := e.reopen(ctx, held, full, content, was.version+1); err != nil {
+			delete(held.opened, full)
+			return false, err
+		}
+		held.working.touched()
+		held.opened[full] = sent{version: was.version + 1, digest: digest, stamp: at}
+		return true, nil
 	case open:
 		if err := held.asks.DidChange(ctx, &protocol.DidChangeTextDocumentParams{
 			TextDocument: protocol.VersionedTextDocumentIdentifier{
@@ -458,6 +467,50 @@ func (e *Engine) sync(
 	held.working.touched()
 	held.opened[full] = sent{version: 1, digest: digest, stamp: at}
 	return false, nil
+}
+
+// fencing is how long [Engine.reopen] waits for the report of a closed file after the reply
+// that follows it on the stream. The client handles each message on a goroutine of its own, so
+// the reply can arrive before the report is kept.
+const fencing = 100 * time.Millisecond
+
+// reopen replaces the buffer of the file at full with content under version, for a
+// [Server.Quiet] server: textDocument/didClose, and then textDocument/didOpen.
+//
+// The server publishes an empty report when it closes the file, and that report describes no
+// content. reopen drops it before the open, so the first report that the engine keeps for the
+// file describes content. A textDocument/documentSymbol request after the close fences the
+// report: the server sends it before its reply, and reopen waits up to [fencing] after the
+// reply for the report to be kept. A server that has no diagnostics of the file sends no report.
+func (e *Engine) reopen(ctx context.Context, held *session, full string, content []byte, version int32) error {
+	of := uri.File(full)
+	before := held.reports.count(of)
+	if err := held.asks.DidClose(ctx, &protocol.DidCloseTextDocumentParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: of},
+	}); err != nil {
+		return fmt.Errorf("lsp: %s: didClose %s: %w", e.server.Name, full, err)
+	}
+	// An error reply fences the report too, so only a context that ended stops the replacement.
+	var fenced json.RawMessage
+	if err := protocol.Call(ctx, held.conn, protocol.MethodTextDocumentDocumentSymbol,
+		&protocol.DocumentSymbolParams{TextDocument: protocol.TextDocumentIdentifier{URI: of}},
+		&fenced); err != nil && ctx.Err() != nil {
+		return fmt.Errorf("lsp: %s: fence the close of %s: %w", e.server.Name, full, ctx.Err())
+	}
+	held.reports.after(ctx, of, before, time.Now().Add(fencing))
+	held.reports.forget(of)
+
+	if err := held.asks.DidOpen(ctx, &protocol.DidOpenTextDocumentParams{
+		TextDocument: protocol.TextDocumentItem{
+			URI:        of,
+			LanguageID: protocol.LanguageKind(e.server.Named(full)),
+			Version:    version,
+			Text:       string(content),
+		},
+	}); err != nil {
+		return fmt.Errorf("lsp: %s: didOpen %s: %w", e.server.Name, full, err)
+	}
+	return nil
 }
 
 // restore sends the server the content on disk of each path after a question showed it other

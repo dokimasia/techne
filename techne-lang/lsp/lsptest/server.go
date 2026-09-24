@@ -72,8 +72,8 @@ func Renames(edit string) Option {
 // Server returns a declaration that runs the current test binary as the scripted server in
 // mode. The declaration claims [trust.Resolved] for resolve, relate, plan, check and verify,
 // and no tier for format. The Asks mode is declared with settings, the Loading and Stuck
-// modes with a loading time, and the Extracts and Commands modes with the extraction they
-// offer.
+// modes with a loading time, the Extracts and Commands modes with the extraction they offer,
+// and the Quiet mode as [lsp.Server.Quiet].
 func Server(mode Mode, options ...Option) lsp.Server {
 	server := lsp.Server{
 		Name:       Name,
@@ -97,6 +97,8 @@ func Server(mode Mode, options ...Option) lsp.Server {
 		server.Loading = time.Second
 	case Extracts, Commands:
 		server.Extracts = lsp.Refactor{Kind: extractKind, Titles: []string{"into function"}}
+	case Quiet:
+		server.Quiet = true
 	}
 	for _, option := range options {
 		option(&server)

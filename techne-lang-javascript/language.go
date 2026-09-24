@@ -29,8 +29,8 @@ const Language source.Language = "javascript"
 //go:embed queries/upstream.scm
 var upstreamQuery string
 
-// extendsQuery holds the patterns of the module, which Grammar appends to
-// upstreamQuery.
+// extendsQuery contains the patterns of the module, which Grammar appends
+// to upstreamQuery.
 //
 //go:embed queries/extends.scm
 var extendsQuery string
@@ -95,6 +95,10 @@ func Server() lsp.Server {
 		// jsconfig.json, includes it. Most JavaScript repositories have neither.
 		// Such a project contains the open files and what they import.
 		Scoped: true,
+		// typescript-language-server 6.0.0 publishes no report for a change
+		// after which a kind of diagnostics is still empty. It publishes a
+		// report of each kind for a file that it opens.
+		Quiet: true,
 	}
 }
 

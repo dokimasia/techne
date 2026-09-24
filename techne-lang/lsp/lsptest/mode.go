@@ -62,6 +62,18 @@ const (
 	// and an empty list for every other opened file.
 	PushesOne Mode = "pushes-one"
 
+	// Quiet advertises no pull diagnostics and publishes an error at each occurrence of
+	// [Broken], as typescript-language-server 6.0.0 publishes:
+	//
+	//   - The report of a document that the client opens follows [QuietDelay] after the open,
+	//     and lists the diagnostics of the latest buffer.
+	//   - The report of a change follows at once, and only when the last or the new report is
+	//     not empty.
+	//   - A document that the client closes gets an empty report [QuietClose] after the close,
+	//     as a busy server publishes it, and before the next message is read. No report of a
+	//     buffer that it held follows.
+	Quiet Mode = "quiet"
+
 	// Asks sends workspace/configuration, workspace/workspaceFolders and
 	// workspace/applyEdit during initialize and waits for each reply. It responds to
 	// textDocument/diagnostic with one diagnostic per reply, whose message is the request
@@ -190,6 +202,16 @@ const (
 
 // LoadTime is how long the Loading mode takes to end its progress job.
 const LoadTime = 2 * time.Second
+
+// QuietDelay is how long the Quiet mode takes to publish the report of a document that the
+// client opens. It is longer than the 300 ms for which a question waits for the server to go
+// quiet, so a question that kept the report of the close reads that report.
+const QuietDelay = 500 * time.Millisecond
+
+// QuietClose is how long the Quiet mode takes to publish the empty report of a document that
+// the client closes. It is longer than the 100 ms for which the engine waits for that report
+// after the reply that follows it on the stream.
+const QuietClose = 200 * time.Millisecond
 
 // Dying is the line that the Dies mode writes to stderr before it exits.
 const Dying = "lsptest: the scripted server exits during initialize"

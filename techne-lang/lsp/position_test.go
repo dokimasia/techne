@@ -4,6 +4,7 @@
 package lsp_test
 
 import (
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -40,6 +41,20 @@ func spanned(t *testing.T, e *lsp.Engine, start source.Position) (engine.Result[
 		edit.Args{edit.ArgNewName: "Vault"})
 }
 
+// relating is the time within which a warm Relate converts the positions of a line of 20000
+// declarations: one second, and five seconds under the race detector, which slows the
+// conversion about thirteen times.
+func relating() time.Duration {
+	if info, built := debug.ReadBuildInfo(); built {
+		for _, setting := range info.Settings {
+			if setting.Key == "-race" && setting.Value == "true" {
+				return 5 * time.Second
+			}
+		}
+	}
+	return time.Second
+}
+
 // applied returns content with the edits of the one change of changes applied.
 func applied(t *testing.T, content string, changes []edit.Change) string {
 	t.Helper()
@@ -64,7 +79,7 @@ func TestPosition(t *testing.T) {
 			assert.Length(t, got.Items, 1, "the changes of the plan")
 		})
 
-		t.Run("converts a line and a byte column to UTF-16 code units", func(t *testing.T) {
+		t.Run("converts a position without an offset to UTF-16 code units", func(t *testing.T) {
 			t.Parallel()
 			got, err := spanned(t, serving(t, lsptest.Strict, emoji), source.Position{Line: 2, Column: 19})
 			assert.NoError(t, err, "Plan at line 2, column 19")
@@ -108,7 +123,7 @@ func TestPosition(t *testing.T) {
 	t.Run("Relate", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("converts the positions of a line of 20000 declarations within a second", func(t *testing.T) {
+		t.Run("converts the positions of a line of 20000 declarations within its bound", func(t *testing.T) {
 			t.Parallel()
 			e := serving(t, lsptest.Minified, map[string]string{"a.fake": lsptest.Bundle(20000)})
 			request, of := engine.Request{Scope: "a.fake"}, declared("F0", sema.KindFunction)
@@ -121,7 +136,8 @@ func TestPosition(t *testing.T) {
 			took := time.Since(start)
 			assert.NoError(t, err, "the second Relate of the uses of F0")
 			assert.Equal(t, edges(got.Items), []string{"After"}, "the declarations that use F0")
-			assert.True(t, took < time.Second, "the second Relate takes less than a second: "+took.String())
+			bound := relating()
+			assert.True(t, took < bound, "the second Relate takes less than "+bound.String()+": "+took.String())
 		})
 	})
 
