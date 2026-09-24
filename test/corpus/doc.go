@@ -56,8 +56,8 @@
 //
 // A run writes report.md to TECHNE_CORPUS after each repository. The report
 // lists the latency of each tool per repository, the time until the
-// language server settled, and the outcome of each change. The output of every command goes to a log per
-// repository under TECHNE_CORPUS/logs.
+// language server settled, and the outcome of each change. The output of
+// every command goes to a log per repository under TECHNE_CORPUS/logs.
 //
 // # Dependency position
 //
