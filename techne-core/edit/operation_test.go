@@ -14,28 +14,14 @@ import (
 func TestOperation(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Family", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("returns the part before the dot", func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, edit.RenameSymbol.Family(), edit.FamilyRename, "family")
-		})
-
-		t.Run("returns the whole name when it contains no dot", func(t *testing.T) {
-			t.Parallel()
-			assert.Equal(t, edit.Operation("verify").Family(), edit.Family("verify"), "family")
-		})
-	})
-
 	t.Run("Operations", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("names every operation as family.subject", func(t *testing.T) {
+		t.Run("names every operation as verb.subject", func(t *testing.T) {
 			t.Parallel()
 			for _, op := range edit.Operations() {
-				family, subject, found := strings.Cut(string(op), ".")
-				assert.True(t, found && family != "" && subject != "", string(op))
+				verb, subject, found := strings.Cut(string(op), ".")
+				assert.True(t, found && verb != "" && subject != "", "the name of "+string(op))
 			}
 		})
 
@@ -43,7 +29,7 @@ func TestOperation(t *testing.T) {
 			t.Parallel()
 			seen := map[edit.Operation]bool{}
 			for _, op := range edit.Operations() {
-				assert.False(t, seen[op], string(op))
+				assert.False(t, seen[op], "a second listing of "+string(op))
 				seen[op] = true
 			}
 		})
@@ -52,7 +38,7 @@ func TestOperation(t *testing.T) {
 			t.Parallel()
 			first := edit.Operations()
 			first[0] = edit.Operation("mutated")
-			assert.NotEqual(t, edit.Operations()[0], edit.Operation("mutated"), "second call")
+			assert.NotEqual(t, edit.Operations()[0], edit.Operation("mutated"), "the first operation of a second call")
 		})
 	})
 }

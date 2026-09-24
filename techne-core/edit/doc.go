@@ -8,8 +8,8 @@
 //
 // [Operations] lists every operation, including those no language
 // implements, so a caller can tell a language that cannot do something from
-// an operation that does not exist. Operations are named family.subject, and
-// [Operation.Family] returns the family.
+// an operation that does not exist. Operations are named verb.subject, such
+// as rename.symbol.
 //
 // # Specs
 //

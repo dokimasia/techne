@@ -3,24 +3,8 @@
 
 package edit
 
-import "strings"
-
-// Family is the verb of an operation, such as rename or extract.
-type Family string
-
-// The families of the declared operations.
-const (
-	FamilyRename    Family = "rename"
-	FamilyMove      Family = "move"
-	FamilyExtract   Family = "extract"
-	FamilyInline    Family = "inline"
-	FamilyChange    Family = "change"
-	FamilyImplement Family = "implement"
-	FamilyDocument  Family = "document"
-)
-
-// Operation names an operation a caller can request, in the form
-// family.subject.
+// Operation names an operation that a caller can request, in the form verb.subject, such as
+// rename.symbol.
 type Operation string
 
 // The declared operations. [SpecFor] returns the spec of each one.
@@ -39,15 +23,7 @@ const (
 	DocumentSymbol     Operation = "document.symbol"
 )
 
-// Family returns the part of o before the first dot, or o itself when it
-// contains no dot.
-func (o Operation) Family() Family {
-	name, _, _ := strings.Cut(string(o), ".")
-	return Family(name)
-}
-
-// Operations returns every declared operation, grouped by family. Each call
-// returns a new slice.
+// Operations returns every declared operation, grouped by verb. Each call returns a new slice.
 func Operations() []Operation {
 	return []Operation{
 		RenameSymbol, RenameFile,
