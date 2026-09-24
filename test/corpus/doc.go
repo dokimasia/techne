@@ -33,12 +33,16 @@
 //
 //   - The declarations of an outline match the bytes of their file.
 //   - A search returns an exact match first.
-//   - Resolve at a use returns the declaration that the use names.
+//   - Resolve at a use returns the declaration that the use names. The probe
+//     passes over a use in a file that techne does not read: a file that an
+//     ignore rule of the repository covers, such as a source that the build
+//     generates under target/, and a file whose outline techne refuses.
 //   - The site of each relation shows the name on its line.
 //   - Rename, move, extract and document each apply to the clone, and the
 //     build of the language accepts the result. The run then resets the
 //     clone. A change that techne declines is reported, and does not fail
-//     the run.
+//     the run. Neither does a change that techne refuses after its check of
+//     the files on disk, once each file of the change is as it was.
 //   - Every warm call of outline, search, resolve and relations finishes
 //     within the budget of the manifest.
 //

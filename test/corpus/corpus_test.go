@@ -23,6 +23,7 @@ import (
 	"unicode"
 
 	"go.dokimi.dev/techne/core/sema"
+	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/lang/c"
 	"go.dokimi.dev/techne/test/corpus"
 	"go.dokimi.dev/techne/tool"
@@ -215,7 +216,7 @@ func drive(t *testing.T, m corpus.Manifest, r corpus.Repository, dir, root, bina
 					break
 				}
 				site, column, found := use(w, p, func(site tool.Connected) bool {
-					return declaring(t, session, r.Language, site.Path, p.item.Name, site.Line)
+					return passed(t, session, w, site.Path, p.item.Name, site.Line)
 				})
 				if !found {
 					continue
@@ -529,9 +530,9 @@ func flattened(path, parent string, d tool.Declaration) []probe {
 }
 
 // relate asks relations for the uses of p as an agent asks: by its name and
-// kind, and after a refusal of the name as ambiguous by the qualified name
-// that the refusal asks for. It returns the answer, the name that relations
-// accepted, and the reason of the last refusal.
+// kind, then by the name qualified by its container after a refusal of the
+// name as ambiguous. It returns the answer, the name that relations accepted,
+// and the reason of the last refusal.
 func relate(
 	t *testing.T,
 	session *corpus.Session,
@@ -580,9 +581,9 @@ var receiver = regexp.MustCompile(`^func\s*\(\s*(?:[A-Za-z_]\w*\s+)?\*?\s*([A-Za
 // warm resolves a declaration of pool until the language server settles:
 // until its answer has total coverage at the resolved or the indexed tier.
 // techne lowers an answer about a project with errors to the indexed tier.
-// warm returns how long the server took, logs each change of the answer and
-// a line a minute, and fails the test when the server does not settle within
-// limit or when no engine can serve the question.
+// warm returns how long the server took. It logs each change of the answer
+// and one line a minute. It fails the test when the server does not settle
+// within limit or when no engine can serve the question.
 func warm(t *testing.T, session *corpus.Session, w *corpus.Workspace, pool []probe, limit time.Duration) time.Duration {
 	t.Helper()
 	target, line, column, found := named(w, pool)
@@ -607,7 +608,7 @@ func warm(t *testing.T, session *corpus.Session, w *corpus.Workspace, pool []pro
 		switch {
 		case answer.Error == nil && (state == "resolved, total" || state == "indexed, total"):
 			return time.Since(start)
-		case answer.Error != nil && answer.Error.Code == "unsupported":
+		case answer.Error != nil && answer.Error.Code == trust.Unsupported.String():
 			// No engine can serve the question, which waiting does not change.
 			t.Errorf("no engine resolves %s: %s", w.Repository.Language, answer.Error.Reason)
 			return 0
@@ -710,8 +711,8 @@ func touches(line string, i int) bool {
 
 // use returns a site of p in the workspace and outside its own declaration,
 // with the byte column of the name on that line, counted from one. It passes
-// over each site for which declares reports true.
-func use(w *corpus.Workspace, p probe, declares func(tool.Connected) bool) (tool.Connected, int, bool) {
+// over each site for which passes reports true.
+func use(w *corpus.Workspace, p probe, passes func(tool.Connected) bool) (tool.Connected, int, bool) {
 	for _, site := range p.sites {
 		if site.Path == p.path && site.Line == p.item.Line || filepath.IsAbs(site.Path) {
 			continue
@@ -721,23 +722,39 @@ func use(w *corpus.Workspace, p probe, declares func(tool.Connected) bool) (tool
 			continue
 		}
 		written, _ := corpus.Line(content, site.Line)
-		if at := word(written, p.item.Name); at >= 0 && !declares(site) {
+		if at := word(written, p.item.Name); at >= 0 && !passes(site) {
 			return site, at + 1, true
 		}
 	}
 	return tool.Connected{}, 0, false
 }
 
-// declaring reports whether a declaration named name starts on line of the
-// file at path, by the outline of the file. A relation of the indexed tier
-// matches a use by its name, so its site can be another declaration of the
-// name, where resolve does not bind a use.
-func declaring(t *testing.T, session *corpus.Session, language, path, name string, line int) bool {
+// passed reports whether the resolve probe passes over the site of name at
+// line of the file at path in w. It passes over each site in a file that techne
+// does not read, because techne refuses every question about the file: a file
+// that an ignore rule of the repository covers, and a file whose outline techne
+// refuses. A server can report a use in such a file, such as a source that the
+// build generates under a directory that .gitignore excludes. It also passes
+// over a declaration of name that starts on line, by the outline of the file. A
+// relation of the indexed tier matches a use by its name, so its site can be
+// another declaration of the name, where resolve does not bind a use.
+func passed(t *testing.T, session *corpus.Session, w *corpus.Workspace, path, name string, line int) bool {
 	t.Helper()
+	ignored, err := w.Ignored(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ignored {
+		return true
+	}
 	var outlined tool.Answer
 	ask(t, session, 0, "outline", map[string]any{
-		"scope": path, "detail": "names", "private": true, "max_tokens": 10_000_000, "language": language,
+		"scope": path, "detail": "names", "private": true, "max_tokens": 10_000_000,
+		"language": w.Repository.Language,
 	}, &outlined)
+	if outlined.Error != nil && outlined.Error.Code == trust.Refused.String() {
+		return true
+	}
 	var every []probe
 	for _, item := range outlined.Items {
 		every = append(every, flattened(path, "", item)...)
@@ -883,8 +900,10 @@ type changer struct {
 
 // apply previews a change with operation, applies it by its handle, builds
 // the workspace, runs check, and resets the workspace. A change that techne
-// declines is recorded and skips the test. A change that does not apply, or
-// that the build refuses, fails it.
+// declines is recorded and skips the test. So does a change that techne
+// refuses after the write, once its files are as they were. A change that
+// does not apply, a refused change that leaves a file changed, and a change
+// that the build refuses fail it.
 func (c changer) apply(t *testing.T, operation, target string, arguments map[string]any, check func(*testing.T)) {
 	t.Helper()
 	keep, err := c.w.Untracked(t.Context())
@@ -902,7 +921,7 @@ func (c changer) apply(t *testing.T, operation, target string, arguments map[str
 	var preview tool.Written
 	ask(t, c.session, 0, operation, arguments, &preview)
 	if preview.Error != nil || preview.Handle == "" {
-		outcome.Result = "declined"
+		outcome.Result = corpus.ResultDeclined
 		if preview.Error != nil {
 			outcome.Detail = preview.Error.Code + ": " + preview.Error.Reason
 		}
@@ -910,7 +929,7 @@ func (c changer) apply(t *testing.T, operation, target string, arguments map[str
 			outcome.Detail += " (" + preview.Verified.Gate + ": " + preview.Verified.Result + ")"
 		}
 		for _, caveat := range preview.Provenance.Caveats {
-			if caveat.Code != "dynamic" {
+			if caveat.Code != string(trust.CaveatDynamic) {
 				outcome.Detail += " [" + caveat.Code + ": " + caveat.Note + "]"
 			}
 		}
@@ -919,8 +938,24 @@ func (c changer) apply(t *testing.T, operation, target string, arguments map[str
 
 	var written tool.Written
 	ask(t, c.session, 0, "apply.change", map[string]any{"handle": preview.Handle}, &written)
-	if written.Error != nil || !written.Applied {
-		outcome.Result = "failed"
+	switch {
+	case written.Error != nil && written.Verified != nil:
+		// The preview passed the gate over the same files, so a refusal by the gate at the apply
+		// comes from the check of the files on disk after the write.
+		outcome.Result = corpus.ResultRefused
+		outcome.Detail = written.Error.Code + ": " + written.Error.Reason
+		dirty, err := c.w.Dirty(t.Context(), keep)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if left := among(dirty, preview.Items); len(left) > 0 {
+			outcome.Result = corpus.ResultFailed
+			t.Fatalf("techne refused %s of %s and left %s changed: %s",
+				operation, target, strings.Join(left, ", "), outcome.Detail)
+		}
+		t.Skipf("techne refused %s of %s and put its files back: %s", operation, target, outcome.Detail)
+	case written.Error != nil || !written.Applied:
+		outcome.Result = corpus.ResultFailed
 		if written.Error != nil {
 			outcome.Detail = written.Error.Code + ": " + written.Error.Reason
 		}
@@ -935,18 +970,30 @@ func (c changer) apply(t *testing.T, operation, target string, arguments map[str
 	count, counted := c.w.Repository.Count(output)
 	switch {
 	case c.w.Repository.Errors != "" && (!counted || count > c.baseline):
-		outcome.Result = "failed"
+		outcome.Result = corpus.ResultFailed
 		outcome.Detail = fmt.Sprintf("gated by %s, %d errors against %d before", gated, count, c.baseline)
 		t.Errorf("the build after %s of %s reports %d errors against %d before:\n%s",
 			operation, target, count, c.baseline, corpus.Tail(output, 30))
 	case c.w.Repository.Errors == "" && err != nil:
-		outcome.Result, outcome.Detail = "failed", "gated by "+gated+": "+corpus.Tail(output, 5)
+		outcome.Result, outcome.Detail = corpus.ResultFailed, "gated by "+gated+": "+corpus.Tail(output, 5)
 		t.Errorf("the build after %s of %s fails: %v", operation, target, err)
 	default:
-		outcome.Result = "applied"
+		outcome.Result = corpus.ResultApplied
 		outcome.Detail = fmt.Sprintf("%d files, gated by %s, built", len(written.Items), gated)
 	}
 	if check != nil {
 		check(t)
 	}
+}
+
+// among returns the paths of dirty that a file of items names, as its path or as the path it
+// moves to.
+func among(dirty []string, items []tool.Changed) []string {
+	var out []string
+	for _, p := range dirty {
+		if slices.ContainsFunc(items, func(item tool.Changed) bool { return item.Path == p || item.To == p }) {
+			out = append(out, p)
+		}
+	}
+	return out
 }

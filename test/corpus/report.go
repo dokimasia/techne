@@ -42,11 +42,26 @@ type Outcome struct {
 	Operation string
 	// Target is the declaration or the file of the change.
 	Target string
-	// Result is applied, declined or failed.
+	// Result is [ResultApplied], [ResultDeclined], [ResultRefused] or
+	// [ResultFailed].
 	Result string
 	// Detail is the reason or the output that the result rests on.
 	Detail string
 }
+
+// The results of an [Outcome].
+const (
+	// ResultApplied is a change that techne wrote and the build accepted.
+	ResultApplied = "applied"
+	// ResultDeclined is a change that techne refused to preview.
+	ResultDeclined = "declined"
+	// ResultRefused is a change that techne refused at the apply after its
+	// check of the files on disk, with every file of the change put back.
+	ResultRefused = "refused"
+	// ResultFailed is a change that techne did not apply or did not put back,
+	// or that the build refused.
+	ResultFailed = "failed"
+)
 
 // Add appends the section of one repository.
 func (r *Report) Add(s Section) {
@@ -58,7 +73,9 @@ func (r *Report) Add(s Section) {
 // Markdown returns the report as Markdown. For each repository it states
 // when the server settled, and it lists the latency of the warm calls of
 // each tool and the outcome of each change. The column of calls over the
-// budget counts every tool, and only the read tools fail a run for it.
+// budget counts the calls of every tool. A call of outline, search, resolve
+// or relations over the budget fails a run, and a call of another tool over
+// it fails nothing.
 func (r *Report) Markdown() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()

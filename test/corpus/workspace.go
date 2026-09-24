@@ -189,6 +189,25 @@ func (w *Workspace) Build(ctx context.Context) ([]byte, error) {
 	return w.run(ctx, w.expandAll(w.Repository.Build)...)
 }
 
+// Ignored reports whether an ignore rule of the repository covers the file at
+// p, a path relative to the root. techne refuses to read such a file, and
+// follows the rules of git.
+func (w *Workspace) Ignored(ctx context.Context, p string) (bool, error) {
+	_, err := w.git(ctx, "check-ignore", "--quiet", "--", p)
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.As(err, &exit) && exit.ExitCode() == notIgnored:
+		return false, nil
+	}
+	return false, err
+}
+
+// notIgnored is the exit status of git check-ignore for a path that no ignore
+// rule covers.
+const notIgnored = 1
+
 // Untracked returns the untracked files of the repository that no ignore
 // rule covers.
 func (w *Workspace) Untracked(ctx context.Context) (map[string]bool, error) {
@@ -197,10 +216,8 @@ func (w *Workspace) Untracked(ctx context.Context) (map[string]bool, error) {
 		return nil, err
 	}
 	out := map[string]bool{}
-	for p := range strings.SplitSeq(strings.TrimRight(string(listed), "\x00"), "\x00") {
-		if p != "" {
-			out[p] = true
-		}
+	for _, p := range separated(listed) {
+		out[p] = true
 	}
 	return out, nil
 }
@@ -214,20 +231,53 @@ func (w *Workspace) Reset(ctx context.Context, keep map[string]bool) error {
 	if _, err := w.git(ctx, "reset", "--quiet", "--hard", w.Repository.Commit); err != nil {
 		return err
 	}
-	untracked, err := w.Untracked(ctx)
+	strays, err := w.strays(ctx, keep)
 	if err != nil {
 		return err
 	}
-	_, left := w.preparedBy()
-	for p := range untracked {
-		if keep[p] || left[p] {
-			continue
-		}
+	for _, p := range strays {
 		if err := os.Remove(filepath.Join(w.Root, p)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("corpus: %w", err)
 		}
 	}
 	return nil
+}
+
+// Dirty returns the files of the clone that differ from its commit, in path
+// order: each tracked file that differs from the commit, and each untracked
+// file that neither keep nor the prepare steps list. It leaves out the files
+// that an ignore rule covers, which Reset keeps.
+func (w *Workspace) Dirty(ctx context.Context, keep map[string]bool) ([]string, error) {
+	if !w.Repository.Writable() {
+		return nil, ErrReadOnly
+	}
+	changed, err := w.git(ctx, "diff", "--name-only", "-z", w.Repository.Commit)
+	if err != nil {
+		return nil, err
+	}
+	strays, err := w.strays(ctx, keep)
+	if err != nil {
+		return nil, err
+	}
+	return slices.Sorted(slices.Values(append(separated(changed), strays...))), nil
+}
+
+// strays returns the untracked files that neither keep nor the prepare steps
+// list, in path order.
+func (w *Workspace) strays(ctx context.Context, keep map[string]bool) ([]string, error) {
+	untracked, err := w.Untracked(ctx)
+	if err != nil {
+		return nil, err
+	}
+	_, left := w.preparedBy()
+	var out []string
+	for p := range untracked {
+		if !keep[p] && !left[p] {
+			out = append(out, p)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
 }
 
 // Files returns the tracked files of the repository that end in one of
@@ -239,7 +289,7 @@ func (w *Workspace) Files(ctx context.Context, extensions []string) ([]string, e
 		return nil, err
 	}
 	var out []string
-	for p := range strings.SplitSeq(strings.TrimRight(string(listed), "\x00"), "\x00") {
+	for _, p := range separated(listed) {
 		excluded := slices.ContainsFunc(w.Repository.Exclude, func(prefix string) bool {
 			return strings.HasPrefix(p, prefix)
 		})
@@ -249,6 +299,18 @@ func (w *Workspace) Files(ctx context.Context, extensions []string) ([]string, e
 	}
 	slices.Sort(out)
 	return out, nil
+}
+
+// separated returns the paths of the output of a git command run with -z,
+// which ends each path with a NUL byte.
+func separated(listed []byte) []string {
+	var out []string
+	for p := range strings.SplitSeq(string(listed), "\x00") {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // Environ returns the environment of the commands and of the techne process:

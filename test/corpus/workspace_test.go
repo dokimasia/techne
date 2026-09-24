@@ -130,6 +130,112 @@ func TestWorkspace(t *testing.T) {
 		})
 	})
 
+	t.Run("Dirty", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns nothing for a clone at its commit", func(t *testing.T) {
+			t.Parallel()
+			got, err := opened(t, repository).Dirty(t.Context(), nil)
+			assert.NoError(t, err, "Dirty")
+			assert.Empty(t, got, "the files that differ from the commit")
+		})
+
+		t.Run("returns a changed tracked file", func(t *testing.T) {
+			t.Parallel()
+			w := opened(t, repository)
+			writeFile(t, w.Root, "a.go", "package changed\n")
+			got, err := w.Dirty(t.Context(), nil)
+			assert.NoError(t, err, "Dirty")
+			assert.Equal(t, got, []string{"a.go"}, "the files that differ from the commit")
+		})
+
+		t.Run("returns a deleted tracked file", func(t *testing.T) {
+			t.Parallel()
+			w := opened(t, repository)
+			assert.NoError(t, os.Remove(filepath.Join(w.Root, "pkg", "b.go")), "Remove of pkg/b.go")
+			got, err := w.Dirty(t.Context(), nil)
+			assert.NoError(t, err, "Dirty")
+			assert.Equal(t, got, []string{"pkg/b.go"}, "the files that differ from the commit")
+		})
+
+		t.Run("returns an untracked file that keep does not list", func(t *testing.T) {
+			t.Parallel()
+			w := opened(t, repository)
+			writeFile(t, w.Root, "made.go", "package a\n")
+			writeFile(t, w.Root, "a.go", "package changed\n")
+			got, err := w.Dirty(t.Context(), nil)
+			assert.NoError(t, err, "Dirty")
+			assert.Equal(t, got, []string{"a.go", "made.go"}, "the files that differ from the commit")
+		})
+
+		t.Run("leaves out an untracked file that keep lists", func(t *testing.T) {
+			t.Parallel()
+			w := opened(t, repository)
+			writeFile(t, w.Root, "kept.go", "package a\n")
+			got, err := w.Dirty(t.Context(), map[string]bool{"kept.go": true})
+			assert.NoError(t, err, "Dirty")
+			assert.Empty(t, got, "the files that differ from the commit")
+		})
+
+		t.Run("leaves out the files that the prepare steps leave", func(t *testing.T) {
+			t.Parallel()
+			leaving := repository
+			leaving.Prepare = [][]string{{"sh", "-c", "echo ran > left.txt"}}
+			w := opened(t, leaving)
+			assert.NoError(t, w.Prepare(t.Context()), "Prepare")
+			got, err := w.Dirty(t.Context(), nil)
+			assert.NoError(t, err, "Dirty")
+			assert.Empty(t, got, "the files that differ from the commit")
+		})
+
+		t.Run("leaves out an ignored file", func(t *testing.T) {
+			t.Parallel()
+			w := opened(t, repository)
+			writeFile(t, w.Root, "ignored/cache.txt", "cached\n")
+			got, err := w.Dirty(t.Context(), nil)
+			assert.NoError(t, err, "Dirty")
+			assert.Empty(t, got, "the files that differ from the commit")
+		})
+
+		t.Run("returns ErrReadOnly for a repository without a URL", func(t *testing.T) {
+			t.Parallel()
+			w := &corpus.Workspace{Repository: corpus.Repository{Name: "local", Path: "local"}, Root: t.TempDir()}
+			_, err := w.Dirty(t.Context(), nil)
+			assert.ErrorIs(t, err, corpus.ErrReadOnly, "Dirty of a local repository")
+		})
+	})
+
+	t.Run("Ignored", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("reports a file that an ignore rule covers", func(t *testing.T) {
+			t.Parallel()
+			w := opened(t, repository)
+			writeFile(t, w.Root, "ignored/cache.txt", "cached\n")
+			got, err := w.Ignored(t.Context(), "ignored/cache.txt")
+			assert.NoError(t, err, "Ignored")
+			assert.True(t, got, "Ignored of ignored/cache.txt")
+		})
+
+		t.Run("reports false for a tracked file", func(t *testing.T) {
+			t.Parallel()
+			got, err := opened(t, repository).Ignored(t.Context(), "pkg/b.go")
+			assert.NoError(t, err, "Ignored")
+			assert.False(t, got, "Ignored of pkg/b.go")
+		})
+
+		t.Run("returns an error outside a repository", func(t *testing.T) {
+			t.Parallel()
+			w := &corpus.Workspace{
+				Repository: corpus.Repository{Name: "local", Path: "local"},
+				Root:       t.TempDir(),
+				Log:        io.Discard,
+			}
+			_, err := w.Ignored(t.Context(), "a.go")
+			assert.HasError(t, err, "Ignored outside a repository")
+		})
+	})
+
 	t.Run("Files", func(t *testing.T) {
 		t.Parallel()
 
