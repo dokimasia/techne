@@ -105,6 +105,50 @@ func TestWrite(t *testing.T) {
 			assert.ContainsInOrder(t, out.Render(), want, "the render")
 		})
 
+		t.Run("writes the evidence of the plan of a refused change", func(t *testing.T) {
+			t.Parallel()
+			out := tool.Written{
+				Operation: "rename.symbol", Target: "Store",
+				Error: &tool.Failure{Code: "refused", Reason: "evidence does not rule out other references"},
+				Provenance: tool.Provenance{
+					Fidelity: "resolved", Completeness: "partial",
+					Caveats: []tool.Caveat{{Code: "unrewritten", Note: "the rename moves a.rb to b.rb"}},
+				},
+			}
+			want := []string{
+				"rename.symbol Store — refused", "evidence does not rule out other references",
+				"plan: resolved, partial coverage", "the rename moves a.rb to b.rb",
+			}
+			assert.ContainsInOrder(t, out.Render(), want, "the render")
+		})
+
+		t.Run("writes the result of the gate of a refused change", func(t *testing.T) {
+			t.Parallel()
+			checked := gate("compile", "jdtls")
+			checked.Result = "The declared package does not match"
+			out := tool.Written{
+				Operation: "rename.symbol", Target: "make", Verified: checked,
+				Error: &tool.Failure{Code: "refused", Reason: "the change stops a.java compiling"},
+			}
+			want := []string{
+				"the change stops a.java compiling", "compile: The declared package does not match (jdtls)",
+			}
+			assert.ContainsInOrder(t, out.Render(), want, "the render")
+		})
+
+		t.Run("writes no plan for a change that no engine planned", func(t *testing.T) {
+			t.Parallel()
+			out := tool.Written{
+				Operation: "move.file", Target: "a.go",
+				Error: &tool.Failure{Code: "unsupported", Reason: "gopls serves no move"},
+				Provenance: tool.Provenance{
+					Fidelity: "none", Completeness: "unknown",
+					Caveats: []tool.Caveat{{Code: "unsupported", Note: "gopls serves no move"}},
+				},
+			}
+			assert.NotContains(t, out.Render(), "plan:", "the render")
+		})
+
 		t.Run("writes no negative claim in the evidence of the plan", func(t *testing.T) {
 			t.Parallel()
 			out := tool.Written{

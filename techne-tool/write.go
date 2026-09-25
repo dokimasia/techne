@@ -116,7 +116,8 @@ func (w Written) Failed() bool { return w.Error != nil }
 
 // Render returns the change as text: a heading with the operation, the target and the state,
 // each file with its rewrites as a diff, the evidence of the plan, the gate with its caveats,
-// and the call that applies a preview.
+// and the call that applies a preview. A change with an error states its reason, then the
+// evidence of its plan when the plan has a tier, and the gate that refused it. It has no diff.
 func (w Written) Render() string {
 	var b strings.Builder
 
@@ -130,6 +131,12 @@ func (w Written) Render() string {
 	fmt.Fprintf(&b, "%s %s — %s\n", w.Operation, w.Target, state)
 	if w.Error != nil {
 		fmt.Fprintf(&b, "%s\n", w.Error.Reason)
+		if w.Provenance.Fidelity != "" && w.Provenance.Fidelity != trust.None.String() {
+			b.WriteString(w.plan())
+		}
+		if w.Verified != nil {
+			b.WriteString(w.Verified.line() + "\n")
+		}
 		return b.String()
 	}
 
@@ -152,26 +159,12 @@ func (w Written) Render() string {
 
 	b.WriteString("\n")
 	if w.Provenance.Fidelity != "" {
-		// The negative claim is about an empty answer, and a plan is not one.
-		plan := w.Provenance
-		plan.SupportsNegativeClaim = false
-		b.WriteString("plan: " + evidence(plan))
+		b.WriteString(w.plan())
 	}
-	switch {
-	case w.Verified == nil:
+	if w.Verified == nil {
 		b.WriteString("nothing checked this language")
-	case w.Verified.Result == "pass":
-		fmt.Fprintf(&b, "%ss (%s)", w.Verified.Gate, w.Verified.Engine)
-	default:
-		fmt.Fprintf(&b, "%s: %s (%s)", w.Verified.Gate, w.Verified.Result, w.Verified.Engine)
-		for _, one := range w.Verified.Fixes {
-			fmt.Fprintf(&b, "\n%s:%d would take %q", one.Path, one.Line, one.Now)
-		}
-	}
-	if w.Verified != nil {
-		for _, c := range w.Verified.Caveats {
-			b.WriteString(". " + c.Note)
-		}
+	} else {
+		b.WriteString(w.Verified.line())
 	}
 	switch {
 	case w.Applied:
@@ -181,6 +174,33 @@ func (w Written) Render() string {
 		b.WriteString(". apply by calling again with dry_run false")
 	}
 	b.WriteString("\n")
+	return b.String()
+}
+
+// plan returns the line of the evidence of the plan. It leaves out the negative claim, which is
+// about an empty answer, and a plan is not one.
+func (w Written) plan() string {
+	plan := w.Provenance
+	plan.SupportsNegativeClaim = false
+	return "plan: " + evidence(plan)
+}
+
+// line returns the gate as text: the kind that passed with its engine, or the kind with the
+// result that it found, its engine and each fix on a line of its own. The caveats of the gate
+// follow.
+func (g Gate) line() string {
+	var b strings.Builder
+	if g.Result == "pass" {
+		fmt.Fprintf(&b, "%ss (%s)", g.Gate, g.Engine)
+	} else {
+		fmt.Fprintf(&b, "%s: %s (%s)", g.Gate, g.Result, g.Engine)
+		for _, one := range g.Fixes {
+			fmt.Fprintf(&b, "\n%s:%d would take %q", one.Path, one.Line, one.Now)
+		}
+	}
+	for _, c := range g.Caveats {
+		b.WriteString(". " + c.Note)
+	}
 	return b.String()
 }
 
