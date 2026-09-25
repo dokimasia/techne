@@ -58,14 +58,16 @@ const (
 	// caller can act on, such as a path that does not exist. The note states
 	// the reason.
 	CaveatRefused CaveatCode = "refused"
-	// CaveatUnread means the files in Caveat.Paths exceed the size an engine
-	// reads.
+	// CaveatUnread means an engine did not read the files in Caveat.Paths:
+	// each exceeds the size an engine reads, or the .gitignore files of the
+	// workspace exclude it.
 	CaveatUnread CaveatCode = "unread"
 	// CaveatDependents means a gate checked the changed files but not the
 	// files that depend on them.
 	CaveatDependents CaveatCode = "dependents"
-	// CaveatUnrewritten means a plan leaves a use of its subject as it was,
-	// although the engine reports the use. Asking again returns the same plan.
+	// CaveatUnrewritten means a plan leaves a use of its subject as it was: a
+	// use that the engine reports, or a path that names a file that the plan
+	// moves and that no engine rewrote. Asking again returns the same plan.
 	CaveatUnrewritten CaveatCode = "unrewritten"
 	// CaveatPartialCheck means a gate checks less than the compiler of the
 	// language checks, so a change that passes it can still fail to build.

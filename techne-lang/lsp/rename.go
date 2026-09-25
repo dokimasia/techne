@@ -26,7 +26,8 @@ import (
 //  4. Ask textDocument/rename.
 //
 // renaming returns [engine.ErrRefuse] when the server refuses the position or the rename. A
-// plan that leaves a use unrewritten is partial.
+// plan that leaves a use unrewritten is partial, and so is a plan that moves a file of a server
+// that does not serve workspace/willRenameFiles, by the rule of [Engine.unmoved].
 func (e *Engine) renaming(
 	ctx context.Context,
 	req engine.Request,
@@ -98,6 +99,12 @@ func (e *Engine) renaming(
 	covered, reaches, caveats := e.corroborated(ctx, held, doc, at, uses, changes, ready)
 	if short != nil {
 		covered, caveats = trust.ScopePartial, append(caveats, *short)
+	}
+	if moved, unseen := e.unmoved(held, changes); unseen {
+		covered, caveats = trust.ScopePartial, append(caveats, trust.Caveat{
+			Code: trust.CaveatUnrewritten,
+			Note: moved,
+		})
 	}
 	return engine.Result[edit.Change]{
 		Items:        changes,
@@ -259,6 +266,26 @@ func (e *Engine) uncovered(uses []protocol.Location, changes []edit.Change) (str
 		}
 		if !rewrites(edits[p], doc.position(one.Range.Start).Offset) {
 			return "the server names a use at " + at + " that the rename does not rewrite", true
+		}
+	}
+	return "", false
+}
+
+// unmoved returns the note of the caveat about the first move of changes, and reports whether
+// changes move a file, for a server that does not serve workspace/willRenameFiles. That request
+// returns the edits of the paths that name a moved file, and no other request shows whether a
+// rename rewrote them: ruby-lsp 0.26.11 moves the file of a class with the class, and leaves the
+// require_relative that names the file. The rule leaves the rename of a server that serves the
+// request as the server plans it.
+func (e *Engine) unmoved(held *session, changes []edit.Change) (string, bool) {
+	if willRename(held.capable) {
+		return "", false
+	}
+	for _, c := range changes {
+		if c.Kind == edit.ChangeMove {
+			return fmt.Sprintf("the rename moves %s to %s, and %s does not serve "+
+				"workspace/willRenameFiles, which rewrites the paths that name a moved file",
+				c.Path, c.To, e.server.Name), true
 		}
 	}
 	return "", false

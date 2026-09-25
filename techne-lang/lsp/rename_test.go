@@ -66,6 +66,22 @@ func TestRename(t *testing.T) {
 				"the plan has an unrewritten caveat that names b.fake:1")
 		})
 
+		t.Run("returns a partial plan that moves a file for a server without willRenameFiles", func(t *testing.T) {
+			t.Parallel()
+			got, err := renameWith(t, serving(t, lsptest.Moveless, sample(), lsptest.Renames(moving())))
+			assert.NoError(t, err, "Plan of a rename that moves a.fake")
+			assert.Equal(t, got.Completeness, trust.ScopePartial, "the completeness of the plan")
+			assert.True(t, unrewritten(got.Caveats, "moves a.fake to vault.fake"),
+				"the plan has an unrewritten caveat that names the move")
+		})
+
+		t.Run("returns a total plan that moves a file for a server with willRenameFiles", func(t *testing.T) {
+			t.Parallel()
+			got, err := renameWith(t, serving(t, lsptest.Default, sample(), lsptest.Renames(moving())))
+			assert.NoError(t, err, "Plan of a rename that moves a.fake")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the plan")
+		})
+
 		t.Run("refuses a position the server cannot rename", func(t *testing.T) {
 			t.Parallel()
 			_, err := renameWith(t, serving(t, lsptest.Unnameable, sample()))
@@ -114,6 +130,20 @@ func TestRename(t *testing.T) {
 			assert.True(t, got.Skipped, "Skipped of the plan")
 		})
 	})
+}
+
+// The edits of the uses of Store in [lsptest.Content] in Get and in After that a rename to Vault
+// writes, as the protocol writes them.
+const (
+	vaultInGet   = `{"range":{"start":{"line":6,"character":9},"end":{"line":6,"character":14}},"newText":"Vault"}`
+	vaultInAfter = `{"range":{"start":{"line":8,"character":28},"end":{"line":8,"character":33}},"newText":"Vault"}`
+)
+
+// moving returns the workspace edit of a rename of Store to Vault that rewrites the declaration
+// and both uses in a.fake, and then moves a.fake to vault.fake.
+func moving() string {
+	return ordered(documentEdit("{file}", vault, vaultInGet, vaultInAfter),
+		`{"kind":"rename","oldUri":"{file}","newUri":"{root}/vault.fake"}`)
 }
 
 // unrewritten reports whether caveats contain a [trust.CaveatUnrewritten] caveat whose note

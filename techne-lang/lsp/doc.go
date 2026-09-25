@@ -8,6 +8,11 @@
 // the servers it is asked about. A language module declares its server with a [Server], and
 // the engine serves the language beside the tree-sitter engine.
 //
+// A question waits 10 seconds from the start of a server for its reply to initialize. A server
+// that has not replied by then goes on starting for up to 2 minutes, and each question until the
+// reply declines with the stderr of the server, so the next engine of the language serves it.
+// ruby-lsp installs the gems of its bundle before it replies.
+//
 // # Roles
 //
 // Each role sends the request of LSP 3.17 for it:
@@ -81,6 +86,11 @@
 // file that [lang.Readable] refuses is always such a use, because a plan edits no file that
 // techne does not read. A source that a build generates under a directory that .gitignore
 // excludes is one such file.
+//
+// A rename that moves a file is partial when the server does not serve
+// workspace/willRenameFiles, because only that request returns the edits of the paths that name
+// the moved file. ruby-lsp moves the file of a class with the class, and leaves the
+// require_relative that names the file.
 //
 // # Buffers
 //
