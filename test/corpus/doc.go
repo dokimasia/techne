@@ -40,11 +40,15 @@
 //   - The site of each relation shows the name on its line.
 //   - Rename, move, extract and document each apply to the clone, and the
 //     build of the language accepts the result. The run then resets the
-//     clone. A change that techne declines is reported, and does not fail
+//     clone, and removes each source of the language that the build of the
+//     change generated where an ignore rule of the repository covers it. A
+//     change that techne declines is reported, and does not fail
 //     the run. Neither does a change that techne refuses after its check of
 //     the files on disk, once each file of the change is as it was.
-//   - Every warm call of outline, search, resolve and relations finishes
-//     within the budget of the manifest.
+//   - techne spends at most the budget of the manifest on every warm call of
+//     outline, search, resolve and relations. The time of a call counts
+//     without the time that techne waited for the language server, which
+//     the result states in its _meta under tool.WaitedMeta.
 //
 // A probe addresses a declaration as an agent does: by its name and kind,
 // and by the name qualified by its container when techne refuses the name

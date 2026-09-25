@@ -16,6 +16,17 @@ import (
 	"go.dokimi.dev/techne/test/corpus"
 )
 
+// The files of the tests of IgnoredFiles and Sweep: a source and a cache under the ignored
+// directory of the fixture, and a source that no ignore rule covers.
+const (
+	ignoredSource = "ignored/gen.go"
+	ignoredCache  = "ignored/cache.txt"
+	madeSource    = "made.go"
+)
+
+// sources are the extensions whose generated copies the tests of Sweep remove.
+var sources = []string{".go"}
+
 func TestWorkspace(t *testing.T) {
 	t.Parallel()
 	origin, head := remote(t)
@@ -236,6 +247,70 @@ func TestWorkspace(t *testing.T) {
 		})
 	})
 
+	t.Run("IgnoredFiles", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns an untracked file that an ignore rule covers", func(t *testing.T) {
+			t.Parallel()
+			w := opened(t, repository)
+			writeFile(t, w.Root, ignoredCache, "cached\n")
+			assert.True(t, ignoring(t, w)[ignoredCache], "IgnoredFiles lists "+ignoredCache)
+		})
+
+		t.Run("leaves out an untracked file that no ignore rule covers", func(t *testing.T) {
+			t.Parallel()
+			w := opened(t, repository)
+			writeFile(t, w.Root, madeSource, "package a\n")
+			assert.False(t, ignoring(t, w)[madeSource], "IgnoredFiles lists "+madeSource)
+		})
+	})
+
+	t.Run("Sweep", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("removes an ignored source that before does not list", func(t *testing.T) {
+			t.Parallel()
+			w := opened(t, repository)
+			before := ignoring(t, w)
+			writeFile(t, w.Root, ignoredSource, "package gen\n")
+			assert.NoError(t, w.Sweep(t.Context(), before, sources), "Sweep")
+			_, err := os.Stat(filepath.Join(w.Root, ignoredSource))
+			assert.HasError(t, err, "the Stat of "+ignoredSource)
+		})
+
+		t.Run("keeps an ignored source that before lists", func(t *testing.T) {
+			t.Parallel()
+			w := opened(t, repository)
+			writeFile(t, w.Root, ignoredSource, "package gen\n")
+			assert.NoError(t, w.Sweep(t.Context(), ignoring(t, w), sources), "Sweep")
+			assert.Equal(t, read(t, w.Root, ignoredSource), "package gen\n", "the content of "+ignoredSource)
+		})
+
+		t.Run("keeps an ignored file of another extension", func(t *testing.T) {
+			t.Parallel()
+			w := opened(t, repository)
+			before := ignoring(t, w)
+			writeFile(t, w.Root, ignoredCache, "cached\n")
+			assert.NoError(t, w.Sweep(t.Context(), before, sources), "Sweep")
+			assert.Equal(t, read(t, w.Root, ignoredCache), "cached\n", "the content of "+ignoredCache)
+		})
+
+		t.Run("keeps an untracked file that no ignore rule covers", func(t *testing.T) {
+			t.Parallel()
+			w := opened(t, repository)
+			before := ignoring(t, w)
+			writeFile(t, w.Root, madeSource, "package a\n")
+			assert.NoError(t, w.Sweep(t.Context(), before, sources), "Sweep")
+			assert.Equal(t, read(t, w.Root, madeSource), "package a\n", "the content of "+madeSource)
+		})
+
+		t.Run("returns ErrReadOnly for a repository without a URL", func(t *testing.T) {
+			t.Parallel()
+			w := &corpus.Workspace{Repository: corpus.Repository{Name: "local", Path: "local"}, Root: t.TempDir()}
+			assert.ErrorIs(t, w.Sweep(t.Context(), nil, sources), corpus.ErrReadOnly, "Sweep of a local repository")
+		})
+	})
+
 	t.Run("Files", func(t *testing.T) {
 		t.Parallel()
 
@@ -311,6 +386,14 @@ func remote(t *testing.T) (string, string) {
 	writeFile(t, dir, "a.go", "package second\n")
 	git(t, dir, "commit", "--quiet", "-am", "second")
 	return dir, first
+}
+
+// ignoring returns the ignored files of w, and fails the test on an error.
+func ignoring(t *testing.T, w *corpus.Workspace) map[string]bool {
+	t.Helper()
+	got, err := w.IgnoredFiles(t.Context())
+	assert.NoError(t, err, "IgnoredFiles")
+	return got
 }
 
 // opened opens r under a new directory.

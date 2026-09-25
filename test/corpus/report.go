@@ -72,17 +72,19 @@ func (r *Report) Add(s Section) {
 
 // Markdown returns the report as Markdown. For each repository it states
 // when the server settled, and it lists the latency of the warm calls of
-// each tool and the outcome of each change. The column of calls over the
-// budget counts the calls of every tool. A call of outline, search, resolve
-// or relations over the budget fails a run, and a call of another tool over
-// it fails nothing.
+// each tool, the longest wait for the language server, and the outcome of
+// each change. The column of calls over the budget counts the calls of every
+// tool whose own time, the time without the waits for the server, exceeds
+// the budget. Such a call of outline, search, resolve or relations fails a
+// run, and a call of another tool fails nothing.
 func (r *Report) Markdown() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "# Corpus report\n\nA warm call of outline, search, resolve or relations fails the run when it"+
-		" takes longer than %s.\n", r.Budget)
+	fmt.Fprintf(&b, "# Corpus report\n\nA warm call of outline, search, resolve or relations fails the run when"+
+		" techne itself takes longer than %s: the time of the call without its waits for the language"+
+		" server.\n", r.Budget)
 	for _, s := range r.sections {
 		fmt.Fprintf(&b, "\n## %s\n\n", s.Repository.Name)
 		fmt.Fprintf(&b, "%s at %s.", s.Repository.Language, pinned(s.Repository))
@@ -91,17 +93,18 @@ func (r *Report) Markdown() string {
 		} else {
 			b.WriteString(" The server did not settle within the warmup.")
 		}
-		fmt.Fprintf(&b, "\n\n| Tool | Calls | p50 | p95 | Max | Over %s | Failed | Tiers |\n", r.Budget)
-		b.WriteString("|---|---|---|---|---|---|---|---|\n")
+		fmt.Fprintf(&b, "\n\n| Tool | Calls | p50 | p95 | Max | Server max | Over %s | Failed | Tiers |\n", r.Budget)
+		b.WriteString("|---|---|---|---|---|---|---|---|---|\n")
 		for _, tool := range tools(s.Calls) {
 			var took []time.Duration
+			var waited time.Duration
 			over, failed, tiers := 0, 0, map[string]int{}
 			for _, c := range s.Calls {
 				if c.Tool != tool || !c.Warm {
 					continue
 				}
-				took = append(took, c.Took)
-				if c.Took > r.Budget {
+				took, waited = append(took, c.Took), max(waited, c.Server)
+				if c.Own() > r.Budget {
 					over++
 				}
 				if c.Failed {
@@ -114,9 +117,9 @@ func (r *Report) Markdown() string {
 			if len(took) == 0 {
 				continue
 			}
-			fmt.Fprintf(&b, "| %s | %d | %s | %s | %s | %d | %d | %s |\n", tool, len(took),
-				round(Percentile(took, 50)), round(Percentile(took, 95)), round(Percentile(took, 100)), over, failed,
-				counted(tiers))
+			fmt.Fprintf(&b, "| %s | %d | %s | %s | %s | %s | %d | %d | %s |\n", tool, len(took),
+				round(Percentile(took, 50)), round(Percentile(took, 95)), round(Percentile(took, 100)), round(waited),
+				over, failed, counted(tiers))
 		}
 		if len(s.Outcomes) > 0 {
 			b.WriteString("\n| Change | Target | Result | Detail |\n|---|---|---|---|\n")

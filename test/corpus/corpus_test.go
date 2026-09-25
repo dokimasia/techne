@@ -247,7 +247,7 @@ func drive(t *testing.T, m corpus.Manifest, r corpus.Repository, dir, root, bina
 	if !r.Writable() {
 		return
 	}
-	changes := changer{w: w, session: session, section: section, baseline: baseline}
+	changes := changer{w: w, session: session, section: section, baseline: baseline, extensions: declared.Extensions}
 
 	t.Run("Rename", func(t *testing.T) {
 		t.Run("applies a rename that the build accepts", func(t *testing.T) {
@@ -447,8 +447,9 @@ func available(t *testing.T, session *corpus.Session, language string) {
 }
 
 // ask calls tool and fails the test when the call fails. It also fails the
-// test when a warm call of a budgeted tool takes longer than budget. A zero
-// budget checks no time.
+// test when techne itself spends longer than budget on a warm call of a
+// budgeted tool: the time of the call without the time that it waited for
+// the language server. A zero budget checks no time.
 func ask(t *testing.T, session *corpus.Session, budget time.Duration, name string, arguments, out any) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), calling)
@@ -457,8 +458,10 @@ func ask(t *testing.T, session *corpus.Session, budget time.Duration, name strin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if budget > 0 && call.Warm && slices.Contains(budgeted, name) && call.Took > budget {
-		t.Errorf("%s %v took %s, over the budget of %s", name, arguments, call.Took.Round(time.Millisecond), budget)
+	if budget > 0 && call.Warm && slices.Contains(budgeted, name) && call.Own() > budget {
+		t.Errorf("%s %v took %s, of which the server took %s, so techne took %s, over the budget of %s",
+			name, arguments, call.Took.Round(time.Millisecond), call.Server.Round(time.Millisecond),
+			call.Own().Round(time.Millisecond), budget)
 	}
 }
 
@@ -583,7 +586,7 @@ var receiver = regexp.MustCompile(`^func\s*\(\s*(?:[A-Za-z_]\w*\s+)?\*?\s*([A-Za
 // techne lowers an answer about a project with errors to the indexed tier.
 // warm returns how long the server took. It logs each change of the answer
 // and one line a minute. It fails the test when the server does not settle
-// within limit or when no engine can serve the question.
+// within limit.
 func warm(t *testing.T, session *corpus.Session, w *corpus.Workspace, pool []probe, limit time.Duration) time.Duration {
 	t.Helper()
 	target, line, column, found := named(w, pool)
@@ -605,13 +608,10 @@ func warm(t *testing.T, session *corpus.Session, w *corpus.Workspace, pool []pro
 			t.Logf("after %s: %s", time.Since(start).Round(time.Second), state)
 			last, logged = state, time.Now()
 		}
-		switch {
-		case answer.Error == nil && (state == "resolved, total" || state == "indexed, total"):
+		// An unsupported answer waits too: a server that cancels a request while it imports the
+		// build declines it, and available has checked that an engine resolves the language.
+		if answer.Error == nil && (state == "resolved, total" || state == "indexed, total") {
 			return time.Since(start)
-		case answer.Error != nil && answer.Error.Code == trust.Unsupported.String():
-			// No engine can serve the question, which waiting does not change.
-			t.Errorf("no engine resolves %s: %s", w.Repository.Language, answer.Error.Reason)
-			return 0
 		}
 		if time.Since(start) > limit {
 			t.Errorf("the server did not settle within %s: %s", limit, state)
@@ -896,23 +896,35 @@ type changer struct {
 	// baseline is the number of errors that the build reports at the commit
 	// of the repository.
 	baseline int
+	// extensions are the extensions of the files of the language, whose
+	// generated copies the reset after a change removes.
+	extensions []string
 }
 
 // apply previews a change with operation, applies it by its handle, builds
-// the workspace, runs check, and resets the workspace. A change that techne
-// declines is recorded and skips the test. So does a change that techne
-// refuses after the write, once its files are as they were. A change that
-// does not apply, a refused change that leaves a file changed, and a change
-// that the build refuses fail it.
+// the workspace, runs check, and resets the workspace. The reset also removes
+// the ignored sources of the language that the change generated. A change
+// that techne declines is recorded and skips the test. So does a change that
+// techne refuses after the write, once its files are as they were. A change
+// that does not apply, a refused change that leaves a file changed, and a
+// change that the build refuses fail it.
 func (c changer) apply(t *testing.T, operation, target string, arguments map[string]any, check func(*testing.T)) {
 	t.Helper()
 	keep, err := c.w.Untracked(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
+	generated, err := c.w.IgnoredFiles(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer func() {
-		if failed := c.w.Reset(context.WithoutCancel(t.Context()), keep); failed != nil {
+		ctx := context.WithoutCancel(t.Context())
+		if failed := c.w.Reset(ctx, keep); failed != nil {
 			t.Errorf("reset %s: %v", c.w.Root, failed)
+		}
+		if failed := c.w.Sweep(ctx, generated, c.extensions); failed != nil {
+			t.Errorf("sweep %s: %v", c.w.Root, failed)
 		}
 	}()
 	outcome := corpus.Outcome{Operation: operation, Target: target}

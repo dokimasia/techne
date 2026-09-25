@@ -211,7 +211,18 @@ const notIgnored = 1
 // Untracked returns the untracked files of the repository that no ignore
 // rule covers.
 func (w *Workspace) Untracked(ctx context.Context) (map[string]bool, error) {
-	listed, err := w.git(ctx, "ls-files", "-z", "--others", "--exclude-standard")
+	return w.listed(ctx, "--others", "--exclude-standard")
+}
+
+// IgnoredFiles returns the untracked files of the repository that an ignore
+// rule covers, such as the output of a build.
+func (w *Workspace) IgnoredFiles(ctx context.Context) (map[string]bool, error) {
+	return w.listed(ctx, "--others", "--ignored", "--exclude-standard")
+}
+
+// listed returns the paths that git ls-files lists with args.
+func (w *Workspace) listed(ctx context.Context, args ...string) (map[string]bool, error) {
+	listed, err := w.git(ctx, append([]string{"ls-files", "-z"}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -220,6 +231,30 @@ func (w *Workspace) Untracked(ctx context.Context) (map[string]bool, error) {
 		out[p] = true
 	}
 	return out, nil
+}
+
+// Sweep removes each file that an ignore rule covers, that before does not
+// list and that ends in one of extensions: a source that the build of a
+// change generated, whose errors the language server of the next change
+// would report. It keeps every other file, such as the rest of the output of
+// a build and the files that a language server writes into the clone.
+func (w *Workspace) Sweep(ctx context.Context, before map[string]bool, extensions []string) error {
+	if !w.Repository.Writable() {
+		return ErrReadOnly
+	}
+	ignored, err := w.IgnoredFiles(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range slices.Sorted(maps.Keys(ignored)) {
+		if before[p] || !slices.Contains(extensions, filepath.Ext(p)) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(w.Root, p)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("corpus: %w", err)
+		}
+	}
+	return nil
 }
 
 // Reset restores the tracked files of the clone to its commit, and removes

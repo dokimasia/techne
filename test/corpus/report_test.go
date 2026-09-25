@@ -58,6 +58,7 @@ func TestReport(t *testing.T) {
 					Tool: "outline", Took: 3 * time.Second, Warm: true, Failed: true,
 					Fidelity: "indexed", Completeness: "total",
 				},
+				{Tool: "relations", Took: 5 * time.Second, Server: 4 * time.Second, Warm: true},
 			},
 			Outcomes: []corpus.Outcome{
 				{Operation: "rename.symbol", Target: "Store", Result: "applied", Detail: "3 files, built"},
@@ -72,8 +73,13 @@ func TestReport(t *testing.T) {
 
 		t.Run("lists the warm calls of each tool", func(t *testing.T) {
 			t.Parallel()
-			assert.Contains(t, written, "| outline | 2 | 1s | 3s | 3s | 1 | 1 | indexed total 1, resolved total 1 |",
-				"the row of outline")
+			assert.Contains(t, written,
+				"| outline | 2 | 1s | 3s | 3s | 0s | 1 | 1 | indexed total 1, resolved total 1 |", "the row of outline")
+		})
+
+		t.Run("counts a call over the budget by the time without the waits for the server", func(t *testing.T) {
+			t.Parallel()
+			assert.Contains(t, written, "| relations | 1 | 5s | 5s | 5s | 4s | 0 | 0 |  |", "the row of relations")
 		})
 
 		t.Run("lists the outcome of each change", func(t *testing.T) {

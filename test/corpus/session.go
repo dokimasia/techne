@@ -15,7 +15,12 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"go.dokimi.dev/techne/tool"
 )
+
+// waitedMeta is the key of the _meta of a result that states the time techne waited for
+// processes outside it.
+const waitedMeta = tool.WaitedMeta
 
 // ModuleRoot returns the directory of the module that contains the working
 // directory, which is the root of this repository.
@@ -55,6 +60,9 @@ type Call struct {
 	Tool string
 	// Took is the time from the request to the result.
 	Took time.Duration
+	// Server is the part of Took that techne waited for processes outside
+	// it, such as a language server, as the result states it.
+	Server time.Duration
 	// Warm reports that the call followed Session.Warm.
 	Warm bool
 	// Failed reports a call that failed, or a tool that returned an error
@@ -65,6 +73,10 @@ type Call struct {
 	Fidelity     string
 	Completeness string
 }
+
+// Own returns the part of Took that techne spent itself: Took without Server, and zero when the
+// waits that overlap sum to more than Took.
+func (c Call) Own() time.Duration { return max(c.Took-c.Server, 0) }
 
 // provenance is the part of every answer that states its evidence.
 type provenance struct {
@@ -107,8 +119,11 @@ func (s *Session) Call(ctx context.Context, tool string, arguments, out any) (Ca
 	if err != nil {
 		return call, fmt.Errorf("corpus: call %s: %w", tool, err)
 	}
+	if ms, stated := result.Meta[waitedMeta].(float64); stated {
+		call.Server = time.Duration(ms) * time.Millisecond
+	}
 	if result.StructuredContent == nil {
-		return call, fmt.Errorf("corpus: %s returned no structured content", tool)
+		return call, fmt.Errorf("corpus: %s returned no structured content: %s", tool, texts(result.Content))
 	}
 	encoded, err := json.Marshal(result.StructuredContent)
 	if err != nil {
@@ -122,6 +137,18 @@ func (s *Session) Call(ctx context.Context, tool string, arguments, out any) (Ca
 		return call, fmt.Errorf("corpus: decode the result of %s: %w", tool, err)
 	}
 	return call, nil
+}
+
+// texts returns the text blocks of content, joined by a space, such as the reason of an error
+// result that has no structured content.
+func texts(content []mcp.Content) string {
+	var out []string
+	for _, block := range content {
+		if text, isText := block.(*mcp.TextContent); isText {
+			out = append(out, text.Text)
+		}
+	}
+	return strings.Join(out, " ")
 }
 
 // record appends call to the calls of the session.
