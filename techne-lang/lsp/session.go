@@ -19,10 +19,16 @@ import (
 	"go.lsp.dev/protocol"
 )
 
-// starting is how long a server has to answer initialize. [Server.Loading] bounds the load of
-// the workspace that follows. A server that misses this deadline fails to start, and the
-// engine keeps the failure until [Engine.Close].
+// starting is how long the questions to a new server wait for its reply to initialize, from its
+// start. [Server.Loading] bounds the load of the workspace that follows.
 const starting = 10 * time.Second
+
+// launching is how long a server has to reply to initialize, from its start. A server that
+// misses [starting] goes on starting, and a question declines until the reply arrives. ruby-lsp
+// installs the gems of its composed bundle before it replies, which took 28 s with a fetch of
+// the index of rubygems.org. A server that misses launching fails to start, and the engine keeps
+// the failure until [Engine.Close].
+const launching = 2 * time.Minute
 
 // leaving is how long a server has to answer shutdown and exit before [session.stop] kills it.
 const leaving = 5 * time.Second
@@ -113,6 +119,15 @@ func start(ctx context.Context, declared Server, root string) (*session, error) 
 	}
 	_, held.conn, held.asks = protocol.NewClient(context.WithoutCancel(ctx), client, stream)
 	return held, nil
+}
+
+// launch is a started server whose handshake runs apart from the questions that wait for it.
+// done is closed when the handshake ends, and err is the error of the handshake after that.
+type launch struct {
+	held  *session
+	began time.Time
+	done  chan struct{}
+	err   error
 }
 
 // ordered is the stream of a session. It records the diagnostics that the server publishes

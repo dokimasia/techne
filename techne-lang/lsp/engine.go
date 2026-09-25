@@ -41,11 +41,14 @@ type Engine struct {
 	// root as the caller named it. A server path under either root maps into the workspace.
 	root, given string
 
-	// starting guards held and failed. A question that arrives during the handshake waits
-	// for it and does not start a second server.
+	// starting guards held, failed and pending. A question that arrives during the handshake
+	// waits for it and does not start a second server.
 	starting sync.Mutex
 	held     *session
 	failed   error
+	// pending is the start of a server whose handshake had not ended when a question stopped
+	// waiting for it, or nil.
+	pending *launch
 
 	// showing is locked while a buffer of the server differs from its file on disk. A new
 	// question waits for it, because the refresh of every buffer would replace the content the
@@ -108,68 +111,115 @@ func (*Engine) Cost(engine.Role) engine.Cost { return engine.CostSession }
 func (e *Engine) Available(context.Context) error { return e.server.Installed() }
 
 // Close stops the server and returns the error of its shutdown. It returns nil for an engine
-// without a running server. The next question after Close starts a new server, including after
-// a start that failed. Close is safe to call concurrently with a question and with itself.
+// without a running server, and kills a server whose handshake has not ended. The next
+// question after Close starts a new server, including after a start that failed. Close is safe
+// to call concurrently with a question and with itself.
 func (e *Engine) Close(ctx context.Context) error {
 	e.starting.Lock()
-	held := e.held
-	e.held, e.failed = nil, nil
+	held, pending := e.held, e.pending
+	e.held, e.failed, e.pending = nil, nil, nil
 	e.starting.Unlock()
 
+	if pending != nil {
+		kill(ctx, pending.held)
+	}
 	if held == nil {
 		return nil
 	}
 	return held.stop(ctx)
 }
 
+// kill stops a server that has not finished initialize, so it has nothing to write out. It kills
+// the process first: the close of the connection of go.lsp.dev/jsonrpc2 v1.0.1 waits for the
+// calls in flight, such as a handshake that still runs, and the end of the stream ends them.
+// Then it stops the session under a context that is already done, which reads the stderr of the
+// server until the pipe closes or [draining] has passed.
+func kill(ctx context.Context, held *session) {
+	_ = held.cmd.Process.Kill()
+	now, done := context.WithCancel(context.WithoutCancel(ctx))
+	done()
+	_ = held.stop(now)
+}
+
 // running returns the running server, and starts it for the first question.
 //
+// The handshake of a new server runs apart from the question, for at most [launching] from the
+// start. A question waits for it until [starting] has passed since the start, or until its own
+// context ends. A handshake that has not ended then remains pending: the question declines with
+// the end of the server's stderr, and a later question uses the server once the handshake ends.
+//
 // The failure of a start or a handshake is kept and returned to every later question until
-// [Engine.Close], so a missing server costs one attempt. A failure caused by the caller's own
-// context is not kept. The error of a handshake that fails includes the end of the server's
-// stderr.
+// [Engine.Close], so a missing server costs one attempt. The context of a question does not end
+// the handshake. The error of a handshake that fails includes the end of the server's stderr.
 func (e *Engine) running(ctx context.Context) (*session, error) {
 	e.starting.Lock()
 	defer e.starting.Unlock()
 
-	if e.held != nil {
+	switch {
+	case e.held != nil:
 		e.current(ctx, e.held)
 		return e.held, nil
-	}
-	if e.failed != nil {
+	case e.failed != nil:
 		return nil, e.failed
+	case e.pending == nil:
+		if err := e.server.Installed(); err != nil {
+			e.failed = err
+			return nil, err
+		}
+		held, err := start(ctx, e.server, e.root)
+		if err != nil {
+			e.failed = err
+			return nil, err
+		}
+		e.pending = e.launch(ctx, held)
 	}
-	if err := e.server.Installed(); err != nil {
-		e.failed = err
-		return nil, err
-	}
+	return e.await(ctx)
+}
 
-	held, err := start(ctx, e.server, e.root)
-	if err != nil {
-		e.failed = err
-		return nil, err
-	}
-	handshaking, done := context.WithTimeout(ctx, starting)
-	defer done()
-	if err := e.handshake(handshaking, held); err != nil {
-		// The server did not finish initialize, so it has nothing to write out. stop kills
-		// it at once under a context that is already done, and reads its stderr until the
-		// pipe closes or draining has passed.
-		now, kill := context.WithCancel(context.WithoutCancel(ctx))
-		kill()
-		_ = held.stop(now)
+// launch runs the handshake of held apart from the question, for at most [launching].
+func (e *Engine) launch(ctx context.Context, held *session) *launch {
+	started := &launch{held: held, began: time.Now(), done: make(chan struct{})}
+	go func() {
+		bounded, done := context.WithTimeout(context.WithoutCancel(ctx), launching)
+		defer done()
+		started.err = e.handshake(bounded, held)
+		close(started.done)
+	}()
+	return started
+}
 
-		if ctx.Err() != nil {
+// await waits for the handshake of the pending start until [starting] has passed since the start
+// or ctx ends. A handshake that ended with the reply makes its server the running server. A
+// handshake that failed kills the server and keeps the failure. The caller has locked starting.
+func (e *Engine) await(ctx context.Context) (*session, error) {
+	pending := e.pending
+	select {
+	case <-pending.done:
+	default:
+		wait := time.NewTimer(time.Until(pending.began.Add(starting)))
+		defer wait.Stop()
+		select {
+		case <-pending.done:
+		case <-wait.C:
+			return nil, pending.held.withStderr(fmt.Errorf(
+				"lsp: %s: no answer to initialize within %s, and the start goes on for up to %s",
+				e.server.Name, time.Since(pending.began).Round(time.Second), launching))
+		case <-ctx.Done():
 			return nil, fmt.Errorf("lsp: %s: initialize: %w", e.server.Name, ctx.Err())
 		}
+	}
+
+	e.pending = nil
+	if err := pending.err; err != nil {
+		kill(ctx, pending.held)
 		if errors.Is(err, context.DeadlineExceeded) {
-			err = fmt.Errorf("lsp: %s: no answer to initialize within %s", e.server.Name, starting)
+			err = fmt.Errorf("lsp: %s: no answer to initialize within %s", e.server.Name, launching)
 		}
-		e.failed = held.withStderr(err)
+		e.failed = pending.held.withStderr(err)
 		return nil, e.failed
 	}
-	e.held = held
-	return held, nil
+	e.held = pending.held
+	return e.held, nil
 }
 
 // handshake sends initialize and initialized, and waits up to [announcing] for the server to

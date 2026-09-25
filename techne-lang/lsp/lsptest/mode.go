@@ -16,11 +16,19 @@ const (
 	// warning with a numeric code, and one without a severity.
 	Default Mode = ""
 
-	// Silent starts and never responds to initialize.
+	// Silent writes [Waiting] to stderr and never responds to initialize.
 	Silent Mode = "silent"
+
+	// Slow responds to initialize [SlowStart] after it receives the request, as ruby-lsp does
+	// after it installs the gems of its composed bundle.
+	Slow Mode = "slow"
 
 	// Dies writes [Dying] to stderr and exits with status 3 when it receives initialize.
 	Dies Mode = "dies"
+
+	// DiesLate writes [Dying] to stderr when it receives initialize, and exits with status 3
+	// [SlowStart] later.
+	DiesLate Mode = "dies-late"
 
 	// Orphans starts a child process that inherits its stderr and ends [OrphanTime] later, and
 	// responds as the Default mode does. ruby-lsp starts bundle install this way, and the child
@@ -261,8 +269,15 @@ const (
 	DiskToken  = DiskPrefix + "0"
 )
 
-// Dying is the line that the Dies mode writes to stderr before it exits.
+// Dying is the line that the Dies and DiesLate modes write to stderr before they exit.
 const Dying = "lsptest: the scripted server exits during initialize"
+
+// Waiting is the line that the Silent mode writes to stderr when it starts.
+const Waiting = "lsptest: the scripted server waits before it responds to initialize"
+
+// SlowStart is how long the Slow mode waits before it responds to initialize, and the DiesLate
+// mode before it exits.
+const SlowStart = 1500 * time.Millisecond
 
 // OrphanTime is how long the child of the Orphans mode keeps the stderr of the scripted server
 // open.

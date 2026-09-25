@@ -237,6 +237,31 @@ func TestEngine(t *testing.T) {
 			assert.Equal(t, starts(t, log), 2, "the number of servers started")
 		})
 
+		t.Run("starts a new server after a close during the handshake", func(t *testing.T) {
+			t.Parallel()
+			log := filepath.Join(t.TempDir(), "starts")
+			e := lsptest.Engine(t, lsptest.Workspace(t, sample()),
+				lsptest.Server(lsptest.Slow, lsptest.RecordStarts(log)))
+			impatient(t, e)
+			assert.NoError(t, e.Close(t.Context()), "Close during the handshake")
+
+			got, err := e.Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
+			assert.NoError(t, err, "the Resolve after Close")
+			assert.Equal(t, names(got.Items), []string{"Store"}, "the declarations that Store denotes")
+			assert.Equal(t, starts(t, log), 2, "the number of servers started")
+		})
+
+		t.Run("stops a server whose handshake runs without waiting for its reply", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, lsptest.Silent, sample())
+			impatient(t, e)
+
+			began := time.Now()
+			assert.NoError(t, e.Close(t.Context()), "Close during the handshake")
+			took := time.Since(began)
+			assert.True(t, took < lsptest.SlowStart, "Close took "+took.String())
+		})
+
 		t.Run("returns while a child of the server keeps its stderr open", func(t *testing.T) {
 			t.Parallel()
 			e := serving(t, lsptest.Orphans, sample())

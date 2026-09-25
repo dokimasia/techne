@@ -242,10 +242,17 @@ func (s *script) initialize(m message) (int, bool) {
 	s.seen = s.root + "/a" + Extension
 	switch s.mode {
 	case Silent:
+		fmt.Fprintln(os.Stderr, Waiting)
 		_, _ = io.Copy(io.Discard, s.in)
 		return 0, true
+	case Slow:
+		time.Sleep(SlowStart)
 	case Dies:
 		fmt.Fprintln(os.Stderr, Dying)
+		return 3, true
+	case DiesLate:
+		fmt.Fprintln(os.Stderr, Dying)
+		time.Sleep(SlowStart)
 		return 3, true
 	}
 

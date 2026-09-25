@@ -11,6 +11,7 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
+	"go.dokimi.dev/techne/lang/lsp"
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
 
@@ -100,7 +101,37 @@ func TestSession(t *testing.T) {
 			_, err := e.Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
 			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Resolve")
 			assert.Contains(t, err.Error(), "initialize", "the error of Resolve")
+			assert.Contains(t, err.Error(), "the start goes on", "the error of Resolve")
+			assert.Contains(t, err.Error(), lsptest.Waiting, "the error of Resolve")
 			assert.True(t, time.Since(began) < time.Minute, "Resolve returns within a minute")
+		})
+
+		t.Run("uses a server whose handshake ends after a question stops waiting", func(t *testing.T) {
+			t.Parallel()
+			log := filepath.Join(t.TempDir(), "starts")
+			e := lsptest.Engine(t, lsptest.Workspace(t, sample()),
+				lsptest.Server(lsptest.Slow, lsptest.RecordStarts(log)))
+			impatient(t, e)
+
+			got, err := e.Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
+			assert.NoError(t, err, "Resolve after the question that stopped waiting")
+			assert.Equal(t, names(got.Items), []string{"Store"}, "the declarations that Store denotes")
+			assert.Equal(t, starts(t, log), 1, "the number of servers started")
+		})
+
+		t.Run("keeps the failure of a handshake that ends after a question stops waiting", func(t *testing.T) {
+			t.Parallel()
+			log := filepath.Join(t.TempDir(), "starts")
+			e := lsptest.Engine(t, lsptest.Workspace(t, sample()),
+				lsptest.Server(lsptest.DiesLate, lsptest.RecordStarts(log)))
+			impatient(t, e)
+
+			for range 2 {
+				_, err := e.Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
+				assert.ErrorIs(t, err, engine.ErrDecline, "the error of Resolve")
+				assert.Contains(t, err.Error(), lsptest.Dying, "the error of Resolve")
+			}
+			assert.Equal(t, starts(t, log), 1, "the number of servers started")
 		})
 	})
 
@@ -116,4 +147,15 @@ func TestSession(t *testing.T) {
 			assert.Equal(t, mentions(got.Items, "checks=1"), 1, "the note of the report of the check")
 		})
 	})
+}
+
+// impatient asks e a question whose context ends a fifth of [lsptest.SlowStart] after it
+// starts the server, before a Slow or DiesLate server responds to initialize, and checks that
+// the question fails.
+func impatient(t *testing.T, e *lsp.Engine) {
+	t.Helper()
+	short, stop := context.WithTimeout(t.Context(), lsptest.SlowStart/5)
+	defer stop()
+	_, err := e.Resolve(short, engine.Request{Scope: "a.fake"}, store())
+	assert.HasError(t, err, "Resolve before the server responds to initialize")
 }
