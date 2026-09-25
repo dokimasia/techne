@@ -30,6 +30,10 @@ const serveVar = "TECHNE_PRESENTER_SERVE"
 // fault is the value that the tool broken panics with.
 const fault = "broken fails"
 
+// waitedMeta is the key of the _meta of a result that the test pins: the time that the engines
+// of the call waited.
+const waitedMeta = "techne/waited"
+
 // about is the name and the version of every server of the cases.
 var about = presenter.Info{Name: "techne", Version: "test"}
 
@@ -267,6 +271,12 @@ func TestServer(t *testing.T) {
 			assert.False(t, got.IsError, "IsError of the result")
 			assert.Equal(t, got.StructuredContent, any(map[string]any{"status": "ok", "scope": "a.fx"}),
 				"the structured content of the result")
+		})
+
+		t.Run("states the time that the engines waited in the metadata of a result", func(t *testing.T) {
+			t.Parallel()
+			got := called(t, connected(t, io.Discard), "outline", `{"scope":"a.fx"}`)
+			assert.Equal(t, got.Meta[waitedMeta], any(float64(0)), "the waited time of a tool that waits for nothing")
 		})
 
 		t.Run("returns the render of a tool as its text", func(t *testing.T) {

@@ -110,6 +110,11 @@
 // gates and applies them. A server that sends workspace/applyEdit receives a reply that
 // nothing was applied.
 //
+// A server indents the code of a code action by the indentation that it requests from the
+// client. jdtls and typescript-language-server request it under the sections that
+// [Server.Indentation] names, and the client returns the indentation of the file on disk, as
+// [lang.Indentation] reads it. A server that requests none indents by its own settings.
+//
 // # Positions
 //
 // The protocol counts a line and a character in UTF-16 code units, and techne counts bytes.

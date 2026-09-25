@@ -50,6 +50,11 @@ type Server struct {
 	// workspace/configuration.
 	Settings map[string]any
 
+	// Indentation names the sections of workspace/configuration under which the server requests
+	// the indentation of a file, which it applies to the code of a code action. For a file of
+	// the workspace, the client returns the indentation of the file under them.
+	Indentation Indentation
+
 	// Env are the environment variables that the server runs with, added to the environment of
 	// techne.
 	Env map[string]string
@@ -117,6 +122,20 @@ type Refactor struct {
 
 // Offered reports whether r names an action: a kind, a title, or both.
 func (r Refactor) Offered() bool { return r.Kind != "" || len(r.Titles) > 0 }
+
+// Indentation names the sections of workspace/configuration under which a server requests the
+// indentation of the file that an item scopes. An editor returns the indentation of the file
+// that it shows under them. An empty field does not name a section.
+type Indentation struct {
+	// Options is the section of the formatting options of LSP 3.17 for the file, tabSize and
+	// insertSpaces, which typescript-language-server requests under formattingOptions.
+	Options string
+
+	// Size is the section of the width of one level of indentation, and Spaces the section of
+	// whether the file indents with spaces, which jdtls requests under java.format.tabSize and
+	// java.format.insertSpaces.
+	Size, Spaces string
+}
 
 // Named returns the language identifier of the file at p: the identifier of its dialect when
 // Dialects maps its extension, and LanguageID otherwise.

@@ -9,6 +9,7 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/trust"
+	"go.dokimi.dev/techne/lang/lsp"
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
 
@@ -34,6 +35,13 @@ func TestServer(t *testing.T) {
 		t.Run("declares settings for the Asks mode", func(t *testing.T) {
 			t.Parallel()
 			assert.NotEmpty(t, lsptest.Server(lsptest.Asks).Settings, "the settings of the Asks mode")
+		})
+
+		t.Run("declares the sections of the indentation for the Asks mode", func(t *testing.T) {
+			t.Parallel()
+			got := lsptest.Server(lsptest.Asks).Indentation
+			assert.NotEqual(t, got, lsp.Indentation{}, "the indentation sections of the Asks mode")
+			assert.NotEqual(t, got.Size, got.Spaces, "the width and the spaces sections of the Asks mode")
 		})
 
 		t.Run("declares a loading time for the Loading mode", func(t *testing.T) {

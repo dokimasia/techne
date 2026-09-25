@@ -11,9 +11,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"go.dokimi.dev/techne/core/diag"
+	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/trust"
 )
@@ -52,7 +54,16 @@ type Result struct {
 	// Failed reports that the operation did not do what was asked: no engine serves the
 	// language, or the request was refused. A caller can correct either.
 	Failed bool
+
+	// Waited is the time that the engines of the call waited for processes outside techne, as
+	// [engine.Waited] sums it.
+	Waited time.Duration
 }
+
+// WaitedMeta is the key of the _meta of a result of MCP whose value is the time, in whole
+// milliseconds, that the engines of the call waited for processes outside techne, such as the
+// replies of language servers. The time of the call without it is the time of techne.
+const WaitedMeta = "techne/waited"
 
 // Failing returns a result with payload that a caller reads as a failure.
 func Failing(payload json.RawMessage) Result {
@@ -141,13 +152,15 @@ func (t *typed[In, Out]) OutputSchema() *jsonschema.Schema { return t.out }
 
 // Execute decodes input into In, runs the handler and encodes its output. An output whose
 // Failed method reports true makes a failing result, and the result of an output that
-// implements [Renderer] has its render.
+// implements [Renderer] has its render. The result states how long the engines of the call
+// waited for processes outside techne.
 func (t *typed[In, Out]) Execute(ctx context.Context, input json.RawMessage) (Result, error) {
 	decoded, err := t.decode(input)
 	if err != nil {
 		return Result{}, err
 	}
 
+	ctx, waited := engine.Timing(ctx)
 	out, err := t.run(ctx, decoded)
 	if err != nil {
 		return Result{}, err
@@ -160,10 +173,10 @@ func (t *typed[In, Out]) Execute(ctx context.Context, input json.RawMessage) (Re
 	text := rendered(out)
 	if failer, marks := any(out).(interface{ Failed() bool }); marks && failer.Failed() {
 		failing := Failing(encoded)
-		failing.Rendered = text
+		failing.Rendered, failing.Waited = text, waited.Total()
 		return failing, nil
 	}
-	return Result{Payload: encoded, Rendered: text}, nil
+	return Result{Payload: encoded, Rendered: text, Waited: waited.Total()}, nil
 }
 
 // decode returns input as In, and reads an absent input as the empty object. It returns an

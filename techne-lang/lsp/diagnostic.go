@@ -13,6 +13,7 @@ import (
 
 	"go.dokimi.dev/techne/core/diag"
 	"go.dokimi.dev/techne/core/edit"
+	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/lang"
 	"go.lsp.dev/protocol"
@@ -293,6 +294,7 @@ func (r *reports) errors(within source.Path, at func(uri.URI) source.Path) map[s
 // published a report of it. It waits for a report until by or until ctx ends, and returns at
 // once when a report is kept or by has passed.
 func (r *reports) wait(ctx context.Context, of uri.URI, by time.Time) ([]protocol.Diagnostic, bool) {
+	defer engine.Waiting(ctx)()
 	r.mu.Lock()
 	if kept, said := r.kept[of]; said {
 		r.mu.Unlock()

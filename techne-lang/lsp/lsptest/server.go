@@ -81,7 +81,8 @@ func Renames(edit string) Option {
 
 // Server returns a declaration that runs the current test binary as the scripted server in
 // mode. The declaration claims [trust.Resolved] for resolve, relate, plan, check and verify,
-// and no tier for format. The Asks mode is declared with settings, the Loading, Created and
+// and no tier for format. The Asks mode is declared with settings and the sections of an
+// [lsp.Indentation], the Loading, Created and
 // Stuck modes with a loading time, the Extracts and Commands modes with the extraction they
 // offer, and the Quiet mode as [lsp.Server.Quiet]. The DiskChecks and DiskStuck modes are
 // declared with the check on disk of [DiskPrefix] and with [Unchecked], and the DiskStuck mode
@@ -103,6 +104,7 @@ func Server(mode Mode, options ...Option) lsp.Server {
 	switch mode {
 	case Asks:
 		server.Settings = map[string]any{configured: map[string]any{"strict": true}}
+		server.Indentation = lsp.Indentation{Options: indentOptions, Size: indentSize, Spaces: indentSpaces}
 	case Loading, Created:
 		server.Loading = 3 * LoadTime
 	case Stuck:

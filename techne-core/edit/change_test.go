@@ -63,6 +63,42 @@ func TestChange(t *testing.T) {
 				edits: []edit.TextEdit{at(0, 2, "X"), at(2, 4, "Y")},
 				want:  "XY",
 			},
+			{
+				name:  "writes LF into a file whose lines end with LF",
+				give:  "a\nb\n",
+				edits: []edit.TextEdit{at(2, 2, "x\r\ny\r\n")},
+				want:  "a\nx\ny\nb\n",
+			},
+			{
+				name:  "writes CRLF into a file whose lines end with CRLF",
+				give:  "a\r\nb\r\n",
+				edits: []edit.TextEdit{at(3, 3, "x\ny\r\n")},
+				want:  "a\r\nx\r\ny\r\nb\r\n",
+			},
+			{
+				name:  "writes the ending of most lines of a file with both endings",
+				give:  "a\r\nb\r\nc\n",
+				edits: []edit.TextEdit{at(0, 0, "x\n")},
+				want:  "x\r\na\r\nb\r\nc\n",
+			},
+			{
+				name:  "writes LF into a file with as many CRLF endings as LF endings",
+				give:  "a\r\nb\n",
+				edits: []edit.TextEdit{at(0, 0, "x\r\n")},
+				want:  "x\na\r\nb\n",
+			},
+			{
+				name:  "keeps the endings of an edit to a file without a line ending",
+				give:  "ab",
+				edits: []edit.TextEdit{at(1, 1, "x\r\ny\n")},
+				want:  "ax\r\ny\nb",
+			},
+			{
+				name:  "keeps a carriage return that ends no line",
+				give:  "a\nb\n",
+				edits: []edit.TextEdit{at(2, 2, "x\ry\n")},
+				want:  "a\nx\ry\nb\n",
+			},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {

@@ -6,9 +6,12 @@ package lsp
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"sync"
 
+	"go.dokimi.dev/techne/core/source"
+	"go.dokimi.dev/techne/lang"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 )
@@ -34,9 +37,10 @@ const (
 type answers struct {
 	protocol.UnimplementedClient
 
-	root     string
-	settings map[string]any
-	offering *asking
+	root        string
+	settings    map[string]any
+	indentation Indentation
+	offering    *asking
 }
 
 // RegisterCapability accepts a registration and does not store it, because the roles read the
@@ -50,18 +54,71 @@ func (answers) UnregisterCapability(context.Context, *protocol.UnregistrationPar
 }
 
 // Configuration returns one value per item, in the order of the items, because a server
-// matches the values to its items by position. The value of an item is the settings under its
-// section, all settings for an item without a section, and null for a section without
-// settings.
+// matches the values to its items by position. The value of an item whose section
+// [Server.Indentation] names and whose scope is a file of the workspace is the indentation of
+// the file. The value of any other item is the settings under its section, all settings for an
+// item without a section, and null for a section without settings.
 func (a answers) Configuration(
 	_ context.Context,
 	params *protocol.ConfigurationParams,
 ) ([]protocol.LSPAny, error) {
 	out := make([]protocol.LSPAny, 0, len(params.Items))
 	for _, item := range params.Items {
+		if indented, asked := a.indented(item); asked {
+			out = append(out, indented)
+			continue
+		}
 		out = append(out, a.setting(item.Section))
 	}
 	return out, nil
+}
+
+// indented returns the value of an item that requests the indentation of a file, as
+// [lang.Indentation] reads it from the file on disk, and reports whether item requests it: its
+// section is one that [Server.Indentation] names, and its scope is a file of the workspace of
+// at most [lang.Largest] bytes.
+func (a answers) indented(item protocol.ConfigurationItem) (protocol.LSPAny, bool) {
+	if item.Section == nil || *item.Section == "" || item.ScopeURI == nil {
+		return nil, false
+	}
+	var value func(lang.Indent) any
+	switch *item.Section {
+	case a.indentation.Options:
+		value = func(i lang.Indent) any {
+			return protocol.FormattingOptions{TabSize: uint32(i.Width), InsertSpaces: i.Spaces}
+		}
+	case a.indentation.Size:
+		value = func(i lang.Indent) any { return i.Width }
+	case a.indentation.Spaces:
+		value = func(i lang.Indent) any { return i.Spaces }
+	default:
+		return nil, false
+	}
+	content, read := a.file(*item.ScopeURI)
+	if !read {
+		return nil, false
+	}
+	raw, err := json.Marshal(value(lang.Indentation(content)))
+	if err != nil {
+		return nil, false
+	}
+	return protocol.LSPAny(raw), true
+}
+
+// file returns the content of the file that u names, and reports false for a URI that names no
+// file of the workspace, and for a file larger than [lang.Largest].
+func (a answers) file(u uri.URI) ([]byte, bool) {
+	full := u.FsPath()
+	relative, err := filepath.Rel(a.root, full)
+	if full == "" || err != nil || outside(source.Path(filepath.ToSlash(relative))) {
+		return nil, false
+	}
+	info, err := os.Stat(full)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > lang.Largest {
+		return nil, false
+	}
+	content, err := os.ReadFile(full)
+	return content, err == nil
 }
 
 // setting returns the settings under section as JSON, or null.

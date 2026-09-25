@@ -14,6 +14,10 @@ import (
 	"go.dokimi.dev/techne/lang/typescript"
 )
 
+// formatting is the section that the test pins: typescript-language-server requests the
+// indentation of a file under it.
+const formatting = "formattingOptions"
+
 func TestLanguage(t *testing.T) {
 	t.Parallel()
 
@@ -108,6 +112,12 @@ func TestLanguage(t *testing.T) {
 		t.Run("declares the server quiet", func(t *testing.T) {
 			t.Parallel()
 			assert.True(t, typescript.Server().Quiet, "Quiet of typescript-language-server")
+		})
+
+		t.Run("names the section under which the server requests the indentation of a file", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, typescript.Server().Indentation, lsp.Indentation{Options: formatting},
+				"the indentation section of typescript-language-server")
 		})
 	})
 

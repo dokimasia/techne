@@ -88,10 +88,17 @@ const (
 	Quiet Mode = "quiet"
 
 	// Asks sends workspace/configuration, workspace/workspaceFolders and
-	// workspace/applyEdit during initialize and waits for each reply. It responds to
+	// workspace/applyEdit during initialize and waits for each reply. It then requests the
+	// indentation of a.fake, of b.fake, of no file and of the file that [Outside] names, under
+	// the sections of its [lsp.Server.Indentation]. It responds to
 	// textDocument/diagnostic with one diagnostic per reply, whose message is the request
 	// name, an equals sign and the reply.
 	Asks Mode = "asks"
+
+	// Cancels responds to textDocument/definition with the error RequestCancelled of LSP 3.17,
+	// as metals does for a request that its build import cancels, and to
+	// textDocument/references with the error ContentModified.
+	Cancels Mode = "cancels"
 
 	// Uncallable refuses textDocument/prepareCallHierarchy with an error, as a server does
 	// for a declaration that cannot be called.

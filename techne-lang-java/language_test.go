@@ -17,6 +17,13 @@ import (
 // that keeps the Eclipse metadata of a project in the data directory of jdtls.
 const outside = "--jvm-arg=-Djava.import.generatesMetadataFilesAtProjectRoot=false"
 
+// The sections that the test pins: jdtls requests the width of a level of indentation of a file
+// under tabSize, and whether the file indents with spaces under insertSpaces.
+const (
+	tabSize      = "java.format.tabSize"
+	insertSpaces = "java.format.insertSpaces"
+)
+
 func TestLanguage(t *testing.T) {
 	t.Parallel()
 
@@ -77,6 +84,12 @@ func TestLanguage(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, java.Server().Extracts, lsp.Refactor{Kind: "refactor.extract.function"},
 				"the extraction of jdtls")
+		})
+
+		t.Run("names the sections under which jdtls requests the indentation of a file", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, java.Server().Indentation, lsp.Indentation{Size: tabSize, Spaces: insertSpaces},
+				"the indentation sections of jdtls")
 		})
 	})
 }

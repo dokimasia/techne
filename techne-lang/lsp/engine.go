@@ -180,7 +180,7 @@ func (e *Engine) running(ctx context.Context) (*session, error) {
 func (e *Engine) launch(ctx context.Context, held *session) *launch {
 	started := &launch{held: held, began: time.Now(), done: make(chan struct{})}
 	go func() {
-		bounded, done := context.WithTimeout(context.WithoutCancel(ctx), launching)
+		bounded, done := context.WithTimeout(engine.Untimed(context.WithoutCancel(ctx)), launching)
 		defer done()
 		started.err = e.handshake(bounded, held)
 		close(started.done)
@@ -192,6 +192,7 @@ func (e *Engine) launch(ctx context.Context, held *session) *launch {
 // or ctx ends. A handshake that ended with the reply makes its server the running server. A
 // handshake that failed kills the server and keeps the failure. The caller has locked starting.
 func (e *Engine) await(ctx context.Context) (*session, error) {
+	defer engine.Waiting(ctx)()
 	pending := e.pending
 	select {
 	case <-pending.done:

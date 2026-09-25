@@ -25,6 +25,14 @@ import (
 // configured is the settings section that the Asks mode declares and asks the client for.
 const configured = "fake"
 
+// The sections under which the Asks mode requests the indentation of a file, as its
+// declaration names them in [lsp.Server.Indentation].
+const (
+	indentOptions = "fake.options"
+	indentSize    = "fake.size"
+	indentSpaces  = "fake.spaces"
+)
+
 // extractKind is the code action kind of the extraction that the Extracts and Commands modes
 // offer.
 const extractKind = "refactor.extract"
@@ -35,12 +43,21 @@ const performed = "fake.refactor"
 // progressToken is the work-done progress token of the Loading, Created and Stuck modes.
 const progressToken = "loading"
 
+// The error codes of LSP 3.17 with which the Cancels mode responds: RequestCancelled for a
+// request that the server cancelled, and ContentModified for a request whose result a change
+// of the content invalidated.
+const (
+	requestCancelled = -32800
+	contentModified  = -32801
+)
+
 // The ids of the requests that the script sends to the client.
 const (
 	idRegister      = 9001
 	idConfiguration = 9002
 	idFolders       = 9003
 	idApplyEdit     = 9004
+	idIndentation   = 9005
 	idProgress      = 9100
 	idPerform       = 9200
 )
@@ -265,6 +282,7 @@ func (s *script) initialize(m message) (int, bool) {
 			configured))
 		s.replies["folders"] = s.ask(idFolders, `"workspace/workspaceFolders","params":null`)
 		s.replies["edit"] = s.ask(idApplyEdit, `"workspace/applyEdit","params":{"edit":{"changes":{}}}`)
+		s.replies["indentation"] = s.ask(idIndentation, s.indenting())
 	}
 	if s.mode == Loading || s.mode == Stuck || s.mode == Created {
 		s.send(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"window/workDoneProgress/create",`+
@@ -283,6 +301,24 @@ func (s *script) initialize(m message) (int, bool) {
 	}
 	s.answer(m.ID, s.capabilities())
 	return 0, false
+}
+
+// indenting is the workspace/configuration request of the Asks mode for the indentation of a
+// file. Its items request each section of the indentation for a.fake, then the width of b.fake,
+// which a workspace can leave out, then the width without a scope, and last the width of the
+// file that [Outside] names, when a declaration names one.
+func (s *script) indenting() string {
+	scoped := func(doc, section string) string {
+		return fmt.Sprintf(`{"scopeUri":%q,"section":%q}`, doc, section)
+	}
+	items := []string{
+		scoped(s.seen, indentOptions), scoped(s.seen, indentSize), scoped(s.seen, indentSpaces),
+		scoped(s.root+"/b"+Extension, indentSize), fmt.Sprintf(`{"section":%q}`, indentSize),
+	}
+	if s.outside != "" {
+		items = append(items, scoped(string(uri.File(s.outside)), indentSize))
+	}
+	return `"workspace/configuration","params":{"items":[` + strings.Join(items, ",") + `]}`
 }
 
 // orphan starts the child of the Orphans mode: the binary of the scripted server, which sleeps
@@ -448,6 +484,14 @@ func (s *script) changed(params json.RawMessage) {
 // request responds to one request.
 func (s *script) request(m message) {
 	id := m.ID
+	if s.mode == Cancels && (m.Method == "textDocument/definition" || m.Method == "textDocument/references") {
+		code, why := requestCancelled, "The request has been cancelled"
+		if m.Method == "textDocument/references" {
+			code, why = contentModified, "The content was modified, and the request cancelled"
+		}
+		s.send(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"error":{"code":%d,"message":%q}}`, *id, code, why))
+		return
+	}
 	switch m.Method {
 	case "textDocument/documentSymbol":
 		s.answer(id, s.symbols())
@@ -872,7 +916,7 @@ func (s *script) diagnose(doc string) string {
 		return "[" + strings.Join(s.faults(doc), ",") + "]"
 	case Asks:
 		var out []string
-		for _, name := range []string{"configuration", "folders", "edit"} {
+		for _, name := range []string{"configuration", "folders", "edit", "indentation"} {
 			out = append(out, note(name+"="+s.replies[name]))
 		}
 		return "[" + strings.Join(out, ",") + "]"

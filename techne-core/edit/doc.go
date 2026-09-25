@@ -24,7 +24,8 @@
 // A [Plan] has no file handle, so it can be inspected and discarded without
 // touching the workspace. [Policy.Admit] decides whether a plan may be
 // applied. [Apply] computes the bytes a change produces. Planners and the
-// write path both call it, so a preview and the applied change agree.
+// write path both call it, so a preview and the applied change agree. The
+// new text of an edit takes the line ending of the file that it edits.
 //
 // # Dependency position
 //

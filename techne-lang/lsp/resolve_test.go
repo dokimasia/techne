@@ -113,5 +113,24 @@ func TestResolve(t *testing.T) {
 			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Resolve")
 			assert.Contains(t, err.Error(), "textDocument/definition", "the error of Resolve")
 		})
+
+		t.Run("adds the waits for the server to the Waited of the context", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, lsptest.Default, sample())
+			_, err := e.Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
+			assert.NoError(t, err, "the Resolve that starts the server")
+			ctx, waited := engine.Timing(t.Context())
+			_, err = e.Resolve(ctx, engine.Request{Scope: "a.fake"}, store())
+			assert.NoError(t, err, "Resolve")
+			assert.True(t, waited.Total() > 0, "the time that Resolve waited for the server")
+		})
+
+		t.Run("declines a definition that the server cancels", func(t *testing.T) {
+			t.Parallel()
+			_, err := serving(t, lsptest.Cancels, sample()).
+				Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Resolve")
+			assert.Contains(t, err.Error(), "cancelled", "the error of Resolve")
+		})
 	})
 }

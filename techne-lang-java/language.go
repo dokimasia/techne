@@ -83,15 +83,18 @@ const importing = 2 * time.Minute
 // Server returns the declaration of jdtls, the Eclipse JDT language server.
 // jdtls offers one extraction of the kind refactor.extract.function, which
 // extracts a method. The command keeps the Eclipse metadata of a project
-// out of the workspace.
+// out of the workspace. jdtls requests the indentation of a file before each
+// code action, and the Eclipse formatter indents the code of the action
+// with it.
 func Server() lsp.Server {
 	return lsp.Server{
-		Name:       server,
-		Command:    []string{server, outside},
-		Loading:    importing,
-		LanguageID: lsp.IdentityJava,
-		Serves:     lsp.Binding(),
-		Extracts:   lsp.Refactor{Kind: "refactor.extract.function"},
+		Name:        server,
+		Command:     []string{server, outside},
+		Loading:     importing,
+		LanguageID:  lsp.IdentityJava,
+		Serves:      lsp.Binding(),
+		Extracts:    lsp.Refactor{Kind: "refactor.extract.function"},
+		Indentation: lsp.Indentation{Size: "java.format.tabSize", Spaces: "java.format.insertSpaces"},
 	}
 }
 

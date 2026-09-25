@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/tool"
@@ -148,6 +150,21 @@ func TestTool(t *testing.T) {
 			assert.NoError(t, err, "the error of Execute")
 			assert.Equal(t, string(got.Payload), `{"greeting":"hello world"}`, "the payload")
 			assert.False(t, got.Failed, "Failed of the result")
+		})
+
+		t.Run("returns the time that the engines of the call waited", func(t *testing.T) {
+			t.Parallel()
+			waiting, err := tool.New("wait", "PREFER OVER waiting by hand.",
+				func(ctx context.Context, in greetIn) (greetOut, error) {
+					done := engine.Waiting(ctx)
+					time.Sleep(time.Millisecond)
+					done()
+					return greetOut{Greeting: in.Name}, nil
+				})
+			assert.NoError(t, err, "the error of New")
+			got, err := waiting.Execute(t.Context(), json.RawMessage(`{"name":"world"}`))
+			assert.NoError(t, err, "the error of Execute")
+			assert.True(t, got.Waited >= time.Millisecond, "the time that the handler waited")
 		})
 
 		t.Run("returns an error for input that does not decode", func(t *testing.T) {

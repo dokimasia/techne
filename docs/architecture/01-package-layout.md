@@ -66,7 +66,7 @@ An engine cannot overstate its evidence.
 
 | Package | Contains | Imports |
 |---|---|---|
-| `lang` | `Declaration`, `Registry`, `Workspace`, the walk of the files of a scope, the ignore rules, and `Lowered` | core |
+| `lang` | `Declaration`, `Registry`, `Workspace`, the walk of the files of a scope, the ignore rules, `Indentation` and `Lowered` | core |
 | `lang/treesitter` | the syntactic engine, which serves every language with a tree-sitter grammar | `lang`, core, the tree-sitter binding |
 | `lang/lsp` | the engine of a language server | `lang`, core, `go.lsp.dev` |
 | `lang/lsp/lsptest` | a scripted language server for the tests of `lang/lsp` | `lang/lsp`, `lang`, core |

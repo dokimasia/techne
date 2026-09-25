@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"go.dokimi.dev/techne/core/engine"
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 )
@@ -113,12 +114,27 @@ func start(ctx context.Context, declared Server, root string) (*session, error) 
 	}
 	held.cmd = cmd
 
-	client := answers{root: root, settings: declared.Settings, offering: held.offering}
+	client := answers{
+		root: root, settings: declared.Settings, indentation: declared.Indentation, offering: held.offering,
+	}
 	stream := ordered{
 		Stream: jsonrpc2.NewStream(pipes{out: out, in: in}), reports: held.reports, working: held.working,
 	}
-	_, held.conn, held.asks = protocol.NewClient(context.WithoutCancel(ctx), client, stream)
+	_, held.conn, _ = protocol.NewClient(context.WithoutCancel(ctx), client, stream)
+	held.asks = protocol.ServerDispatcher(timed{Conn: held.conn})
 	return held, nil
+}
+
+// timed is the connection of a session as the requests use it. The time until the reply to a
+// request adds to the [engine.Waited] of the context of the request.
+type timed struct {
+	jsonrpc2.Conn
+}
+
+// Call sends the request method to the server and waits for its reply.
+func (c timed) Call(ctx context.Context, method string, params, result any) (jsonrpc2.ID, error) {
+	defer engine.Waiting(ctx)()
+	return c.Conn.Call(ctx, method, params, result)
 }
 
 // launch is a started server whose handshake runs apart from the questions that wait for it.

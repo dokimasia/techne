@@ -43,6 +43,13 @@
 // reason of a refusal. A service returns it in the answer of [Refused], as it
 // returns a request that no engine serves in the answer of [Unsupported].
 //
+// # Waits
+//
+// [Timing] gives the context of one call a [Waited]. An engine brackets each
+// wait for a process outside techne with [Waiting], such as a request to a
+// language server, and the caller reads the sum with [Waited.Total]. The time
+// of the call without the waits is the time that techne itself took.
+//
 // # Dependency position
 //
 // Imports the standard library, core/edit, core/sema, core/source,

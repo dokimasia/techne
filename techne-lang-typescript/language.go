@@ -104,6 +104,10 @@ func Server() lsp.Server {
 		// after which a kind of diagnostics is still empty. It publishes a
 		// report of each kind for a file that it opens.
 		Quiet: true,
+		// typescript-language-server requests the indentation of a file under
+		// formattingOptions before it configures tsserver for the file, and
+		// tsserver indents the code of a refactoring with it.
+		Indentation: lsp.Indentation{Options: "formattingOptions"},
 	}
 }
 

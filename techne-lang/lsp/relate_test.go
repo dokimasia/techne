@@ -231,6 +231,14 @@ func TestRelate(t *testing.T) {
 			assert.Contains(t, err.Error(), "did not answer within 300ms", "the error of Relate")
 		})
 
+		t.Run("declines a question whose content the server reports modified", func(t *testing.T) {
+			t.Parallel()
+			_, err := serving(t, lsptest.Cancels, sample()).Relate(t.Context(), request,
+				declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Relate")
+			assert.Contains(t, err.Error(), "content was modified", "the error of Relate")
+		})
+
 		t.Run("declines a declaration that no file declares", func(t *testing.T) {
 			t.Parallel()
 			_, err := serving(t, lsptest.Default, sample()).Relate(t.Context(), request,

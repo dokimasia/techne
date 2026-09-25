@@ -6,8 +6,15 @@ package edit
 import (
 	"bytes"
 	"fmt"
+	"strings"
 
 	"go.dokimi.dev/techne/core/source"
+)
+
+// The line endings that [Apply] writes.
+const (
+	lf   = "\n"
+	crlf = "\r\n"
 )
 
 // ChangeKind is what a Change does to its path. The zero value is
@@ -55,6 +62,12 @@ type Change struct {
 // inserts at one offset keep their order, and an insert can precede a
 // replacement at the same offset.
 //
+// The new text of each edit takes the line ending of content, as an editor
+// writes an edit into its buffer: \r\n when more than half of the line
+// endings of content are \r\n, and \n otherwise. The new text is unchanged
+// for content without a line ending. A \r without a \n after it ends no
+// line, and Apply leaves it as it is.
+//
 // Apply returns an error wrapping ErrDisordered for edits out of order, and
 // an error for an edit that ends past the end of content. Planners and the
 // write path both call Apply, so a preview and the applied change contain
@@ -63,6 +76,7 @@ func Apply(content []byte, edits []TextEdit) ([]byte, error) {
 	if err := ordered(edits); err != nil {
 		return nil, err
 	}
+	ending := endingOf(content)
 	var out bytes.Buffer
 	out.Grow(len(content))
 	at := 0
@@ -72,11 +86,37 @@ func Apply(content []byte, edits []TextEdit) ([]byte, error) {
 			return nil, fmt.Errorf("edit: edit %d ends at byte %d of a %d-byte file", i, end, len(content))
 		}
 		out.Write(content[at:start])
-		out.WriteString(e.New)
+		out.WriteString(ended(e.New, ending))
 		at = end
 	}
 	out.Write(content[at:])
 	return out.Bytes(), nil
+}
+
+// endingOf returns the line ending of content: crlf when more than half of its line endings are
+// crlf, lf when they are not, and the empty string for content without a line ending.
+func endingOf(content []byte) string {
+	lines := bytes.Count(content, []byte(lf))
+	switch {
+	case lines == 0:
+		return ""
+	case 2*bytes.Count(content, []byte(crlf)) > lines:
+		return crlf
+	}
+	return lf
+}
+
+// ended returns text with each of its line endings written as ending. An empty ending leaves
+// text unchanged.
+func ended(text, ending string) string {
+	if ending == "" || !strings.Contains(text, lf) {
+		return text
+	}
+	unified := strings.ReplaceAll(text, crlf, lf)
+	if ending == lf {
+		return unified
+	}
+	return strings.ReplaceAll(unified, lf, crlf)
 }
 
 // ordered returns an error wrapping ErrDisordered unless every edit ends at

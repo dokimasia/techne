@@ -39,14 +39,21 @@ func (e *Engine) answered(ctx context.Context) (context.Context, context.CancelF
 	return context.WithTimeout(ctx, cmp.Or(e.server.Answering, answering))
 }
 
-// unanswered returns err as [engine.ErrDecline] when the deadline of a question ended it and
-// parent did not end, so the next engine serves the question, and err otherwise.
+// unanswered returns err as [engine.ErrDecline] when parent did not end and the question got no
+// answer, so the next engine serves the question: when the deadline of the question ended it,
+// or when the server responded with RequestCancelled or ContentModified of LSP 3.17, as metals
+// does for a request that its build import cancels. It returns err otherwise.
 func (e *Engine) unanswered(parent context.Context, err error) error {
-	if err == nil || parent.Err() != nil || !errors.Is(err, context.DeadlineExceeded) {
+	switch {
+	case err == nil || parent.Err() != nil:
 		return err
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("%w: %s did not answer within %s: %w",
+			engine.ErrDecline, e.server.Name, cmp.Or(e.server.Answering, answering), err)
+	case errors.Is(err, protocol.ErrRequestCancelled), errors.Is(err, protocol.ErrContentModified):
+		return fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
-	return fmt.Errorf("%w: %s did not answer within %s: %w",
-		engine.ErrDecline, e.server.Name, cmp.Or(e.server.Answering, answering), err)
+	return err
 }
 
 // announcing is how long the handshake waits for a started server to report its first job.
@@ -197,6 +204,7 @@ func (w *working) announce(ctx context.Context, within time.Duration) {
 // reports whether that happened within the deadline and before ctx ended. It returns true at
 // once for a server that has been quiet for that long.
 func (w *working) settle(ctx context.Context, within time.Duration) bool {
+	defer engine.Waiting(ctx)()
 	deadline := time.NewTimer(within)
 	defer deadline.Stop()
 
@@ -236,6 +244,7 @@ func (w *working) settle(ctx context.Context, within time.Duration) bool {
 // within or until ctx ends, and reports whether one has. Before the first save, any check that
 // ended counts, such as the check that a server runs after it loads the workspace.
 func (w *working) checked(ctx context.Context, within time.Duration) bool {
+	defer engine.Waiting(ctx)()
 	deadline := time.NewTimer(within)
 	defer deadline.Stop()
 	for {

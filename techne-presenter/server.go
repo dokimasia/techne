@@ -53,7 +53,8 @@ func NewServer(r *tool.Registry, about Info) (*mcp.Server, error) {
 //
 // The structured content of a result is the payload of t, and the SDK writes the payload
 // into the response without decoding it. The text block is the render, or the payload for a
-// result without one. A failed result, an error of Execute and a panic in the goroutine of
+// result without one. The _meta of the result states [tool.Result.Waited] under
+// [tool.WaitedMeta]. A failed result, an error of Execute and a panic in the goroutine of
 // the call return an error result. The stack of a panic goes to standard error.
 //
 // A payload that is not JSON returns a protocol error, because the SDK does not send a
@@ -81,6 +82,7 @@ func handler(t tool.Tool) mcp.ToolHandler {
 			text = string(result.Payload)
 		}
 		return &mcp.CallToolResult{
+			Meta:              mcp.Meta{tool.WaitedMeta: result.Waited.Milliseconds()},
 			Content:           []mcp.Content{&mcp.TextContent{Text: text}},
 			StructuredContent: result.Payload,
 			IsError:           result.Failed,

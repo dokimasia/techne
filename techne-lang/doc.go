@@ -26,7 +26,8 @@
 // files larger than [Largest] in a separate list. It skips the directories
 // [Vendored] names and the paths the .gitignore files of the workspace
 // exclude, by the rules of gitignore(5). [Readable] applies the .gitignore
-// rules and the size limit to one path.
+// rules and the size limit to one path. [Indentation] returns how a file
+// indents: with tabs, or with the number of spaces of one level.
 //
 // A request that the caller can correct is refused with
 // [go.dokimi.dev/techne/core/engine.ErrRefuse]:
