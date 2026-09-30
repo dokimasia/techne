@@ -78,7 +78,8 @@ func TestDoc(t *testing.T) {
 		t.Run("serves the mock languages of TECHNE_MOCK at their tiers", func(t *testing.T) {
 			t.Parallel()
 			env := environment(t, "TECHNE_MOCK=alpha@indexed/partial")
-			got, err := session(t, env, written(t, "a.alpha", store)).CallTool(t.Context(), &mcp.CallToolParams{
+			client := session(t, env, "--structured", written(t, "a.alpha", store))
+			got, err := client.CallTool(t.Context(), &mcp.CallToolParams{
 				Name: "outline", Arguments: map[string]any{"scope": "a.alpha"},
 			})
 			assert.NoError(t, err, "the error of CallTool")

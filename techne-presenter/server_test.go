@@ -57,7 +57,7 @@ func serving() error {
 	if err != nil {
 		return err
 	}
-	server, err := presenter.NewServer(r, about)
+	server, err := presenter.NewServer(r, about, presenter.Text)
 	if err != nil {
 		return err
 	}
@@ -178,13 +178,13 @@ func (r *record) String() string {
 	return r.text.String()
 }
 
-// connected returns a client session with a server of the tools of registered, over an
-// in-memory transport that writes each message of the client to log.
-func connected(t *testing.T, log io.Writer) *mcp.ClientSession {
+// connected returns a client session with a server of the tools of registered that answers
+// with output, over an in-memory transport that writes each message of the client to log.
+func connected(t *testing.T, log io.Writer, output presenter.Output) *mcp.ClientSession {
 	t.Helper()
 	r, err := registered()
 	assert.NoError(t, err, "the error of registered")
-	server, err := presenter.NewServer(r, about)
+	server, err := presenter.NewServer(r, about, output)
 	assert.NoError(t, err, "the error of NewServer")
 
 	clientSide, serverSide := mcp.NewInMemoryTransports()
@@ -240,7 +240,7 @@ func TestServer(t *testing.T) {
 
 		t.Run("lists every tool of the registry", func(t *testing.T) {
 			t.Parallel()
-			listed, err := connected(t, io.Discard).ListTools(t.Context(), nil)
+			listed, err := connected(t, io.Discard, presenter.Text).ListTools(t.Context(), nil)
 			assert.NoError(t, err, "the error of ListTools")
 			var names []string
 			for _, one := range listed.Tools {
@@ -260,14 +260,39 @@ func TestServer(t *testing.T) {
 			unencodable.InputSchema().Types = []string{"object"}
 			r := tool.NewRegistry()
 			assert.NoError(t, r.Add(unencodable), "the error of Add")
-			_, err = presenter.NewServer(r, about)
+			_, err = presenter.NewServer(r, about, presenter.Text)
 			assert.HasError(t, err, "the error of NewServer")
 			assert.HasPrefix(t, err.Error(), `presenter: "outline" input schema: `, "the error of NewServer")
 		})
 
-		t.Run("returns the payload of a tool as its structured content", func(t *testing.T) {
+		t.Run("declares no output schema for Text", func(t *testing.T) {
 			t.Parallel()
-			got := called(t, connected(t, io.Discard), "outline", `{"scope":"a.fx"}`)
+			listed, err := connected(t, io.Discard, presenter.Text).ListTools(t.Context(), nil)
+			assert.NoError(t, err, "the error of ListTools")
+			for _, one := range listed.Tools {
+				assert.Nil(t, one.OutputSchema, "the output schema of "+one.Name)
+			}
+		})
+
+		t.Run("declares the output schema of each tool for Structured", func(t *testing.T) {
+			t.Parallel()
+			listed, err := connected(t, io.Discard, presenter.Structured).ListTools(t.Context(), nil)
+			assert.NoError(t, err, "the error of ListTools")
+			for _, one := range listed.Tools {
+				assert.NotNil(t, one.OutputSchema, "the output schema of "+one.Name)
+			}
+		})
+
+		t.Run("returns no structured content for Text", func(t *testing.T) {
+			t.Parallel()
+			got := called(t, connected(t, io.Discard, presenter.Text), "rendered", `{"scope":"a.fx"}`)
+			assert.Nil(t, got.StructuredContent, "the structured content of the result")
+			assert.Equal(t, text(t, got), "status: ok\n", "the text of the result")
+		})
+
+		t.Run("returns the payload of a tool as its structured content for Structured", func(t *testing.T) {
+			t.Parallel()
+			got := called(t, connected(t, io.Discard, presenter.Structured), "outline", `{"scope":"a.fx"}`)
 			assert.False(t, got.IsError, "IsError of the result")
 			assert.Equal(t, got.StructuredContent, any(map[string]any{"status": "ok", "scope": "a.fx"}),
 				"the structured content of the result")
@@ -275,25 +300,25 @@ func TestServer(t *testing.T) {
 
 		t.Run("states the time that the engines waited in the metadata of a result", func(t *testing.T) {
 			t.Parallel()
-			got := called(t, connected(t, io.Discard), "outline", `{"scope":"a.fx"}`)
+			got := called(t, connected(t, io.Discard, presenter.Text), "outline", `{"scope":"a.fx"}`)
 			assert.Equal(t, got.Meta[waitedMeta], any(float64(0)), "the waited time of a tool that waits for nothing")
 		})
 
 		t.Run("returns the render of a tool as its text", func(t *testing.T) {
 			t.Parallel()
-			got := called(t, connected(t, io.Discard), "rendered", `{"scope":"a.fx"}`)
+			got := called(t, connected(t, io.Discard, presenter.Structured), "rendered", `{"scope":"a.fx"}`)
 			assert.Equal(t, text(t, got), "status: ok\n", "the text of the result")
 		})
 
 		t.Run("returns the payload as the text of a tool without a render", func(t *testing.T) {
 			t.Parallel()
-			got := called(t, connected(t, io.Discard), "outline", `{"scope":"a.fx"}`)
+			got := called(t, connected(t, io.Discard, presenter.Text), "outline", `{"scope":"a.fx"}`)
 			assert.Equal(t, text(t, got), `{"status":"ok","scope":"a.fx"}`, "the text of the result")
 		})
 
 		t.Run("marks a failed result as an error", func(t *testing.T) {
 			t.Parallel()
-			got := called(t, connected(t, io.Discard), "unsupported", `{"scope":"a.md"}`)
+			got := called(t, connected(t, io.Discard, presenter.Structured), "unsupported", `{"scope":"a.md"}`)
 			assert.True(t, got.IsError, "IsError of the result")
 			assert.Equal(t, got.StructuredContent, any(map[string]any{"status": "unsupported", "scope": "a.md"}),
 				"the structured content of the result")
@@ -301,14 +326,14 @@ func TestServer(t *testing.T) {
 
 		t.Run("returns the error of a tool as an error result", func(t *testing.T) {
 			t.Parallel()
-			got := called(t, connected(t, io.Discard), "failing", `{"scope":"/etc/passwd"}`)
+			got := called(t, connected(t, io.Discard, presenter.Text), "failing", `{"scope":"/etc/passwd"}`)
 			assert.True(t, got.IsError, "IsError of the result")
 			assert.Equal(t, text(t, got), `tool: "/etc/passwd" is absolute`, "the text of the result")
 		})
 
 		t.Run("returns an error result that names a tool that panics", func(t *testing.T) {
 			t.Parallel()
-			got := called(t, connected(t, io.Discard), "broken", `{"scope":"a.fx"}`)
+			got := called(t, connected(t, io.Discard, presenter.Text), "broken", `{"scope":"a.fx"}`)
 			assert.True(t, got.IsError, "IsError of the result")
 			assert.Equal(t, text(t, got),
 				`presenter: "broken" panicked: broken fails. The stack is on the standard error of the server.`,
@@ -317,7 +342,7 @@ func TestServer(t *testing.T) {
 
 		t.Run("serves the next call after a tool panics", func(t *testing.T) {
 			t.Parallel()
-			session := connected(t, io.Discard)
+			session := connected(t, io.Discard, presenter.Text)
 			called(t, session, "broken", `{"scope":"a.fx"}`)
 			got := called(t, session, "outline", `{"scope":"a.fx"}`)
 			assert.False(t, got.IsError, "IsError of the call after the panic")
@@ -338,7 +363,7 @@ func TestServer(t *testing.T) {
 			t.Parallel()
 			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 			defer cancel()
-			_, err := connected(t, io.Discard).CallTool(ctx, &mcp.CallToolParams{
+			_, err := connected(t, io.Discard, presenter.Text).CallTool(ctx, &mcp.CallToolParams{
 				Name: "invalid", Arguments: json.RawMessage(`{"scope":"a.fx"}`),
 			})
 			assert.HasError(t, err, "the error of CallTool")

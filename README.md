@@ -66,12 +66,18 @@ Put the binary on your `PATH`.
 ## Run
 
 ```text
-techne [-h | --help] [--version] [workspace]
+techne [-h | --help] [--version] [--structured] [workspace]
 ```
 
 techne serves the workspace at the path that you pass, or the working directory. While it
 serves, it writes only protocol messages to standard output, and its errors to standard error.
 `-h` and `--help` print the usage and exit. `--version` prints the version and exits.
+
+By default a result contains its answer as text written for a model, and techne declares no
+output schema. Claude Code passes the JSON of a result to the model when the result contains
+JSON, and the text is about half its size. With `--structured`, a result also contains the
+answer as JSON, and techne declares the output schema of each tool. Pass it when your client
+validates or processes the JSON.
 
 A write takes an advisory lock of the operating system for the workspace, and the write of
 another techne process waits until the lock is free. Agents that each run their own techne

@@ -11,12 +11,17 @@
 //
 // # Results
 //
-//   - The structured content of a result is the payload, which the SDK writes into the
-//     response without decoding it.
 //   - The text block contains the render of the output, which the tool writes for a model,
 //     and the payload for an output without a render. The specification recommends the
 //     payload for the text block, for a client that does not read structured content. Such a
 //     client reads the render.
+//   - A server of [Text] sends the text block alone and does not declare an output schema,
+//     because the specification requires structured content from a tool that declares one.
+//     Claude Code hands a model the structured content of a result when the result has it, so
+//     a model reads the render only from a server of [Text].
+//   - A server of [Structured] declares the output schema of each tool, and the structured
+//     content of a result is the payload, which the SDK writes into the response without
+//     decoding it.
 //   - A failed result is an error result. The specification recommends that a client pass an
 //     error result to the model, so that the model can correct its input.
 //

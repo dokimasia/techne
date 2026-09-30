@@ -38,7 +38,7 @@ func run(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// A signal ends the session, and the error of Run for it is ctx.Err().
-	if err := app.Run(ctx, command.Root, version.Full()); err != nil && ctx.Err() == nil {
+	if err := app.Run(ctx, command, version.Full()); err != nil && ctx.Err() == nil {
 		fmt.Fprintln(os.Stderr, "techne:", err)
 		return 1
 	}

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/techne/presenter"
 )
 
 // imported are the packages outside the standard library that the package comment states the
@@ -27,7 +28,7 @@ func TestDoc(t *testing.T) {
 		t.Run("sends the payload as the tool encoded it", func(t *testing.T) {
 			t.Parallel()
 			log := &record{}
-			called(t, connected(t, log), "outline", `{"scope":"a.fx"}`)
+			called(t, connected(t, log, presenter.Structured), "outline", `{"scope":"a.fx"}`)
 			assert.Contains(t, log.String(), `"structuredContent":{"status":"ok","scope":"a.fx"}`,
 				"the result that the client read")
 		})

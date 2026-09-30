@@ -113,11 +113,11 @@ func ran(t *testing.T, env []string, args ...string) (string, string, int) {
 	return stdout.String(), stderr.String(), cmd.ProcessState.ExitCode()
 }
 
-// session returns a client session with the command over the workspace root, with the variables
-// of env.
-func session(t *testing.T, env []string, root string) *mcp.ClientSession {
+// session returns a client session with the command of args, such as the workspace root, with
+// the variables of env.
+func session(t *testing.T, env []string, args ...string) *mcp.ClientSession {
 	t.Helper()
-	cmd := exec.CommandContext(t.Context(), binary, root)
+	cmd := exec.CommandContext(t.Context(), binary, args...)
 	cmd.Env = env
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "test"}, nil)
 	s, err := client.Connect(t.Context(), &mcp.CommandTransport{Command: cmd}, nil)
@@ -186,7 +186,8 @@ func TestTechne(t *testing.T) {
 			t.Parallel()
 			link := filepath.Join(t.TempDir(), "link")
 			assert.NoError(t, os.Symlink(written(t, "a.mock", store), link), "the error of Symlink")
-			got, err := session(t, environment(t, "TECHNE_MOCK=1"), link).CallTool(t.Context(), &mcp.CallToolParams{
+			client := session(t, environment(t, "TECHNE_MOCK=1"), "--structured", link)
+			got, err := client.CallTool(t.Context(), &mcp.CallToolParams{
 				Name:      "relations",
 				Arguments: map[string]any{"scope": "a.mock", "name": "Store", "relation": "referenced-by"},
 			})
@@ -195,6 +196,18 @@ func TestTechne(t *testing.T) {
 			items := got.StructuredContent.(map[string]any)["items"].([]any)
 			assert.Length(t, items, 1, "the relations of Store")
 			assert.Equal(t, items[0].(map[string]any)["path"], any("a.mock"), "the path of the relation")
+		})
+
+		t.Run("serves the render of a result without structured content by default", func(t *testing.T) {
+			t.Parallel()
+			got, err := session(t, environment(t, "TECHNE_MOCK=1"), written(t, "a.mock", store)).CallTool(t.Context(),
+				&mcp.CallToolParams{Name: "outline", Arguments: map[string]any{"scope": "a.mock"}})
+			assert.NoError(t, err, "the error of CallTool")
+			assert.Nil(t, got.StructuredContent, "the structured content of the result")
+			assert.Length(t, got.Content, 1, "the content blocks of the result")
+			rendered, isText := got.Content[0].(*mcp.TextContent)
+			assert.True(t, isText, "the type of the content block")
+			assert.HasPrefix(t, rendered.Text, "a.mock — ", "the text of the result")
 		})
 
 		t.Run("exits 0 when the client closes stdin", func(t *testing.T) {

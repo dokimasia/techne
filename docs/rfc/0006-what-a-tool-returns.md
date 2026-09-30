@@ -4,7 +4,7 @@ title: What a tool returns
 author: Roy Klopper
 status: Accepted
 created: 2026-09-01
-updated: 2026-09-24
+updated: 2026-09-30
 discussion: none
 supersedes: none
 superseded-by: none
@@ -20,9 +20,10 @@ The input and the answer of every tool, with a worked example of each.
 RFC-0003 fixed the envelope an answer travels in, the budget that keeps
 it small and the levels a caller selects between. It left what an item
 holds to whoever wrote the handler, and what got written was the
-engine's own record, serialised twice. This proposal gives the two
-channels of a tool result two different renderings, replaces the item
-with something shaped for the question, nests declarations instead of
+engine's own record, serialised twice. This proposal sends a tool result
+as text rendered for a model, with the typed answer as structured
+content for a client that asks for it. It replaces the item with
+something shaped for the question, nests declarations instead of
 pointing at them, and drops the fields that restate what is beside them.
 
 It amends the text block, the detail table, the budget order and the
@@ -82,17 +83,29 @@ lines.
 
 ## Detailed design
 
-### Two channels, two renderings
+### Text by default, JSON on request
 
 A tool result has an unstructured `content` list and a structured
-`structuredContent` object. They have different readers. The model reads
-the first; a program reads the second. Sending one thing twice serves
-neither.
+`structuredContent` object. The specification intends the text for the
+model and the structured content for a program. When a result has
+structured content, Claude Code hands the model that content in place of
+the text.
 
-- `structuredContent` carries the typed answer, conforming to the
-  declared `outputSchema`.
-- `content[0].text` carries the same answer rendered for reading: fixed
-  columns, one declaration per line, no braces and no escaping.
+- By default the server sends `content[0].text` alone: the answer
+  rendered for reading, in fixed columns, one declaration per line, with
+  no braces and no escaping. The server declares no `outputSchema`,
+  because the specification requires structured content from a tool that
+  declares one.
+- Started with `--structured`, the server also sends `structuredContent`,
+  the typed answer, and declares the `outputSchema` it conforms to. A
+  client that validates, filters or passes an answer on starts the server
+  this way, and so does the corpus harness.
+
+We measured nine calls of the read tools on 2026-09-30. Their rendered
+text is 21,298 characters and their JSON 37,847, so the text is 0.56
+times the JSON. `path` on every item is about 27% of the JSON, and 33%
+for `outline` and `relations`. Provenance is 3.5% of the JSON overall,
+and about half of a small `resolve` or `search` answer.
 
 The specification says a tool returning structured content SHOULD also
 return the serialised JSON in a text block, for backwards compatibility.
@@ -101,10 +114,6 @@ clients that read only `content`, which is to say with language models,
 and the specification's own example of unstructured content is a weather
 report in prose. A model handed escaped JSON pays for the escaping and
 reads the worse of the two forms.
-
-Nothing is lost. A client that parses `structuredContent` is unaffected.
-A client that does not gets an outline it can read rather than a JSON
-document it must unescape first.
 
 ### An answer states shared facts once
 
@@ -117,7 +126,8 @@ document it must unescape first.
 ```
 
 `language` is constant, because a request routes to one language. `unit`
-is constant when the scope is one file or one package. `path` appears on
+is constant when the scope is one file or one package. An answer about a
+directory of two or more units states `directory` in place of `unit`. `path` appears on
 an item only when the item is not in the file of the scope: in an answer
 about a directory, and on a declaration that `resolve` finds in another
 file. An item repeats none of them.
@@ -184,7 +194,9 @@ every answer that ran, so the common path pays nothing for it.
   and its members, and reaches deeper only when asked.
 - **`line`** replaces `span` at every level but the last. A span costs
   six numbers and a path; an agent navigates by one. Offsets stay where
-  a caller slices bytes, which is `source` and the write path.
+  a caller slices bytes, which is `source` and the write path. The span
+  at `source` counts its lines and columns from one, as `line` does. Its
+  offsets count bytes from zero. It does not repeat the path of its item.
 - **`signature`** is the declaration without its body. Every supported
   grammar names that field `body`, so the text is the declaration's span
   minus the body's. A declaration with no body yields itself.
@@ -298,6 +310,14 @@ it. The line picks one of the overloads of a method. A name that is
 still ambiguous is refused, and the reason lists the kind and the site of
 each candidate.
 
+### Numbers in an input
+
+Every integer of an input is a line, a column or a count. A line or a
+column counts from one, and the input schema states the minimum 1 for
+one that a tool requires. A count of 0 selects its default, as an
+omitted count does, and the schema states the minimum 0. A number below
+its minimum is an input error, as a missing required field is.
+
 ## The tools
 
 Every read tool but `capabilities` takes `scope`, `language` and
@@ -402,7 +422,8 @@ Structured:
 ```
 
 One exact match answers at `docs` rather than `names`, so the common
-case needs no second call.
+case needs no second call. An empty `text` matches every name, so
+`search` refuses it and names `outline`, which lists every declaration.
 
 `score` and `matched` are not carried. Both belong to the engine that
 ranked, and `Searcher` returns a declaration with no room for either, so
@@ -434,6 +455,10 @@ tags are not visible to any engine here.
 
 Two items mean the name is ambiguous and the caller chooses.
 
+The answer is the declaration that the name denotes, whatever `include`
+selects. A parameter, an import and a local declaration are answers, and
+`include` selects the members of each.
+
 ### `relations` — how does this connect
 
 Adds `name`, `kind`, `line`, `relation`, `limit`, `max_tokens`.
@@ -449,7 +474,7 @@ Text:
 ```text
 called-by Outranks — 1 site
 
-lang/treesitter/outline.go:123  in Engine.declarations
+lang/treesitter/outline.go:123:6  in Engine.declarations
   if Outranks(kind, out[seen].Kind) {
 
 resolved, whole workspace. an empty answer here means there are none.
@@ -464,7 +489,7 @@ Structured:
   "relation": "called-by",
   "items": [
     { "name": "declarations", "kind": "method", "in": "Engine",
-      "path": "lang/treesitter/outline.go", "line": 123,
+      "path": "lang/treesitter/outline.go", "line": 123, "column": 6,
       "via": "if Outranks(kind, out[seen].Kind) {" }
   ],
   "provenance": { "engine": "gopls", "fidelity": "resolved",
@@ -473,7 +498,9 @@ Structured:
 ```
 
 `via` is the line the edge was found on. A caller asking who calls this
-wants to see the call; fetching each one is a turn per caller.
+wants to see the call; fetching each one is a turn per caller. `column`
+counts bytes from one, and tells apart two sites on one line, such as
+the opening and the closing tag of a JSX element.
 
 ### `verify` — does this build
 
@@ -516,6 +543,11 @@ Structured:
 An issue with one obvious fix states the text that the fix writes, with
 its file and its line. No tool takes a fix, so a caller applies it with
 its own edit.
+
+An engine declines a request for a suite that it does not run, because
+an answer without that suite states nothing about it. The reason of the
+decline lists the suites that the engine runs. A request that every
+engine declines is `unsupported`, with the reason of each engine.
 
 ### `capabilities` — what can you answer
 
@@ -610,7 +642,8 @@ Structured:
 `extract.function` adds the new declaration to its item list.
 
 `apply.change` takes the handle a preview returned, and the changes stay
-where they were computed. Sending them back would mean a caller
+where they were computed. Its answer states the operation, the target
+and the scope of the preview. Sending them back would mean a caller
 reproducing several kilobytes exactly for a rename over thirty sites,
 and reproducing bytes exactly is the least reliable thing a model does.
 A handle is thirty-two characters.
@@ -707,14 +740,16 @@ Follow the specification's SHOULD exactly.
 is a language model, and hands that model escaped JSON. The measurement
 is 171,052 bytes where 2,798 answers the question.
 
-### E. Return only the rendered text and no structured content
+### E. Send structured content with every result
 
-If the model reads the text, drop the JSON.
+Declare the output schema of every tool and send `structuredContent` by
+default, so every client can validate an answer.
 
-**Why not:** an answer that cannot be validated against a schema cannot
-be checked, filtered or fed to another tool, and the output schema is
-what lets a client type the result. The rendering is a view of the
-items, not a replacement for them.
+**Why not:** Claude Code hands the model the structured content of a
+result that has it. The model then reads JSON of about 1.8 times the
+characters of the render, and never reads the render. A client that
+validates, filters or passes on an answer starts the server with
+`--structured` and loses nothing.
 
 ### F. Keep a status and let it grow a value for truncation
 
@@ -741,6 +776,9 @@ by offset, and it slices in the write path, which has the span.
   one is invisible to a schema.
 - Departing from the specification's SHOULD means a client that reads
   only `content` and expects JSON there gets prose instead.
+- A server started without `--structured` does not declare an output
+  schema. A client that checks answers against one has to start the
+  server with the flag.
 - Four levels rather than three, with different names, so every caller
   that named one has to change.
 - `signature` is a field the parser tier has to produce and cannot

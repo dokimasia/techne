@@ -86,11 +86,15 @@ type provenance struct {
 	} `json:"provenance"`
 }
 
-// Start runs binary over root with env, and connects to it over its
-// standard input and output. The standard error of the process goes to
-// stderr.
+// structured is the flag that makes techne send the structured content of
+// each result, which [Session.Call] decodes.
+const structured = "--structured"
+
+// Start runs binary over root with env and [structured], and connects to it
+// over its standard input and output. The standard error of the process goes
+// to stderr.
 func Start(ctx context.Context, binary, root string, env []string, stderr io.Writer) (*Session, error) {
-	cmd := exec.Command(binary, root)
+	cmd := exec.Command(binary, structured, root)
 	cmd.Env = env
 	cmd.Stderr = stderr
 	client := mcp.NewClient(&mcp.Implementation{Name: "techne-corpus", Version: "1"}, nil)

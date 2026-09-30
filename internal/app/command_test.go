@@ -8,6 +8,7 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/internal/app"
+	"go.dokimi.dev/techne/presenter"
 )
 
 func TestCommand(t *testing.T) {
@@ -35,6 +36,21 @@ func TestCommand(t *testing.T) {
 			got, err := app.Parse([]string{"--version"})
 			assert.NoError(t, err, "the error of Parse")
 			assert.Equal(t, got, app.Command{Version: true}, "the command of --version")
+		})
+
+		t.Run("asks for text results without a flag", func(t *testing.T) {
+			t.Parallel()
+			got, err := app.Parse([]string{"/some/tree"})
+			assert.NoError(t, err, "the error of Parse")
+			assert.Equal(t, got.Output, presenter.Text, "the output of a command without --structured")
+		})
+
+		t.Run("asks for structured results for --structured", func(t *testing.T) {
+			t.Parallel()
+			got, err := app.Parse([]string{"--structured", "/some/tree"})
+			assert.NoError(t, err, "the error of Parse")
+			assert.Equal(t, got, app.Command{Root: "/some/tree", Output: presenter.Structured},
+				"the command of --structured")
 		})
 
 		t.Run("asks for the usage for --help", func(t *testing.T) {

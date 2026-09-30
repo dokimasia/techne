@@ -221,14 +221,15 @@ func Root(given string) (string, error) {
 	return resolved, nil
 }
 
-// Run serves the workspace at root to a client over standard input and output. [Root] resolves
-// root, the variable TECHNE_MOCK is the specification of the mock languages of [Build], and the
-// server reports version to the client.
+// Run serves the workspace at the root of command to a client over standard input and output,
+// with the results that the output of command selects. [Root] resolves the root, the variable
+// TECHNE_MOCK is the specification of the mock languages of [Build], and the server reports
+// version to the client.
 //
 // Run returns nil when the client closes standard input, and the error of ctx when ctx is done.
 // After the session it gives the engines five seconds to stop.
-func Run(ctx context.Context, root, version string) error {
-	resolved, err := Root(root)
+func Run(ctx context.Context, command Command, version string) error {
+	resolved, err := Root(command.Root)
 	if err != nil {
 		return err
 	}
@@ -249,7 +250,7 @@ func Run(ctx context.Context, root, version string) error {
 		_ = built.Close(stopping)
 	}()
 
-	server, err := presenter.NewServer(built.Tools, presenter.Info{Name: "techne", Version: version})
+	server, err := presenter.NewServer(built.Tools, presenter.Info{Name: "techne", Version: version}, command.Output)
 	if err != nil {
 		return fmt.Errorf("app: %w", err)
 	}
