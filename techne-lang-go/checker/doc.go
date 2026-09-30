@@ -4,10 +4,11 @@
 // Package checker serves the Go roles that need types by type-checking the workspace in this
 // process, with the loader of golang.org/x/tools/go/packages.
 //
-// [Engine] serves resolve, relate, verify and check. It runs the go command that builds the
-// workspace, and does not need a language server. gopls serves the same roles at the same tier.
-// The Go module registers gopls first, so the catalogue selects the checker when gopls is not
-// installed. [Binding] returns the tier of each role.
+// [Engine] serves resolve, relate, plan, verify and check. It runs the go command that builds
+// the workspace, and does not need a language server. gopls serves the same roles at the same
+// tier. The Go module registers gopls first, so the catalogue selects the checker when gopls is
+// not installed. The checker plans the move of a file alone, which gopls declines because it does
+// not serve workspace/willRenameFiles. [Binding] returns the tier of each role.
 //
 // # Loading
 //
@@ -50,6 +51,30 @@
 // rule of [go.dokimi.dev/techne/lang.Lowered]. Only an error on a line that can hide a use of
 // the name that the answer is about lowers it to indexed.
 //
+// # Moves
+//
+// [Engine.Plan] moves a file into the package of another directory and rewrites the uses of the
+// declarations that the move separates. Each file gets the edits of its role: the moved file,
+// another file of the source package, a file of the destination package, and any other file.
+// The rules of the four roles apply to the godoc links of each file. A rewritten link qualifies
+// a declaration by the name under which its file imports the package, and otherwise by the
+// import path of the package. Each rewritten file imports the packages that it uses, and goimports prints
+// it. The plan contains the lines that change.
+//
+// One file cannot import two packages under one name. When the destination has the name of the
+// source, an importing file gets one of two edits:
+//
+//   - A file that uses only moved declarations imports the destination in place of the source.
+//   - A file that also uses a declaration of the source imports the destination under an alias:
+//     the name of the parent directory of the destination followed by the name of the package.
+//
+// Another package can use only an exported name of a package that is not an external test. The
+// plan is refused when the move puts a use of any other name on the other side of the two
+// packages, and the refusal lists the declarations.
+//
+// A file that the build constraints of the load exclude has no types. The plan rewrites the
+// qualified uses of the moved declarations in it by name, with a caveat that lists the file.
+//
 // # Gates
 //
 // [Engine.Check] type-checks the whole workspace with the content of a change in place of the
@@ -60,6 +85,8 @@
 // # Dependency position
 //
 // Imports the standard library, core/diag, core/edit, core/engine, core/sema, core/source,
-// core/trust, lang and golang.org/x/tools/go/packages. The loader runs the go command, so the
-// files of a package and its build constraints are the ones that the go command selects.
+// core/trust, lang, golang.org/x/tools/go/packages, golang.org/x/tools/go/ast/astutil and
+// golang.org/x/tools/imports. The loader runs the go command, so the files of a package and its
+// build constraints are the ones that the go command selects. A move edits imports with astutil
+// and prints a file with the printer of goimports, which does not add or delete an import.
 package checker

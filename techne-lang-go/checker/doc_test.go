@@ -18,12 +18,12 @@ func TestDoc(t *testing.T) {
 	t.Run("Binding", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("returns resolved for the four roles of the package comment", func(t *testing.T) {
+		t.Run("returns resolved for the five roles of the package comment", func(t *testing.T) {
 			t.Parallel()
 			held := checker.Binding()
-			assert.Length(t, held, 4, "the roles of Binding")
+			assert.Length(t, held, 5, "the roles of Binding")
 			for _, role := range []engine.Role{
-				engine.RoleResolve, engine.RoleRelate, engine.RoleVerify, engine.RoleCheck,
+				engine.RoleResolve, engine.RoleRelate, engine.RolePlan, engine.RoleVerify, engine.RoleCheck,
 			} {
 				assert.Equal(t, held[role], trust.Resolved, "the tier of "+role.String())
 			}
@@ -33,7 +33,7 @@ func TestDoc(t *testing.T) {
 			t.Parallel()
 			held := checker.Binding()
 			for _, role := range []engine.Role{
-				engine.RoleOutline, engine.RoleSearch, engine.RolePlan, engine.RoleFormat, engine.RoleIndex,
+				engine.RoleOutline, engine.RoleSearch, engine.RoleFormat, engine.RoleIndex,
 			} {
 				assert.Equal(t, held[role], trust.None, "the tier of "+role.String())
 			}

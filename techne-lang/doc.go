@@ -28,6 +28,9 @@
 // exclude, by the rules of gitignore(5). [Readable] applies the .gitignore
 // rules and the size limit to one path. [Indentation] returns how a file
 // indents: with tabs, or with the number of spaces of one level.
+// [Outside] reports whether a workspace path leaves the workspace, and
+// [Moving] checks the two ends of the move of a file for every engine that
+// plans one.
 //
 // A request that the caller can correct is refused with
 // [go.dokimi.dev/techne/core/engine.ErrRefuse]:
@@ -37,6 +40,8 @@
 //     exclude.
 //   - [Offset] converts a line and a column to an offset, and refuses a
 //     position outside the file.
+//   - Moving refuses a move that leaves the workspace, a source that does
+//     not exist and a destination where a file exists.
 //
 // # Lowered answers
 //
@@ -66,7 +71,7 @@
 //
 // # Dependency position
 //
-// Imports the standard library, core/engine, core/sema, core/source and
-// core/trust. Language modules import lang, and lang does not import a
+// Imports the standard library, core/edit, core/engine, core/sema,
+// core/source and core/trust. Language modules import lang, and lang does not import a
 // language module.
 package lang

@@ -85,12 +85,13 @@ func (e *Engine) Close(context.Context) error {
 }
 
 // Binding returns the tier of each role that the engine serves: [trust.Resolved] for resolve,
-// relate, verify and check. It returns no tier for outline, search, plan, format and index,
-// which the parser and the language server serve.
+// relate, plan, verify and check. The plan role serves the move of a file alone. It returns no
+// tier for outline, search, format and index, which the parser and the language server serve.
 func Binding() map[engine.Role]trust.Fidelity {
 	return map[engine.Role]trust.Fidelity{
 		engine.RoleResolve: trust.Resolved,
 		engine.RoleRelate:  trust.Resolved,
+		engine.RolePlan:    trust.Resolved,
 		engine.RoleVerify:  trust.Resolved,
 		engine.RoleCheck:   trust.Resolved,
 	}
@@ -103,6 +104,7 @@ var (
 	_ engine.Available = (*Engine)(nil)
 	_ engine.Resolver  = (*Engine)(nil)
 	_ engine.Relator   = (*Engine)(nil)
+	_ engine.Planner   = (*Engine)(nil)
 	_ engine.Verifier  = (*Engine)(nil)
 	_ engine.Checker   = (*Engine)(nil)
 )

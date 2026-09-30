@@ -167,6 +167,15 @@ linters:
             - go/ast
             - go/token
             - go/types
+            # The parser and the printer of Go, with which a move reads a file that the load
+            # excludes and prints a file that it rewrites.
+            - go/format
+            - go/parser
+            # The import edits of goimports and its printer, with which a move adds, deletes and
+            # rewrites the imports of the files that it changes and prints them in the groups of
+            # goimports.
+            - golang.org/x/tools/go/ast/astutil
+            - golang.org/x/tools/imports$
 
         # The tests of a language module import its own package and the test packages of lang,
         # such as the conformance suite and the scripted server. depguard matches a file against
@@ -185,6 +194,10 @@ linters:
             - go/ast
             - go/token
             - go/types
+            # The build constraints and the parser of Go, which the tests of the Go module read
+            # a declared content with, so the expectation comes from the Go toolchain.
+            - go/build/constraint
+            - go/parser
 
     gocritic:
       enabled-tags: [diagnostic]

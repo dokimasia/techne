@@ -66,7 +66,7 @@ An engine cannot overstate its evidence.
 
 | Package | Contains | Imports |
 |---|---|---|
-| `lang` | `Declaration`, `Registry`, `Workspace`, the walk of the files of a scope, the ignore rules, `Indentation` and `Lowered` | core |
+| `lang` | `Declaration`, `Registry`, `Workspace`, the walk of the files of a scope, the ignore rules, `Indentation`, `Lowered`, and `Moving`, which checks the two ends of the move of a file | core |
 | `lang/treesitter` | the syntactic engine, which serves every language with a tree-sitter grammar | `lang`, core, the tree-sitter binding |
 | `lang/lsp` | the engine of a language server | `lang`, core, `go.lsp.dev` |
 | `lang/lsp/lsptest` | a scripted language server for the tests of `lang/lsp` | `lang/lsp`, `lang`, core |
@@ -96,7 +96,7 @@ techne-lang-python/
 ```text
 techne-lang-go/
   doc.go, language.go, conventions.go, queries/
-  checker/              resolve, relate, verify and check for Go, from go/packages in this process
+  checker/              resolve, relate, verify, check and the move of a file for Go, from go/packages in this process
 ```
 
 The import path of the Go module is `go.dokimi.dev/techne/lang/go`. Its package is `golang`,
