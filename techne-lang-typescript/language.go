@@ -108,6 +108,8 @@ func Server() lsp.Server {
 		// formattingOptions before it configures tsserver for the file, and
 		// tsserver indents the code of a refactoring with it.
 		Indentation: lsp.Indentation{Options: "formattingOptions"},
+		// A rename rewrites every use of a re-exported declaration.
+		Settings: lsp.TypeScriptSettings(),
 	}
 }
 
@@ -128,6 +130,8 @@ func Native() lsp.Server {
 		Dialects:   map[string]string{".tsx": lsp.IdentityTypeScriptReact},
 		Serves:     lsp.Binding(),
 		Scoped:     true,
+		// A rename rewrites every use of a re-exported declaration.
+		Settings: lsp.NativeSettings(),
 	}
 }
 

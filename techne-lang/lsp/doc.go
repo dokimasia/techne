@@ -115,6 +115,10 @@
 // [Server.Indentation] names, and the client returns the indentation of the file on disk, as
 // [lang.Indentation] reads it. A server that requests none indents by its own settings.
 //
+// A rename rewrites every use of a declaration. [TypeScriptSettings] and [NativeSettings] turn
+// off the alias that typescript-language-server and tsc --lsp write in an export statement that
+// re-exports a renamed declaration.
+//
 // # Positions
 //
 // The protocol counts a line and a character in UTF-16 code units, and techne counts bytes.

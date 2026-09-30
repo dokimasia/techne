@@ -119,6 +119,12 @@ func TestLanguage(t *testing.T) {
 			assert.Equal(t, typescript.Server().Indentation, lsp.Indentation{Options: formatting},
 				"the indentation section of typescript-language-server")
 		})
+
+		t.Run("sends the settings under which a rename rewrites every use", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, typescript.Server().Settings, lsp.TypeScriptSettings(),
+				"the settings of typescript-language-server")
+		})
 	})
 
 	t.Run("Native", func(t *testing.T) {
@@ -142,6 +148,11 @@ func TestLanguage(t *testing.T) {
 		t.Run("declares that tsc publishes a report after every change", func(t *testing.T) {
 			t.Parallel()
 			assert.False(t, typescript.Native().Quiet, "Quiet of tsc")
+		})
+
+		t.Run("sends the settings under which a rename rewrites every use", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, typescript.Native().Settings, lsp.NativeSettings(), "the settings of tsc")
 		})
 	})
 
