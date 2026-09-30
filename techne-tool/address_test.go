@@ -95,6 +95,33 @@ func TestAddress(t *testing.T) {
 			assert.Contains(t, got.Error.Reason, "It declares Store", "the reason of the failure")
 		})
 
+		t.Run("addresses a declaration qualified by the name of its unit", func(t *testing.T) {
+			t.Parallel()
+			got, asked := addressing(t, stored(), `{"scope":"a.fx","name":"a.Store","doc":"x"}`)
+			assert.False(t, got.Failed(), "the failure of the output")
+			assert.Equal(t, asked.Target.Span.Start.Offset, 10, "the offset of Store")
+		})
+
+		t.Run("picks the declaration that starts on the line over one that spans it", func(t *testing.T) {
+			t.Parallel()
+			spanning := declared("Clock", sema.KindStruct, "", 21, 0)
+			spanning.Span.End.Line = 42
+			starting := declared("Clock", sema.KindStruct, "", 22, 0)
+			starting.ID, starting.Span.Path = sema.NewID("fx", "b", "Clock", sema.KindStruct), "b.fx"
+			got, asked := addressing(t, []sema.Symbol{spanning, starting},
+				`{"scope":"a.fx","name":"Clock","line":23,"doc":"x"}`)
+			assert.False(t, got.Failed(), "the failure of the output")
+			assert.Equal(t, asked.Target.Span.Path, source.Path("b.fx"), "the file of the target")
+		})
+
+		t.Run("names the kinds of a name that another kind was asked for", func(t *testing.T) {
+			t.Parallel()
+			got, _ := addressing(t, stored(), `{"scope":"a.fx","name":"Store","kind":"function","doc":"x"}`)
+			assert.True(t, got.Failed(), "the failure of the output")
+			assert.Contains(t, got.Error.Reason, `declares no function called "Store". It declares struct at a.fx:2`,
+				"the reason of the failure")
+		})
+
 		t.Run("lists no name for a name that no name resembles", func(t *testing.T) {
 			t.Parallel()
 			got, _ := addressing(t, stored(), `{"scope":"a.fx","name":"zzzz","doc":"x"}`)
@@ -190,11 +217,13 @@ func TestAddress(t *testing.T) {
 				"the reason of the failure")
 		})
 
-		t.Run("refuses a negative line", func(t *testing.T) {
+		t.Run("returns an error for a negative line", func(t *testing.T) {
 			t.Parallel()
-			got, _ := addressing(t, stored(), `{"scope":"a.fx","name":"Store","line":-1,"doc":"x"}`)
-			assert.True(t, got.Failed(), "the failure of the output")
-			assert.Equal(t, got.Error.Reason, "line -1: lines count from one", "the reason of the failure")
+			built, err := tool.Document(serving(stored()...), &recorder{})
+			assert.NoError(t, err, "the error of Document")
+			_, err = built.Execute(t.Context(), json.RawMessage(`{"scope":"a.fx","name":"Store","line":-1,"doc":"x"}`))
+			assert.HasError(t, err, "the error of Execute")
+			assert.Contains(t, err.Error(), `"line" of at least 0, not -1`, "the error of Execute")
 		})
 	})
 }

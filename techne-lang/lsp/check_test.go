@@ -7,15 +7,22 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/diag"
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
+	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
+
+// asking is how long a test waits after it starts a question for the question to read the
+// buffers: long enough for a running server to answer the first requests of the question, and
+// shorter than the second for which the Hangs mode holds a question.
+const asking = 200 * time.Millisecond
 
 func TestCheck(t *testing.T) {
 	t.Parallel()
@@ -32,6 +39,25 @@ func TestCheck(t *testing.T) {
 			assert.Length(t, got.Items, 1, "the findings of faulty content")
 			assert.Equal(t, got.Items[0].Diagnostic.Severity, diag.SeverityError, "the severity of the finding")
 			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the answer")
+		})
+
+		t.Run("waits for a question that reads the buffers", func(t *testing.T) {
+			t.Parallel()
+			server := lsptest.Server(lsptest.Hangs)
+			server.Answering = time.Second
+			e := lsptest.Engine(t, lsptest.Workspace(t, sample()), server)
+			request := engine.Request{Scope: "a.fake"}
+			_, err := e.Resolve(t.Context(), request, store())
+			assert.NoError(t, err, "Resolve, which starts the server")
+			related := make(chan time.Time, 1)
+			go func() {
+				_, _ = e.Relate(t.Context(), request, declared("Store", sema.KindStruct), sema.ReferencedBy)
+				related <- time.Now()
+			}()
+			time.Sleep(asking)
+			_, _ = e.Check(t.Context(), map[source.Path][]byte{"a.fake": []byte(lsptest.Content)})
+			checked := time.Now()
+			assert.True(t, (<-related).Before(checked), "the question ended before the check")
 		})
 
 		t.Run("returns nothing for content that compiles", func(t *testing.T) {
@@ -130,6 +156,19 @@ func TestCheck(t *testing.T) {
 				return one.Diagnostic.Span.Path == "b.fake"
 			}), "a finding in b.fake")
 			assert.False(t, hasCaveat(got.Caveats, trust.CaveatDependents), "the answer has a dependents caveat")
+		})
+
+		t.Run("shows the server a file that the change deletes as removed", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.WorkspaceDiagnostics, sample()).Check(t.Context(),
+				map[source.Path][]byte{"a.fake": nil, "b.fake": []byte("var _ Store\n")})
+			assert.NoError(t, err, "Check of a change that deletes a.fake")
+			assert.True(t, slices.ContainsFunc(got.Items, func(one edit.Finding) bool {
+				return one.Diagnostic.Span.Path == "b.fake" && one.Diagnostic.Message == "Store is not declared"
+			}), "b.fake uses a Store that no file declares")
+			assert.False(t, slices.ContainsFunc(got.Items, func(one edit.Finding) bool {
+				return one.Diagnostic.Message == lsptest.EmptyFile
+			}), "a.fake is shown as removed and not as empty")
 		})
 
 		t.Run("adds a dependents caveat for a server without workspace diagnostics", func(t *testing.T) {

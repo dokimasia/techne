@@ -33,8 +33,8 @@ type Result[T any] struct {
 	Skipped bool
 }
 
-// Publish stamps r with the evidence behind it. The engine name and tier
-// come from e, never from r. The status is Degraded when the tier is below
+// Publish stamps r with the evidence behind it. The engine name, the tier and
+// the language come from e, never from r. The status is Degraded when the tier is below
 // want, Partial when the coverage is partial, and OK otherwise. Degraded
 // takes precedence over Partial.
 //
@@ -54,9 +54,10 @@ func Publish[T any](r Result[T], e Engine, role Role, want trust.Fidelity) Answe
 	}
 
 	return Answer[T]{
-		Items:   r.Items,
-		Status:  status,
-		Skipped: r.Skipped,
+		Items:    r.Items,
+		Status:   status,
+		Skipped:  r.Skipped,
+		Language: e.Language(),
 		Provenance: trust.Provenance{
 			Engine:       e.Name(),
 			Fidelity:     held,

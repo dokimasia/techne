@@ -50,10 +50,11 @@ type Engine struct {
 	// waiting for it, or nil.
 	pending *launch
 
-	// showing is locked while a buffer of the server differs from its file on disk. A new
-	// question waits for it, because the refresh of every buffer would replace the content the
-	// server was shown.
-	showing sync.Mutex
+	// showing is locked while a buffer of the server differs from its file on disk: while
+	// [Engine.Check] and an extraction show the server content of their own, and while a
+	// question refreshes the buffers. A question read-locks it from the refresh to its answer,
+	// so no content of another request replaces a buffer that the question reads.
+	showing sync.RWMutex
 }
 
 // New returns an engine over the workspace at root for the language that d declares, served
@@ -367,6 +368,14 @@ func snapshot(full string) ([]byte, stamp, error) {
 	return content, stampOf(info), nil
 }
 
+// reading read-locks showing for a question that reads the buffers of the server, and returns
+// the function that unlocks it. The question calls it after [Engine.running], which refreshes
+// the buffers under the lock.
+func (e *Engine) reading() func() {
+	e.showing.RLock()
+	return e.showing.RUnlock
+}
+
 // current sends the server the content of every file whose buffer is stale, and releases
 // every buffer whose file is gone. It reads a file only when its stamp differs from the stamp
 // of its buffer.
@@ -653,7 +662,7 @@ func (e *Engine) pathOf(u uri.URI) source.Path {
 	}
 	for _, root := range []string{e.root, e.given} {
 		relative, err := filepath.Rel(root, full)
-		if p := source.Path(filepath.ToSlash(relative)); err == nil && !outside(p) {
+		if p := source.Path(filepath.ToSlash(relative)); err == nil && !lang.Outside(p) {
 			return p
 		}
 	}

@@ -136,8 +136,7 @@ func (e *Engine) extracting(
 		NewName:      fresh,
 	})
 	if err != nil {
-		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"lsp: %s: rename the extracted function: %w", e.server.Name, err)
+		return engine.Result[edit.Change]{}, replied(e.server.Name, "rename the extracted function", err)
 	}
 	renamed, err := e.changes(named, after)
 	if err != nil {
@@ -191,7 +190,7 @@ func (e *Engine) lifting(
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("lsp: %s: code action: %w", e.server.Name, err)
+		return nil, replied(e.server.Name, "code action", err)
 	}
 
 	action, chose := chosen(offered, wanted)
@@ -208,7 +207,7 @@ func (e *Engine) lifting(
 		asked := *action
 		resolved, err := held.asks.CodeActionResolve(ctx, &asked)
 		if err != nil {
-			return nil, fmt.Errorf("lsp: %s: resolve %q: %w", e.server.Name, action.Title, err)
+			return nil, replied(e.server.Name, fmt.Sprintf("resolve %q", action.Title), err)
 		}
 		if resolved != nil {
 			// gopls resolves an extraction to a command, and the edit exists once the
@@ -248,7 +247,7 @@ func (e *Engine) commanded(
 	})
 	offered := take()
 	if err != nil {
-		return nil, fmt.Errorf("lsp: %s: %s: %w", e.server.Name, action.Command.Command, err)
+		return nil, replied(e.server.Name, action.Command.Command, err)
 	}
 	switch len(offered) {
 	case 1:

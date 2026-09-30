@@ -78,6 +78,17 @@ func hasCaveat(caveats []trust.Caveat, code trust.CaveatCode) bool {
 	return slices.ContainsFunc(caveats, func(one trust.Caveat) bool { return one.Code == code })
 }
 
+// preloadNote is a part of the note of the caveat of a preload that opened fewer files than
+// write the name, pinned as the engine words it.
+const preloadNote = "loads only the files it has open, and techne opened 200 of the 201 files"
+
+// cutShort reports whether caveats contain the caveat of a preload that opened 200 of 201 files.
+func cutShort(caveats []trust.Caveat) bool {
+	return slices.ContainsFunc(caveats, func(one trust.Caveat) bool {
+		return one.Code == trust.CaveatIndexWarming && strings.Contains(one.Note, preloadNote)
+	})
+}
+
 // messages returns the diagnostic messages of findings, in order.
 func messages(findings []edit.Finding) []string {
 	out := make([]string, 0, len(findings))

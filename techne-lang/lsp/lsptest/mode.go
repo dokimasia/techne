@@ -56,6 +56,12 @@ const (
 	// Unresolved responds to textDocument/definition with null.
 	Unresolved Mode = "unresolved"
 
+	// Exports responds to textDocument/definition on line 0 of [Content] with the name Store,
+	// and anywhere else with the start of line 0, which no declaration contains. So
+	// typescript-language-server responds for an import with the export { X } of its module,
+	// whose definition is the declaration of X.
+	Exports Mode = "exports"
+
 	// Pointed responds to textDocument/definition with the position of the request, and
 	// declares the package clause on line 0 of [Content] beside the [Default] declarations.
 	Pointed Mode = "pointed"
@@ -87,6 +93,13 @@ const (
 	//     buffer that it held follows.
 	Quiet Mode = "quiet"
 
+	// Loads advertises no pull diagnostics and publishes the report of an open [QuietDelay]
+	// after it, as the Quiet mode does, and
+	// responds to textDocument/definition in a document with an empty list until it has sent
+	// that report. So typescript-language-server responds while it loads the project of the
+	// first file of the project that the client opens.
+	Loads Mode = "loads"
+
 	// Asks sends workspace/configuration, workspace/workspaceFolders and
 	// workspace/applyEdit during initialize and waits for each reply. It then requests the
 	// indentation of a.fake, of b.fake, of no file and of the file that [Outside] names, under
@@ -103,6 +116,10 @@ const (
 	// Uncallable refuses textDocument/prepareCallHierarchy with an error, as a server does
 	// for a declaration that cannot be called.
 	Uncallable Mode = "uncallable"
+
+	// Untyped refuses textDocument/implementation with an error response of the message
+	// [NotAType], as gopls does for a constant.
+	Untyped Mode = "untyped"
 
 	// Loading reports a work-done progress job for [LoadTime] after initialize, and responds
 	// to textDocument/references with an empty list until the job ends.
@@ -146,7 +163,8 @@ const (
 	// Extracts offers "Extract into variable" and "Extract into function" under the kind
 	// refactor.extract, and computes the edit of each on codeAction/resolve. The edit appends
 	// a function named [Placeholder]. It responds to textDocument/diagnostic with one
-	// diagnostic per function in its buffer, whose message is "declares=" and the name.
+	// diagnostic per function in its buffer, whose message is "declares=" and the name. It
+	// refuses a textDocument/rename to a name that is no identifier, as [InvalidName] states.
 	Extracts Mode = "extracts"
 
 	// Commands offers the extraction of the Extracts mode as a command. It performs the
@@ -203,8 +221,9 @@ const (
 
 	// WorkspaceDiagnostics diagnoses as the Compiles mode does and advertises workspace
 	// diagnostics. It also reports an error in each file that uses Store while no file
-	// declares it. It diagnoses every file with the [Extension] suffix under the workspace
-	// root, from its buffer for the file or else from disk.
+	// declares it, and the error [EmptyFile] in each empty file. It diagnoses every file with
+	// the [Extension] suffix under the workspace root, from its buffer for the file or else
+	// from disk.
 	WorkspaceDiagnostics Mode = "workspace-diagnostics"
 
 	// Canonical resolves symbolic links in every URI it receives, so every URI it reports
@@ -237,6 +256,12 @@ const (
 	// Nested describes a [Bundle] as the Minified mode does, and reports each function as a
 	// class of the same name and range that contains one method.
 	Nested Mode = "nested"
+
+	// Aims describes its buffer as gopls does, with a function for each func keyword and no
+	// local or parameter, and responds to textDocument/rename with one edit that replaces the
+	// word at the position of the request. It responds to textDocument/references with no
+	// location. A test reads the edit of a rename to learn where the client aimed it.
+	Aims Mode = "aims"
 )
 
 // LoadTime is how long the Loading mode takes to end its progress job.
@@ -278,6 +303,18 @@ const (
 
 // Dying is the line that the Dies and DiesLate modes write to stderr before they exit.
 const Dying = "lsptest: the scripted server exits during initialize"
+
+// EmptyFile is the message of the error that the WorkspaceDiagnostics mode reports in an
+// empty file, as a compiler reports a Go file without a package clause.
+const EmptyFile = "the file is empty, and a file of this language starts with a comment"
+
+// NotAType is the message of the error response of the Untyped mode to
+// textDocument/implementation.
+const NotAType = "Store is a const, not a type"
+
+// InvalidName starts the message of the error response of the Extracts and Commands modes to a
+// textDocument/rename whose new name is no identifier.
+const InvalidName = "invalid identifier to rename"
 
 // Waiting is the line that the Silent mode writes to stderr when it starts.
 const Waiting = "lsptest: the scripted server waits before it responds to initialize"

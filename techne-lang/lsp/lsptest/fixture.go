@@ -43,6 +43,10 @@ func After() int { return (&Store{}).Get() }
 // which is byte 30 of the file.
 const Emoji = "package a\n\nvar 🌍 = 1; type Störe struct{}\n"
 
+// Locals is a file whose function Wait, on line 2, declares the local t on line 3. The name t
+// starts at character 5 of its line.
+const Locals = "package a\n\nfunc Wait() int {\n\tvar t = 1\n\treturn t\n}\n"
+
 // Twins is a file with the types Store and Cache on lines 2 and 6, which each declare a method
 // Get, on lines 4 and 8. The name of each method starts at character 16 of its line.
 const Twins = "package a\n\ntype Store struct{}\n\nfunc (s *Store) Get() int { return 1 }\n\n" +
@@ -81,12 +85,18 @@ const Placeholder = "newFunction"
 // Test is the base name of the one file that [Declaration] treats as a test.
 const Test = "a_test" + Extension
 
+// Removed is the content under which a file of [Language] declares nothing, which
+// [Declaration] states as its [lang.Declaration.Removed]. It is not empty, because the
+// WorkspaceDiagnostics mode reports an empty buffer as [EmptyFile].
+const Removed = "// removed\n"
+
 // Declaration returns the declaration of [Language]. A name that starts with an upper-case
 // letter is exported. The namespace of a file is its directory.
 func Declaration() lang.Declaration {
 	return lang.Declaration{
 		Language:   Language,
 		Extensions: []string{Extension},
+		Removed:    []byte(Removed),
 		Comment:    lang.CommentStyle{Line: "// "},
 		IsTest:     func(p string) bool { return path.Base(p) == Test },
 		Namespace:  path.Dir,

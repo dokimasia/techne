@@ -32,8 +32,9 @@
 // [Content] and [Emoji] are the files that the ranges of the script point into. [Bundle]
 // returns a file of any number of functions on one line, which the Minified and Nested modes
 // describe from its buffer. [Twins] declares a method Get in each of two types, which the
-// Receivers mode reports at the top level and the Impls mode inside impl blocks. A test writes
-// them into a workspace with [Workspace].
+// Receivers mode reports at the top level and the Impls mode inside impl blocks. [Locals]
+// declares a local inside a function, which the Aims mode leaves out of its document symbols. A
+// test writes them into a workspace with [Workspace].
 // [Declaration] declares [Language], which claims files with the [Extension] suffix.
 //
 // # Engines

@@ -226,7 +226,8 @@ func lines(text string) []string {
 }
 
 // asked runs one write operation and returns what it did. A write tool resolves its target
-// and builds req, and every write tool reports the outcome through [reported].
+// and builds req, and every write tool reports the outcome through [reported]. target is the
+// subject of req, which the write path keeps with a preview for [Apply].
 func asked(
 	ctx context.Context,
 	writes Writer,
@@ -235,6 +236,7 @@ func asked(
 	target string,
 	req edit.Request,
 ) (Written, error) {
+	req.Subject = target
 	done, err := writes.Apply(ctx, req)
 	if err != nil {
 		return Written{}, err
@@ -314,7 +316,8 @@ func applied(done edit.Outcome) map[string]bool {
 // the change moves, creates or deletes comes first from changes, and the rewrites follow
 // under the file they are in. With wrote set, Touched returns only the files that wrote
 // names, because an applied change reports what it wrote. With wrote nil, it returns every
-// file of a preview.
+// file of a preview. Without rewrites, as for a change that the write path refused before it
+// rendered them, the sites of a file are the edits of its changes.
 func Touched(changes []edit.Change, rewrites []edit.Rewrite, wrote map[string]bool) []Changed {
 	out := []Changed{}
 	at := map[string]int{}
@@ -335,6 +338,9 @@ func Touched(changes []edit.Change, rewrites []edit.Rewrite, wrote map[string]bo
 			continue
 		}
 		i := entry(string(c.Path))
+		if len(rewrites) == 0 {
+			out[i].Sites += len(c.Edits)
+		}
 		switch c.Kind {
 		case edit.ChangeMove:
 			out[i].To = string(c.To)

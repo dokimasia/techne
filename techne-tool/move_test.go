@@ -60,6 +60,16 @@ func TestMove(t *testing.T) {
 			assert.Contains(t, got.Error.Reason, "already at a/b.fx", "the reason of the failure")
 		})
 
+		t.Run("refuses a path that names a directory before it asks the write path", func(t *testing.T) {
+			t.Parallel()
+			writer := &recorder{}
+			got := moved(t, writer, `{"path":"a/b","to":"a/c"}`)
+			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
+			assert.Equal(t, got.Error.Reason, `path "a/b" names a directory, and path names one file`,
+				"the reason of the failure")
+			assert.Equal(t, writer.asked.Operation, edit.Operation(""), "the operation sent to the write path")
+		})
+
 		t.Run("refuses a path that leaves the workspace", func(t *testing.T) {
 			t.Parallel()
 			for _, call := range []string{`{"path":"../escaped.fx","to":"a.fx"}`, `{"path":"a.fx","to":"../escaped.fx"}`} {

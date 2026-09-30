@@ -60,11 +60,23 @@ func TestExtract(t *testing.T) {
 			}
 		})
 
-		t.Run("refuses a first line of zero", func(t *testing.T) {
+		t.Run("returns an error for a first line of zero", func(t *testing.T) {
 			t.Parallel()
-			got := extracted(t, &recorder{}, `{"path":"a.fx","first_line":0,"last_line":2,"new_name":"parsed"}`)
-			assert.True(t, got.Failed(), "the failure of the output")
-			assert.Contains(t, got.Error.Reason, "count from one", "the reason of the failure")
+			built, err := tool.Extract(&recorder{})
+			assert.NoError(t, err, "the error of Extract")
+			_, err = built.Execute(t.Context(),
+				json.RawMessage(`{"path":"a.fx","first_line":0,"last_line":2,"new_name":"parsed"}`))
+			assert.HasError(t, err, "the error of Execute")
+			assert.Contains(t, err.Error(), `"first_line" of at least 1, not 0`, "the error of Execute")
+		})
+
+		t.Run("refuses a path that names a directory before it asks the write path", func(t *testing.T) {
+			t.Parallel()
+			writer := &recorder{}
+			got := extracted(t, writer, `{"path":"a","first_line":1,"last_line":2,"new_name":"parsed"}`)
+			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
+			assert.Contains(t, got.Error.Reason, "names a directory", "the reason of the failure")
+			assert.Equal(t, writer.asked.Operation, edit.Operation(""), "the operation sent to the write path")
 		})
 
 		t.Run("refuses a last line before the first line", func(t *testing.T) {

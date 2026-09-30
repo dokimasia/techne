@@ -267,6 +267,42 @@ func TestOutline(t *testing.T) {
 			assert.Empty(t, got.Scope.Language, "the language of the scope")
 		})
 
+		t.Run("names the language of the engine for an answer without declarations", func(t *testing.T) {
+			t.Parallel()
+			got := outlined(t, `{"scope":"a.fx"}`)
+			assert.Equal(t, got.Scope.Language, string(fixture), "the language of the scope")
+		})
+
+		t.Run("names the directory as the unit of an answer of one unit", func(t *testing.T) {
+			t.Parallel()
+			over := serving(function("F", ""), function("G", ""))
+			over.claims = map[source.Path]bool{"pkg": true}
+			built, err := tool.Outline(over)
+			assert.NoError(t, err, "the error of Outline")
+			result, err := built.Execute(t.Context(), json.RawMessage(`{"scope":"pkg"}`))
+			assert.NoError(t, err, "the error of Execute")
+			var got tool.Answer
+			assert.NoError(t, json.Unmarshal(result.Payload, &got), "the decoding of the answer")
+			assert.Equal(t, got.Scope.Unit, "pkg", "the unit of the scope")
+		})
+
+		t.Run("names no unit for an answer about a directory of two units", func(t *testing.T) {
+			t.Parallel()
+			nested := function("G", "")
+			nested.ID = sema.NewID(fixture, "a/b", "G", sema.KindFunction)
+			over := serving(function("F", ""), nested)
+			over.claims = map[source.Path]bool{"pkg": true}
+			built, err := tool.Outline(over)
+			assert.NoError(t, err, "the error of Outline")
+			result, err := built.Execute(t.Context(), json.RawMessage(`{"scope":"pkg"}`))
+			assert.NoError(t, err, "the error of Execute")
+			var got tool.Answer
+			assert.NoError(t, json.Unmarshal(result.Payload, &got), "the decoding of the answer")
+			assert.Empty(t, got.Scope.Unit, "the unit of the scope")
+			assert.Equal(t, got.Scope.Directory, "pkg", "the directory of the scope")
+			assert.HasPrefix(t, got.Render(), "pkg — fixture, 2 declarations", "the heading of the render")
+		})
+
 		t.Run("accepts a backslash inside a path", func(t *testing.T) {
 			t.Parallel()
 			_, err := outlining(t).Execute(t.Context(), json.RawMessage(`{"scope":"dir\\a.fx"}`))

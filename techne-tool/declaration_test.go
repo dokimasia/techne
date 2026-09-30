@@ -173,6 +173,18 @@ func TestDeclaration(t *testing.T) {
 			assert.NotNil(t, got.Span, "the span")
 		})
 
+		t.Run("counts the lines and the columns of the span from one", func(t *testing.T) {
+			t.Parallel()
+			store := covering("Store", sema.KindStruct, 0, 100)
+			store.Span.Start.Column, store.Span.End.Column = 0, 1
+			got := tool.Declared([]sema.Symbol{store}, tool.Source, 0)[0]
+			assert.Equal(t, *got.Span, tool.Extent{
+				Start: tool.Place{Line: 1, Column: 1, Offset: 0},
+				End:   tool.Place{Line: 101, Column: 2, Offset: 100},
+			}, "the span")
+			assert.Equal(t, got.Span.Start.Line, got.Line, "the first line of the span and the line")
+		})
+
 		t.Run("states the visibility of an unexported declaration alone", func(t *testing.T) {
 			t.Parallel()
 			exported := tool.Declared(one, tool.Signatures, 0)[0]
@@ -186,6 +198,26 @@ func TestDeclaration(t *testing.T) {
 			got := tool.Declared(nil, tool.Names, 0)
 			assert.NotNil(t, got, "the list of declarations")
 			assert.Length(t, got, 0, "the declarations")
+		})
+	})
+
+	t.Run("Resolved", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("keeps a parameter at the top level without include", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Resolved([]sema.Symbol{covering("ctx", sema.KindParameter, 0, 3)}, tool.Names, 0)
+			assert.Equal(t, names(got), []string{"ctx"}, "the declarations at the top level")
+		})
+
+		t.Run("leaves out a member that include does not select", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Resolved([]sema.Symbol{
+				covering("Wait", sema.KindFunction, 0, 100),
+				covering("ctx", sema.KindParameter, 10, 13),
+			}, tool.Names, 0)
+			assert.Equal(t, names(got), []string{"Wait"}, "the declarations at the top level")
+			assert.Empty(t, got[0].Members, "the members of Wait")
 		})
 	})
 
@@ -233,6 +265,19 @@ func TestDeclaration(t *testing.T) {
 			}, tool.Names, 0))
 			assert.Equal(t, names(got), []string{"Store"}, "the declarations at the top level")
 			assert.Equal(t, names(got[0].Members), []string{"size"}, "the members of Store")
+		})
+
+		t.Run("keeps a declaration by its qualified name", func(t *testing.T) {
+			t.Parallel()
+			method := covering("Time", sema.KindMethod, 200, 300)
+			method.ID = sema.NewID("fixture", "pkg", "Instant.Time", sema.KindMethod)
+			other := covering("Time", sema.KindFunction, 400, 500)
+			other.ID = sema.NewID("fixture", "pkg", "Time", sema.KindFunction)
+			got := tool.Narrow{Names: []string{"Instant.Time"}}.Apply(tool.Declared([]sema.Symbol{
+				covering("Instant", sema.KindStruct, 0, 100), method, other,
+			}, tool.Names, 0))
+			assert.Length(t, got, 1, "the declarations of Instant.Time")
+			assert.Equal(t, got[0].Kind, sema.KindMethod, "the kind of Instant.Time")
 		})
 
 		t.Run("keeps the declarations of a prefix", func(t *testing.T) {

@@ -44,11 +44,15 @@ const (
 	DefinitionParameter     Capture = "definition.parameter"
 	DefinitionTypeParameter Capture = "definition.type_parameter"
 	DefinitionImport        Capture = "definition.import"
-	DefinitionLabel         Capture = "definition.label"
-	DefinitionPackage       Capture = "definition.package"
-	DefinitionModule        Capture = "definition.module"
-	DefinitionMacro         Capture = "definition.macro"
-	DefinitionImplement     Capture = "definition.implementation"
+	// DefinitionReexport is an import that its file offers to the rest of a program, as the
+	// names of a TypeScript `export { a } from "b"` are. It is a [sema.KindImport] whose
+	// visibility the language reads from its name, where any other import is unexported.
+	DefinitionReexport  Capture = "definition.reexport"
+	DefinitionLabel     Capture = "definition.label"
+	DefinitionPackage   Capture = "definition.package"
+	DefinitionModule    Capture = "definition.module"
+	DefinitionMacro     Capture = "definition.macro"
+	DefinitionImplement Capture = "definition.implementation"
 )
 
 // DefinitionPrefix starts every definition capture. [New] refuses a query
@@ -81,6 +85,7 @@ var kinds = map[Capture]sema.Kind{
 	DefinitionParameter:     sema.KindParameter,
 	DefinitionTypeParameter: sema.KindTypeParameter,
 	DefinitionImport:        sema.KindImport,
+	DefinitionReexport:      sema.KindImport,
 	DefinitionLabel:         sema.KindLabel,
 	DefinitionPackage:       sema.KindPackage,
 	DefinitionModule:        sema.KindModule,
@@ -153,7 +158,7 @@ func Definitions() []Capture {
 		DefinitionField, DefinitionProperty,
 		DefinitionVariable, DefinitionConstant,
 		DefinitionParameter, DefinitionTypeParameter,
-		DefinitionImport, DefinitionLabel,
+		DefinitionImport, DefinitionReexport, DefinitionLabel,
 		DefinitionPackage, DefinitionModule, DefinitionMacro,
 		DefinitionImplement,
 	}

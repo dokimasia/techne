@@ -50,6 +50,7 @@ func (e *Engine) formatting(ctx context.Context, paths []source.Path) (engine.Re
 	if err != nil {
 		return engine.Result[edit.Change]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
+	defer e.reading()()
 	ctx, done := e.answered(ctx)
 	defer done()
 	if !provides(held.capable.DocumentFormattingProvider) {
@@ -75,7 +76,7 @@ func (e *Engine) formatting(ctx context.Context, paths []source.Path) (engine.Re
 			Options:      protocol.FormattingOptions{TabSize: tabSize, InsertSpaces: insertSpaces},
 		})
 		if err != nil {
-			return engine.Result[edit.Change]{}, fmt.Errorf("lsp: %s: format %s: %w", e.server.Name, p, err)
+			return engine.Result[edit.Change]{}, replied(e.server.Name, "format "+string(p), err)
 		}
 		if len(edits) == 0 {
 			continue

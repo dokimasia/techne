@@ -19,7 +19,9 @@ import (
 // first.
 //
 // A name matches in rank order: the exact text, the text with case folded,
-// a prefix, then a substring. Within one rank a shorter name comes first,
+// a prefix, then a substring. A text with a dot matches the qualified name,
+// as Instant.Time for the method Time of Instant, and any other text the
+// name. Within one rank a shorter name comes first,
 // and the ID breaks the remaining ties, so identical requests return
 // identical answers. An empty text matches every name. Without q.Private,
 // Search leaves out the declarations that Outline reports as
@@ -37,7 +39,7 @@ func (e *Engine) Search(ctx context.Context, req engine.Request, q engine.Query)
 		return (q.Kind == sema.KindUnknown || d.kind == q.Kind) &&
 			(q.Private || d.visibility != sema.Unexported) &&
 			q.Include.Keeps(d.kind, d.local) &&
-			rank(d.name, q.Text) != noMatch
+			rank(compared(d.name, d.qualified, q.Text), q.Text) != noMatch
 	}
 	found, err := parse(ctx, e, files.Read, wanted, declaredIn)
 	if err != nil {
@@ -50,7 +52,9 @@ func (e *Engine) Search(ctx context.Context, req engine.Request, q engine.Query)
 	}
 	var matches []ranked
 	for _, symbol := range slices.Concat(found...) {
-		matches = append(matches, ranked{symbol: symbol, rank: rank(symbol.Name, q.Text)})
+		matches = append(matches, ranked{
+			symbol: symbol, rank: rank(compared(symbol.Name, symbol.ID.Name(), q.Text), q.Text),
+		})
 	}
 	slices.SortStableFunc(matches, func(a, b ranked) int {
 		return cmp.Or(
@@ -86,6 +90,16 @@ const (
 	substring
 	noMatch
 )
+
+// compared returns the name that wanted is matched against: the qualified
+// name, as Instant.Time, when wanted is qualified with a dot, and name
+// otherwise.
+func compared(name, qualified, wanted string) string {
+	if strings.Contains(wanted, ".") {
+		return qualified
+	}
+	return name
+}
 
 // rank returns how name matches wanted, and literal for every name when
 // wanted is empty.

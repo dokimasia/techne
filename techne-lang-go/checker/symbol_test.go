@@ -53,6 +53,19 @@ func TestSymbol(t *testing.T) {
 			assert.Equal(t, got.Items[0].Signature, "func helper() int", "the signature of helper")
 		})
 
+		t.Run("returns the signature of a struct or an interface type without its body", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, whole())
+			for anchor, want := range map[string]string{
+				"type Store":  "type Store struct",
+				"type Reader": "type Reader interface",
+			} {
+				got, err := e.Resolve(t.Context(), engine.Request{Scope: "store.go"}, at(t, store, anchor))
+				assert.NoError(t, err, "Resolve of "+anchor)
+				assert.Equal(t, got.Items[0].Signature, want, "the signature at "+anchor)
+			}
+		})
+
 		t.Run("returns exported for a name with a capital", func(t *testing.T) {
 			t.Parallel()
 			got, err := serving(t, whole()).Resolve(t.Context(), engine.Request{Scope: "store.go"},

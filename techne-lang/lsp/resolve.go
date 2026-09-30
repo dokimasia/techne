@@ -6,6 +6,7 @@ package lsp
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
@@ -27,7 +28,10 @@ import (
 //
 // A location contains no name and no kind. Resolve reads the declarations of each file that a
 // location names, through the outline engine of the language when the engine has one, and
-// returns the innermost declaration at the location. An error on the line of
+// returns the innermost declaration at the location, by the rule of [Engine.denoted], each
+// declaration once. A server without pull diagnostics that returns no definition in a file it
+// has published no report of is asked again after it publishes one, which Resolve waits
+// [reporting] for. An error on the line of
 // the position lowers the answer, and so does any error of the project when the answer is
 // empty. An empty answer is partial, because a server returns no definition inside a macro,
 // at a dynamic dispatch or for a name that nothing declares. A server that does not answer
@@ -51,6 +55,7 @@ func (e *Engine) resolving(
 	if err != nil || skipped {
 		return engine.Result[sema.Symbol]{Skipped: skipped, Completeness: trust.ScopeTotal}, err
 	}
+	defer e.reading()()
 	if at.Offset <= 0 {
 		if _, outside := lang.Offset(doc.path, doc.content, at.Line, at.Column); outside != nil {
 			return engine.Result[sema.Symbol]{}, outside
@@ -63,24 +68,34 @@ func (e *Engine) resolving(
 	}
 	ready := e.settle(ctx, held)
 
-	answered, err := held.asks.Definition(ctx, &protocol.DefinitionParams{
+	asked := protocol.DefinitionParams{
 		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(doc.path))},
 		Position:     doc.mark(at),
-	})
+	}
+	unseen := held.capable.DiagnosticProvider == nil && !held.reports.said(asked.TextDocument.URI)
+	answered, err := held.asks.Definition(ctx, &asked)
+	// typescript-language-server returns an empty definition in the first file of a project
+	// that it opens while it loads the project, and publishes the diagnostics of the file after
+	// the load. An empty definition in a file without a report is asked again once the report
+	// arrives.
+	if err == nil && unseen && len(definitions(answered)) == 0 && e.analysed(ctx, held, doc.path) {
+		answered, err = held.asks.Definition(ctx, &asked)
+	}
 	if err != nil {
-		return engine.Result[sema.Symbol]{}, fmt.Errorf("lsp: %s: definition in %s: %w",
-			e.server.Name, doc.path, err)
+		return engine.Result[sema.Symbol]{}, replied(e.server.Name, "definition in "+string(doc.path), err)
 	}
 
 	found := newFinder(e, held)
 	var out []sema.Symbol
 	for _, one := range definitions(answered) {
-		declared, known, err := found.at(ctx, e.pathOf(one.URI), one.Range.Start)
+		declared, err := e.denoted(ctx, held, found, one)
 		if err != nil {
 			return engine.Result[sema.Symbol]{}, err
 		}
-		if known {
-			out = append(out, declared)
+		for _, d := range declared {
+			if !slices.ContainsFunc(out, func(o sema.Symbol) bool { return o.Span == d.Span }) {
+				out = append(out, d)
+			}
 		}
 	}
 
@@ -95,6 +110,54 @@ func (e *Engine) resolving(
 		Lowered:      reaches,
 		Caveats:      caveats,
 	}, nil
+}
+
+// denoted returns the innermost declaration at a location of a definition. A location that no
+// declaration contains is asked for its own definition once, and denoted returns the
+// declarations at the locations of that answer. typescript-language-server answers the
+// definition of an imported name with the export { X } of its module and with a JSDoc tag that
+// names X, and the definition of either is the declaration of X. A file at the location that
+// [lang.Readable] refuses has no declaration.
+func (e *Engine) denoted(
+	ctx context.Context,
+	held *session,
+	found *finder,
+	at protocol.Location,
+) ([]sema.Symbol, error) {
+	p := e.pathOf(at.URI)
+	declared, known, err := found.at(ctx, p, at.Range.Start)
+	switch {
+	case err != nil:
+		return nil, err
+	case known:
+		return []sema.Symbol{declared}, nil
+	}
+	if _, err = e.open(ctx, held, p); refused(err) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+	answered, err := held.asks.Definition(ctx, &protocol.DefinitionParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: at.URI},
+		Position:     at.Range.Start,
+	})
+	if err != nil {
+		return nil, replied(e.server.Name, "definition in "+string(p), err)
+	}
+	var out []sema.Symbol
+	for _, next := range definitions(answered) {
+		if next == at {
+			continue
+		}
+		declared, known, err = found.at(ctx, e.pathOf(next.URI), next.Range.Start)
+		if err != nil {
+			return nil, err
+		}
+		if known {
+			out = append(out, declared)
+		}
+	}
+	return out, nil
 }
 
 // unbound is the caveat on an empty definition, which comes with [trust.ScopePartial]. An empty

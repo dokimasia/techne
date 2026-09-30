@@ -43,6 +43,10 @@
 // reason of a refusal. A service returns it in the answer of [Refused], as it
 // returns a request that no engine serves in the answer of [Unsupported].
 //
+// A [Verifier] declines a request that names a suite it does not run with
+// the error of [Unrun], because an answer without that suite says nothing
+// about it.
+//
 // # Waits
 //
 // [Timing] gives the context of one call a [Waited]. An engine brackets each

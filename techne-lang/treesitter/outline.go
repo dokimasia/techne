@@ -205,6 +205,9 @@ type declaration struct {
 	// start come from one statement that binds more than one name.
 	start uint
 	span  source.Span
+	// reexported reports that a [DefinitionReexport] capture matched the
+	// declaration.
+	reexported bool
 }
 
 // qualify returns the qualified name of each declaration of found, whose
@@ -368,12 +371,13 @@ func (e *Engine) matched(tree *ts.Tree, content []byte, grammar *ts.Language, p 
 				if out[i].receiver == "" {
 					out[i].receiver = receiver
 				}
+				out[i].reexported = out[i].reexported || got.reexported
 				continue
 			}
 			index[one.at] = len(out)
 			out = append(out, declaration{
 				kind: got.kind, node: *got.node, name: name, receiver: receiver,
-				start: got.node.StartByte(), span: got.span,
+				start: got.node.StartByte(), span: got.span, reexported: got.reexported,
 			})
 		}
 	}
@@ -454,6 +458,8 @@ type captured struct {
 	// receiver is the node of the [Receiver] capture, or nil.
 	receiver *ts.Node
 	span     source.Span
+	// reexported reports that the definition capture is [DefinitionReexport].
+	reexported bool
 }
 
 // read returns what one match captures of a declaration, and reports false
@@ -480,7 +486,7 @@ func read(match *ts.QueryMatch, names []string, p source.Path) (captured, bool) 
 		default:
 			if k, ok := KindOf(name); ok && !defines {
 				out.kind, out.node, defines = k, &capture.Node, true
-				out.span = spanOf(p, capture.Node)
+				out.span, out.reexported = spanOf(p, capture.Node), name == DefinitionReexport
 			}
 		}
 	}

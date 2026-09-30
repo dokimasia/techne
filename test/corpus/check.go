@@ -10,7 +10,6 @@ import (
 	"slices"
 	"strings"
 
-	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/tool"
 )
 
@@ -22,12 +21,12 @@ import (
 //   - It has no span, or its span lies outside the file.
 //   - Its snippet differs from the bytes of its span, or lacks its name.
 //   - Its line, or the line or column of its span, differs from the start
-//     offset of its span.
+//     offset of its span. All three count from one.
 //   - Its span leaves the span of the declaration that contains it.
 func Spans(content []byte, items []tool.Declaration) []string {
 	var out []string
-	var visit func(d tool.Declaration, within *source.Span)
-	visit = func(d tool.Declaration, within *source.Span) {
+	var visit func(d tool.Declaration, within *tool.Extent)
+	visit = func(d tool.Declaration, within *tool.Extent) {
 		s := d.Span
 		switch {
 		case s == nil:
@@ -45,10 +44,10 @@ func Spans(content []byte, items []tool.Declaration) []string {
 			out = append(out, fmt.Sprintf("the snippet of %s lacks its name", d.Name))
 		}
 		line, column := Position(content, s.Start.Offset)
-		if s.Start.Line != line || s.Start.Column != column || d.Line != line+1 {
+		if s.Start.Line != line+1 || s.Start.Column != column+1 || d.Line != line+1 {
 			out = append(out, fmt.Sprintf("%s is at line %d, column %d of its span and line %d of the item,"+
 				" and its start offset is at line %d, column %d", d.Name, s.Start.Line, s.Start.Column, d.Line,
-				line, column))
+				line+1, column+1))
 		}
 		if within != nil && (s.Start.Offset < within.Start.Offset || s.End.Offset > within.End.Offset) {
 			out = append(out, fmt.Sprintf("%s leaves the span of the declaration that contains it", d.Name))

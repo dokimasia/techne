@@ -80,6 +80,10 @@ type Renderer interface {
 // output schema from Out, with the schemas of [marshalled] for the types that encode as a
 // word. In is a struct, so each field of its JSON encoding is a property of the input schema.
 //
+// Every integer of an input is a line, a column or a count. A required integer is a line or a
+// column counted from one, and has the minimum 1. An optional integer has the minimum 0, and
+// 0 selects its default as an omitted field does.
+//
 // It returns an error for a type that has no schema, which is a fault of the code that calls
 // New.
 func New[In, Out any](
@@ -89,6 +93,11 @@ func New[In, Out any](
 	in, err := jsonschema.For[In](&jsonschema.ForOptions{TypeSchemas: marshalled})
 	if err != nil {
 		return nil, fmt.Errorf("tool: %q input schema: %w", name, err)
+	}
+	for field, property := range in.Properties {
+		if property.Type == "integer" {
+			property.Minimum = new(float64(minimumOf(in, field)))
+		}
 	}
 	out, err := jsonschema.For[Out](&jsonschema.ForOptions{TypeSchemas: marshalled})
 	if err != nil {
@@ -125,6 +134,15 @@ func nestedDeclarations() *jsonschema.Schema {
 		Type:  "array",
 		Items: &jsonschema.Schema{Ref: itemSchema},
 	}
+}
+
+// minimumOf returns the minimum of the integer field of schema: 1 for a required field and 0
+// for an optional one.
+func minimumOf(schema *jsonschema.Schema, field string) int {
+	if slices.Contains(schema.Required, field) {
+		return 1
+	}
+	return 0
 }
 
 // enumOf returns the schema of a string that is the word of one of values.
@@ -203,8 +221,9 @@ func (t *typed[In, Out]) decode(input json.RawMessage) (In, error) {
 }
 
 // fits returns an error that lists each field of fields that the input schema does not
-// declare, with the fields that it declares, and else an error that lists each field that
-// the schema requires and fields omits.
+// declare, with the fields that it declares, then an error that lists each field that the
+// schema requires and fields omits, and then an error for the first number, in the order of
+// the schema, that is below the minimum of its field.
 func (t *typed[In, Out]) fits(fields map[string]json.RawMessage) error {
 	var unknown []string
 	for name := range fields {
@@ -224,6 +243,14 @@ func (t *typed[In, Out]) fits(fields map[string]json.RawMessage) error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("tool: %s needs %s", t.name, quoted(missing))
+	}
+	for _, name := range t.in.PropertyOrder {
+		floor := t.in.Properties[name].Minimum
+		var given float64
+		if floor == nil || json.Unmarshal(fields[name], &given) != nil || given >= *floor {
+			continue
+		}
+		return fmt.Errorf("tool: %s takes %q of at least %v, not %v", t.name, name, *floor, given)
 	}
 	return nil
 }

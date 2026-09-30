@@ -110,7 +110,7 @@ func (a answers) indented(item protocol.ConfigurationItem) (protocol.LSPAny, boo
 func (a answers) file(u uri.URI) ([]byte, bool) {
 	full := u.FsPath()
 	relative, err := filepath.Rel(a.root, full)
-	if full == "" || err != nil || outside(source.Path(filepath.ToSlash(relative))) {
+	if full == "" || err != nil || lang.Outside(source.Path(filepath.ToSlash(relative))) {
 		return nil, false
 	}
 	info, err := os.Stat(full)

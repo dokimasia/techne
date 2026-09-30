@@ -61,7 +61,8 @@ type Formatter interface {
 // Verifier reports the findings of the language's toolchain for a scope on
 // disk. Suites names the checks to run in the language's own terms, such as
 // linters or test runners. An empty list runs the language's default. An
-// engine with one check ignores suites.
+// engine declines a request that names a suite it does not run, with the
+// error of [Unrun].
 type Verifier interface {
 	Verify(ctx context.Context, req Request, suites []string) (Result[edit.Finding], error)
 }

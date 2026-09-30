@@ -10,7 +10,6 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/sema"
-	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/lang/c"
 	"go.dokimi.dev/techne/test/corpus"
 	"go.dokimi.dev/techne/tool"
@@ -26,10 +25,9 @@ func declared(name string, from, end int, members ...tool.Declaration) tool.Decl
 	endLine, endColumn := corpus.Position([]byte(content), end)
 	return tool.Declaration{
 		Name: name, Kind: sema.KindFunction, Line: line + 1, Snippet: content[from:end],
-		Span: &source.Span{
-			Path:  "a.go",
-			Start: source.Position{Offset: from, Line: line, Column: column},
-			End:   source.Position{Offset: end, Line: endLine, Column: endColumn},
+		Span: &tool.Extent{
+			Start: tool.Place{Offset: from, Line: line + 1, Column: column + 1},
+			End:   tool.Place{Offset: end, Line: endLine + 1, Column: endColumn + 1},
 		},
 		Members: members,
 	}

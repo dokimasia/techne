@@ -104,6 +104,7 @@ var _ = json.Marshal
 			},
 			{Name: "Store", Kind: sema.KindStruct, Visibility: sema.Exported, Doc: "Store holds items by name."},
 			{Name: "T", Kind: sema.KindTypeParameter, Visibility: sema.Unexported},
+			{Name: "pkg", Kind: sema.KindPackage, Visibility: sema.Unexported},
 			{Name: "c", Kind: sema.KindParameter, Visibility: sema.Unexported},
 			{Name: "encoding/json", Kind: sema.KindImport, Visibility: sema.Unexported, Simple: "json"},
 			{Name: "fmt", Kind: sema.KindImport, Visibility: sema.Unexported, Simple: "fmt"},

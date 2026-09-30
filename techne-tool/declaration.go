@@ -16,7 +16,7 @@ import (
 // levels [Docs] and [Source] cost more than the file, and over a few named declarations they
 // cost a fraction of it.
 type Narrow struct {
-	// Names keeps the declarations of these names.
+	// Names keeps the declarations of these names, each plain or qualified as Instant.Time.
 	Names []string
 	// Kind keeps the declarations of one kind. [sema.KindUnknown] keeps every kind.
 	Kind sema.Kind
@@ -37,7 +37,8 @@ func (n Narrow) wanted(d Declaration) bool {
 	if n.Prefix != "" && !strings.HasPrefix(d.Name, n.Prefix) {
 		return false
 	}
-	return len(n.Names) == 0 || slices.Contains(n.Names, d.Name)
+	return len(n.Names) == 0 || slices.Contains(n.Names, d.Name) ||
+		d.qualified != "" && slices.Contains(n.Names, d.qualified)
 }
 
 // Apply returns the declarations of items that n keeps. A declaration that n keeps comes with
@@ -85,9 +86,12 @@ type Declaration struct {
 	// Snippet is the source text of the declaration, at [Source].
 	Snippet string `json:"snippet,omitempty"`
 	// Span is the span that the declaration covers, at [Source].
-	Span *source.Span `json:"span,omitempty"`
+	Span *Extent `json:"span,omitempty"`
 	// Members are the declarations that this one contains, such as the fields of a struct.
 	Members Members `json:"members,omitempty"`
+	// qualified is the qualified name of the declaration, as Instant.Time for the method Time of
+	// Instant, which [Narrow] matches beside the name. It is not part of the answer.
+	qualified string
 }
 
 // Declared returns the declarations of items at the level d, each nested under the smallest
@@ -99,11 +103,24 @@ type Declaration struct {
 // A declaration with source text has no members, because its source text contains them.
 // Declared returns an empty list, not nil, for no declarations.
 func Declared(items []sema.Symbol, d Detail, include engine.Bindings) []Declaration {
+	return declared(items, d, include, false)
+}
+
+// Resolved returns the declarations that a name denotes as [Declared] does, and keeps each
+// declaration that no other item contains whatever include selects: the caller asked what the
+// name denotes, and a parameter or an import is an answer. include selects their members.
+func Resolved(items []sema.Symbol, d Detail, include engine.Bindings) []Declaration {
+	return declared(items, d, include, true)
+}
+
+// declared returns the declarations of [Declared], and keeps every declaration that no other
+// item contains when rooted is true.
+func declared(items []sema.Symbol, d Detail, include engine.Bindings, rooted bool) []Declaration {
 	containers := sema.Containers(items)
 	locals := sema.Locals(items, containers)
 	keep := make([]bool, len(items))
 	for i, s := range items {
-		keep[i] = include.Keeps(s.Kind, locals[i])
+		keep[i] = rooted && containers[i] < 0 || include.Keeps(s.Kind, locals[i])
 	}
 
 	children := make([][]int, len(items))
@@ -145,10 +162,11 @@ func Declared(items []sema.Symbol, d Detail, include engine.Bindings) []Declarat
 // because [Narrow] reads it.
 func project(s sema.Symbol, d Detail) Declaration {
 	out := Declaration{
-		Name: s.Name,
-		Kind: s.Kind,
-		Line: s.Span.Start.Line + 1,
-		Path: string(s.Span.Path),
+		Name:      s.Name,
+		Kind:      s.Kind,
+		Line:      s.Span.Start.Line + 1,
+		Path:      string(s.Span.Path),
+		qualified: s.ID.Name(),
 	}
 	if s.Visibility != sema.Exported {
 		out.Visibility = s.Visibility
@@ -172,7 +190,27 @@ func project(s sema.Symbol, d Detail) Declaration {
 	}
 
 	out.Snippet = s.Snippet
-	span := s.Span
-	out.Span = &span
+	out.Span = &Extent{Start: placeOf(s.Span.Start), End: placeOf(s.Span.End)}
 	return out
+}
+
+// Extent is the half-open range of source text that a declaration covers, in the file of its
+// item: it includes Start and excludes End.
+type Extent struct {
+	Start Place `json:"start"`
+	End   Place `json:"end"`
+}
+
+// Place is one position of an [Extent]. Line and Column count from one, as every line and column
+// of an answer does, and Offset counts bytes from zero, as a caller slices the file.
+type Place struct {
+	Line int `json:"line"`
+	// Column is the column in bytes.
+	Column int `json:"column"`
+	Offset int `json:"offset"`
+}
+
+// placeOf returns p as a [Place].
+func placeOf(p source.Position) Place {
+	return Place{Line: p.Line + 1, Column: p.Column + 1, Offset: p.Offset}
 }

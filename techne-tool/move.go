@@ -20,8 +20,8 @@ type MoveInput struct {
 }
 
 // Move returns the tool that moves a file and rewrites the references to it. A file is its
-// own target, so the tool needs no read service. It refuses an empty destination and a
-// destination that is the file itself.
+// own target, so the tool needs no read service. It refuses a path that [filed] refuses, an
+// empty destination and a destination that is the file itself.
 func Move(writes Writer) (Tool, error) {
 	return New(string(edit.MoveFile), moveDescription,
 		func(ctx context.Context, in MoveInput) (Written, error) {
@@ -31,7 +31,7 @@ func Move(writes Writer) (Tool, error) {
 			}
 			held := writing(from, in.Language)
 			to, failure := relative(in.To)
-			if failure != nil {
+			if failure = first(failure, filed("path", from)); failure != nil {
 				return declined(edit.MoveFile, held, string(from), failure.Code, failure.Reason), nil
 			}
 

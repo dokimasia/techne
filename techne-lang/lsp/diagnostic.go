@@ -100,7 +100,7 @@ func (e *Engine) dependents(
 			continue
 		}
 		p := e.pathOf(full.URI)
-		if outside(p) || slices.Contains(changed, p) {
+		if lang.Outside(p) || slices.Contains(changed, p) {
 			continue
 		}
 		doc, err := e.read(p)
@@ -223,6 +223,15 @@ func (r *reports) published(of uri.URI) []protocol.Diagnostic {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return slices.Clone(r.kept[of])
+}
+
+// said reports whether a report of the file of is kept: the server published its diagnostics,
+// none included, and no later change of the buffer dropped them.
+func (r *reports) said(of uri.URI) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, kept := r.kept[of]
+	return kept
 }
 
 // forget drops the diagnostics of the buffer of the file of. The engine calls it when it

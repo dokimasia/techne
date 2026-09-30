@@ -49,4 +49,11 @@ type Declaration struct {
 	// sema.VisibilityUnknown for a language that declares visibility with a
 	// modifier. [VisibilityByModifier] implements the second case.
 	Visibility func(name string) sema.Visibility
+
+	// Removed is the content under which a file declares nothing and
+	// belongs to no unit, which a checker is shown in place of a file that a
+	// change deletes while the file is still on disk. Empty means the empty
+	// file, which declares nothing in every language but Go: a Go file
+	// without a package clause does not parse.
+	Removed []byte
 }

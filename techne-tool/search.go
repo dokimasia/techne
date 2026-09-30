@@ -11,6 +11,7 @@ import (
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
+	"go.dokimi.dev/techne/core/trust"
 )
 
 // SearchInput is the input of the search tool. The fields after Text are the fields of
@@ -21,11 +22,11 @@ type SearchInput struct {
 	Language  string       `json:"language,omitempty"           jsonschema:"the language to ask, in place of the languages of the scope"`
 	Kind      KindWord     `json:"kind,omitempty"               jsonschema:"keep the declarations of one kind"`
 	Private   bool         `json:"private,omitempty"            jsonschema:"keep the declarations that are not visible outside their unit"`
-	Limit     int          `json:"limit,omitempty"              jsonschema:"the number of matches to return"`
+	Limit     int          `json:"limit,omitempty"              jsonschema:"the number of matches to return, all when omitted or 0"`
 	Detail    Detail       `json:"detail,omitempty"             jsonschema:"the fields of each declaration: docs for one match when omitted"`
 	Include   []Include    `json:"include,omitempty"            jsonschema:"bindings to add beside the declarations that the files offer"`
 	Tests     bool         `json:"tests,omitempty"              jsonschema:"read the files that the language treats as tests"`
-	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"ceiling of the answer in tokens, 6000 when omitted"`
+	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"ceiling of the answer in tokens, 6000 when omitted or 0"`
 	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence the caller wants: a weaker answer is degraded, not refused"`
 }
 
@@ -66,7 +67,7 @@ func Search(reads Searcher) (Tool, error) {
 			detail, byDetail := levelOf(in.Detail, scope)
 			include, byInclude := bindingsOf(in.Include)
 			preferred, byFidelity := fidelityOf(in.Preferred)
-			if failure = first(byKind, byDetail, byInclude, byFidelity); failure != nil {
+			if failure = first(texted(in.Text), byKind, byDetail, byInclude, byFidelity); failure != nil {
 				return Matches{
 					Answer: failed(about(scope, in.Language, engine.Answer[sema.Symbol]{}), failure),
 					Text:   in.Text,
@@ -94,12 +95,24 @@ func Search(reads Searcher) (Tool, error) {
 			if len(answered.Items) == 1 && in.Detail == DetailUnset {
 				detail = Docs
 			}
-			fitted := Fit(published(answered, about(scope, in.Language, answered), detail, include),
+			items := Declared(answered.Items, detail, include)
+			fitted := Fit(published(answered, about(scope, in.Language, answered), items),
 				Budget{MaxTokens: in.MaxTokens})
 			return Matches{
 				Answer: fitted, Text: in.Text, Ambiguous: len(fitted.Items) > 1,
 			}, nil
 		})
+}
+
+// texted returns a refusal for a text of white space only, which matches every name.
+func texted(text string) *Failure {
+	if strings.TrimSpace(text) != "" {
+		return nil
+	}
+	return &Failure{
+		Code:   trust.Refused.String(),
+		Reason: "text is empty, and search matches a name or part of one. The outline tool lists every declaration",
+	}
 }
 
 const searchDescription = "PREFER OVER grep for finding where something is declared. " +

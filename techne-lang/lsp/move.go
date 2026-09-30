@@ -4,11 +4,10 @@
 package lsp
 
 import (
+	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"path"
-	"path/filepath"
 	"strings"
 
 	"go.dokimi.dev/techne/core/edit"
@@ -24,57 +23,43 @@ import (
 //
 // A server returns the edits that update the references to the moved file, such as import
 // specifiers in TypeScript and the class name in Java, and never the move itself. The plan
-// contains those edits followed by the move. It returns [engine.ErrRefuse] for a move out of
-// the workspace, onto an existing file, or of a file that does not exist, and a skipped result
-// for a file of another language.
+// contains those edits followed by the move. It returns the refusals of [lang.Moving], and a
+// skipped result for a file of another language.
 func (e *Engine) relocating(
 	ctx context.Context,
 	target edit.Target,
 	args edit.Args,
 ) (engine.Result[edit.Change], error) {
-	from := target.Path
-	if target.Kind != edit.TargetFile || from == "" {
-		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"%w: %s names a file, and this target names none", engine.ErrRefuse, edit.MoveFile)
-	}
-	to := source.Path(strings.TrimSpace(args[edit.ArgDestination]))
+	from, to, err := lang.Moving(e.root, target, args, e.declared.Extensions)
 	switch {
-	case to == "":
-		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"%w: %s needs %s", engine.ErrRefuse, edit.MoveFile, edit.ArgDestination)
-	case to == from:
-		return engine.Result[edit.Change]{}, fmt.Errorf("%w: %s is already at %s", engine.ErrRefuse, from, to)
-	case outside(from), outside(to):
-		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"%w: %s moves a file within the workspace, and %s is outside it",
-			engine.ErrRefuse, edit.MoveFile, outsider(from, to))
-	case !lang.Claims(string(from), e.declared.Extensions):
+	case err != nil:
+		return engine.Result[edit.Change]{}, err
+	case from == "":
 		return engine.Result[edit.Change]{Skipped: true, Completeness: trust.ScopeTotal}, nil
-	}
-	if _, err := os.Stat(e.fullPath(from)); err != nil {
-		return engine.Result[edit.Change]{}, fmt.Errorf("%w: %s does not exist", engine.ErrRefuse, from)
-	}
-	if _, err := os.Stat(e.fullPath(to)); err == nil {
-		return engine.Result[edit.Change]{}, fmt.Errorf(
-			"%w: %s exists, and a move does not overwrite a file", engine.ErrRefuse, to)
 	}
 
 	held, err := e.running(ctx)
 	if err != nil {
 		return engine.Result[edit.Change]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
+	defer e.reading()()
 	ctx, done := e.answered(ctx)
 	defer done()
 	if !willRename(held.capable) {
 		return engine.Result[edit.Change]{}, e.unsupported("workspace/willRenameFiles")
 	}
 	// The open file makes the server load the project that contains it. An import of the file
-	// writes its stem.
+	// from another directory writes the name of its directory and its stem, as swap/recipe, and
+	// an import from its own directory writes the stem.
 	if _, err = e.open(ctx, held, from); err != nil {
 		return engine.Result[edit.Change]{}, err
 	}
+	dir := path.Dir(string(from))
 	stem := strings.TrimSuffix(path.Base(string(from)), path.Ext(string(from)))
-	short, err := e.preload(ctx, held, stem, from)
+	specifier := path.Base(dir) + "/" + stem
+	short, err := e.preload(ctx, held, specifier, func(p source.Path, content []byte) bool {
+		return bytes.Contains(content, []byte(specifier)) || path.Dir(string(p)) == dir && wording(stem)(p, content)
+	}, from)
 	if err != nil {
 		return engine.Result[edit.Change]{}, err
 	}
@@ -116,22 +101,4 @@ func (e *Engine) relocating(
 		Lowered:      reaches,
 		Caveats:      caveats,
 	}, nil
-}
-
-// outside reports whether p is outside the workspace: an absolute path, which
-// [Engine.pathOf] returns for a file outside the root, or a relative path whose first segment
-// is "..". A name that starts with two dots, such as ..config.ts, is inside.
-func outside(p source.Path) bool {
-	native := filepath.Clean(filepath.FromSlash(string(p)))
-	return filepath.IsAbs(native) || native == ".." ||
-		strings.HasPrefix(native, ".."+string(filepath.Separator))
-}
-
-// outsider returns the end of a move that is outside the workspace: from when from is
-// outside, and to otherwise.
-func outsider(from, to source.Path) source.Path {
-	if outside(from) {
-		return from
-	}
-	return to
 }

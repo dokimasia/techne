@@ -50,15 +50,17 @@ func TestResolve(t *testing.T) {
 			assert.NotEmpty(t, got.Items, "the declarations of the answer")
 		})
 
-		t.Run("refuses a line or a column of zero", func(t *testing.T) {
+		t.Run("returns an error for a line or a column of zero", func(t *testing.T) {
 			t.Parallel()
+			built, err := tool.Resolve(addressable())
+			assert.NoError(t, err, "the error of Resolve")
 			for at, want := range map[string]string{
-				`{"scope":"a.fx","line":0,"column":1}`: "line 0: lines count from one",
-				`{"scope":"a.fx","line":1,"column":0}`: "column 0: columns count from one",
+				`{"scope":"a.fx","line":0,"column":1}`: `"line" of at least 1, not 0`,
+				`{"scope":"a.fx","line":1,"column":0}`: `"column" of at least 1, not 0`,
 			} {
-				got := resolved(t, at)
-				assert.Equal(t, got.Error.Code, "refused", "the code of the failure for "+at)
-				assert.Equal(t, got.Error.Reason, want, "the reason of the failure for "+at)
+				_, err = built.Execute(t.Context(), json.RawMessage(at))
+				assert.HasError(t, err, "the error of Execute for "+at)
+				assert.Contains(t, err.Error(), want, "the error of Execute for "+at)
 			}
 		})
 
@@ -79,6 +81,20 @@ func TestResolve(t *testing.T) {
 			t.Parallel()
 			got := resolved(t, `{"scope":"a.fx","line":3,"column":10}`)
 			assert.False(t, got.Provenance.SupportsNegativeClaim, "the negative claim of the answer")
+		})
+
+		t.Run("returns a parameter that the name denotes without include", func(t *testing.T) {
+			t.Parallel()
+			got := resolvedOver(t, serving(declared("ctx", sema.KindParameter, "", 2, 10)),
+				`{"scope":"a.fx","line":3,"column":11}`)
+			assert.Equal(t, names(got.Items), []string{"ctx"}, "the declarations of the answer")
+		})
+
+		t.Run("returns an import that the name denotes without include", func(t *testing.T) {
+			t.Parallel()
+			got := resolvedOver(t, serving(declared("clock", sema.KindImport, "", 2, 10)),
+				`{"scope":"a.fx","line":3,"column":11}`)
+			assert.Equal(t, names(got.Items), []string{"clock"}, "the declarations of the answer")
 		})
 
 		t.Run("returns the path of a declaration in another file", func(t *testing.T) {

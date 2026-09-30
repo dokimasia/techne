@@ -136,9 +136,9 @@ func TestSymbol(t *testing.T) {
 			assert.Equal(t, pointed(t, 3, 1).Parent, declared("Store", sema.KindStruct), "the parent of size")
 		})
 
-		t.Run("returns the line of the name as the signature", func(t *testing.T) {
+		t.Run("returns the line of the name without the brace of the body as the signature", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, pointed(t, 2, 5).Signature, "type Store struct {", "the signature of Store")
+			assert.Equal(t, pointed(t, 2, 5).Signature, "type Store struct", "the signature of Store")
 		})
 
 		t.Run("drops a kind that declares nothing", func(t *testing.T) {
@@ -154,7 +154,7 @@ func TestSymbol(t *testing.T) {
 				Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
 			assert.NoError(t, err, "Resolve with a flat list of declarations")
 			assert.Equal(t, names(got.Items), []string{"Store"}, "the declarations that Store denotes")
-			assert.Equal(t, got.Items[0].Signature, "type Store struct {", "the signature of Store")
+			assert.Equal(t, got.Items[0].Signature, "type Store struct", "the signature of Store")
 		})
 
 		t.Run("cuts the signature of a declaration on a long line", func(t *testing.T) {

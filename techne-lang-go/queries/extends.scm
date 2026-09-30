@@ -11,6 +11,11 @@
 ;; have several name fields, as `const a, b = 1, 2` has. A pattern binds a
 ;; capture once, so the parser reads those names from the node.
 
+;; The package clause declares the package, which the comment above it
+;; documents.
+
+(package_clause (package_identifier) @name) @definition.package
+
 ;; Callables.
 
 (

@@ -238,5 +238,19 @@ func TestWrite(t *testing.T) {
 			got := tool.Touched([]edit.Change{{Kind: edit.ChangeMove, Path: "a.fx", To: "b.fx"}}, nil, nil)
 			assert.Equal(t, got, []tool.Changed{{Path: "a.fx", To: "b.fx"}}, "the files")
 		})
+
+		t.Run("counts the edits of a file as its sites without rewrites", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Touched([]edit.Change{{Kind: edit.ChangeEdit, Path: "a.fx", Edits: make([]edit.TextEdit, 2)}},
+				nil, nil)
+			assert.Equal(t, got, []tool.Changed{{Path: "a.fx", Sites: 2}}, "the files")
+		})
+
+		t.Run("counts the rewrites of a file as its sites", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Touched([]edit.Change{{Kind: edit.ChangeEdit, Path: "a.fx", Edits: make([]edit.TextEdit, 2)}},
+				rewritten[:1], nil)
+			assert.Equal(t, got[0].Sites, 1, "the sites of a.fx")
+		})
 	})
 }

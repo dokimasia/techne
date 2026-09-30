@@ -125,4 +125,28 @@ func TestID(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("Unit", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			give sema.ID
+			want source.Path
+		}{
+			{
+				name: "returns the unit",
+				give: sema.NewID(source.Language("go"), "clock/fake", "Clock", sema.KindStruct),
+				want: "clock/fake",
+			},
+			{name: "returns an empty path for a value without a name", give: sema.ID("not an identity")},
+			{name: "returns an empty path for the zero ID", give: sema.ID("")},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, tt.give.Unit(), tt.want, "Unit")
+			})
+		}
+	})
 }

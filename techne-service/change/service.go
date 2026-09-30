@@ -69,8 +69,15 @@ var unchecked = trust.Caveat{
 // Apply plans the operation of req and takes the plan through the write path, or previews
 // it for a dry run. A refusal returns an outcome with the status [trust.Refused] and the
 // reason, because the caller can change the request. An error means that the workspace
-// could not be read or written.
+// could not be read or written. The outcome has req as its [edit.Outcome.Request].
 func (s *Service) Apply(ctx context.Context, req edit.Request) (edit.Outcome, error) {
+	out, err := s.apply(ctx, req)
+	out.Request = req
+	return out, err
+}
+
+// apply returns the outcome of [Service.Apply] without its request.
+func (s *Service) apply(ctx context.Context, req edit.Request) (edit.Outcome, error) {
 	spec, declared := edit.SpecFor(req.Operation)
 	if !declared {
 		return refused(req.Operation, fmt.Sprintf("no operation is named %q", req.Operation)), nil
@@ -105,26 +112,34 @@ func (s *Service) Apply(ctx context.Context, req edit.Request) (edit.Outcome, er
 
 // Commit applies the plan that a preview kept under handle, once. It takes the steps of the
 // preview again with the request of the preview, over the files as they are now, and
-// refuses a plan whose files changed since the preview.
+// refuses a plan whose files changed since the preview. The outcome has the request of the
+// preview as its [edit.Outcome.Request].
 func (s *Service) Commit(ctx context.Context, handle string) (edit.Outcome, error) {
 	preview, found := s.held.take(handle)
 	if !found {
 		return refused("", "no preview is held under that handle: preview again to get one"), nil
 	}
-	spec, _ := edit.SpecFor(preview.plan.Operation)
+	req := preview.request
+	req.DryRun = false
+	out, err := s.commit(ctx, req, preview.plan)
+	out.Request = req
+	return out, err
+}
 
-	release := s.locks.hold(preview.plan.Paths())
+// commit returns the outcome of [Service.Commit] for the plan of a preview that req asked for,
+// without its request.
+func (s *Service) commit(ctx context.Context, req edit.Request, plan edit.Plan) (edit.Outcome, error) {
+	spec, _ := edit.SpecFor(plan.Operation)
+	release := s.locks.hold(plan.Paths())
 	defer release()
-	sealed, drifted, err := s.unchanged(preview.plan)
+	sealed, drifted, err := s.unchanged(plan)
 	switch {
 	case err != nil:
 		return edit.Outcome{}, err
 	case drifted != "":
-		return refusedBy(preview.plan, drifted), nil
+		return refusedBy(plan, drifted), nil
 	}
-	req := preview.request
-	req.DryRun = false
-	return s.run(ctx, req, spec, preview.plan, sealed)
+	return s.run(ctx, req, spec, plan, sealed)
 }
 
 // run takes a sealed plan through the steps that Apply and Commit share: the paths that it

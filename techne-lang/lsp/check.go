@@ -29,12 +29,14 @@ var unchecked = trust.Caveat{
 }
 
 // Check returns the findings of the server for content that is not on disk, such as the
-// projection of a change before the write path writes it. A path of another language and a
-// path with nil content, which a change deletes, are left out. Check takes these steps:
+// projection of a change before the write path writes it. A path of another language is left
+// out. A path with nil content is a file that the change deletes, as a move deletes its source,
+// and the server is shown the [lang.Declaration.Removed] content of the language for it, because
+// the server still reads the file on disk. Check takes these steps:
 //
 //  1. Show the server each file of files as an unsaved buffer.
 //  2. Wait for the server to settle.
-//  3. Collect the diagnostics of each file.
+//  3. Collect the diagnostics of each file that the change does not delete.
 //  4. Send the server the content on disk again, also when a step fails.
 //
 // A server that returns workspace diagnostics also reports the files that depend on the
@@ -43,10 +45,10 @@ var unchecked = trust.Caveat{
 // names what it leaves [Server.Unchecked] adds a [trust.CaveatPartialCheck] caveat.
 //
 // An error finding contains a fix when the server offers one quick fix for it, or marks one of
-// two or more as preferred. Check returns [engine.ErrDecline] in three cases, so the next
+// two or more as preferred. Check returns [engine.ErrDecline] in these cases, so the next
 // engine checks the content:
 //
-//   - files contain no path of the language.
+//   - files contain no path of the language that the change does not delete.
 //   - The server has not settled.
 //   - The server reported nothing about a file.
 //   - The server did not answer within [Server.Answering].
@@ -57,9 +59,13 @@ func (e *Engine) Check(ctx context.Context, files map[source.Path][]byte) (engin
 
 // checking is [Engine.Check] before a missed deadline becomes a decline.
 func (e *Engine) checking(ctx context.Context, files map[source.Path][]byte) (engine.Result[edit.Finding], error) {
-	var mine []source.Path
+	var mine, gone []source.Path
 	for p, content := range files {
-		if content != nil && lang.Claims(string(p), e.declared.Extensions) {
+		switch {
+		case !lang.Claims(string(p), e.declared.Extensions):
+		case content == nil:
+			gone = append(gone, p)
+		default:
 			mine = append(mine, p)
 		}
 	}
@@ -68,6 +74,7 @@ func (e *Engine) checking(ctx context.Context, files map[source.Path][]byte) (en
 			"%w: no changed file is %s", engine.ErrDecline, e.declared.Language)
 	}
 	slices.Sort(mine)
+	slices.Sort(gone)
 
 	held, err := e.running(ctx)
 	if err != nil {
@@ -78,9 +85,13 @@ func (e *Engine) checking(ctx context.Context, files map[source.Path][]byte) (en
 
 	e.showing.Lock()
 	defer e.showing.Unlock()
-	defer e.restore(ctx, held, mine)
-	for _, p := range mine {
-		if _, err := e.sync(ctx, held, e.fullPath(p), files[p], stamp{}); err != nil {
+	defer e.restore(ctx, held, slices.Concat(mine, gone))
+	for _, p := range slices.Concat(mine, gone) {
+		content := files[p]
+		if content == nil {
+			content = e.declared.Removed
+		}
+		if _, err := e.sync(ctx, held, e.fullPath(p), content, stamp{}); err != nil {
 			return engine.Result[edit.Finding]{}, err
 		}
 	}

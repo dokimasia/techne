@@ -18,9 +18,8 @@ type ApplyInput struct {
 }
 
 // Apply returns the tool that writes the change of a preview without planning it again. The
-// output names the operation of the preview, and its target and its path are the first file
-// that the change wrote. The output of a change that wrote no file has the handle as its
-// target and no path.
+// output names the operation, the target and the scope of the preview. When the write path does
+// not keep a preview under the handle, the output has the handle as its target and an empty scope.
 func Apply(writes Committer) (Tool, error) {
 	return New(string(applyChange), applyDescription,
 		func(ctx context.Context, in ApplyInput) (Written, error) {
@@ -35,9 +34,8 @@ func Apply(writes Committer) (Tool, error) {
 			}
 
 			target, scope := in.Handle, Scope{}
-			if len(done.Changed) > 0 {
-				target = string(done.Changed[0])
-				scope.Path = target
+			if asked := done.Request; asked.Operation != "" {
+				target, scope = asked.Subject, writing(asked.Scope, string(asked.Language))
 			}
 			out := reported(done.Operation, scope, target, done)
 			if out.Operation == "" {

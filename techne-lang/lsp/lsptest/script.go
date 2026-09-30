@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"go.lsp.dev/uri"
 )
@@ -118,16 +119,19 @@ type script struct {
 	mode Mode
 	in   *bufio.Reader
 
-	// sending guards out, loaded, reported, opens and checks. In the Loading mode a timer
-	// goroutine writes the end of the progress job, in the Quiet mode a goroutine publishes the
-	// report of an open, and in the DiskChecks mode a goroutine runs each check on disk.
+	// sending guards out, loaded, reported, opens, analysed and checks. In the Loading mode a
+	// timer goroutine writes the end of the progress job, in the Quiet and Loads modes a
+	// goroutine publishes the report of an open, and in the DiskChecks mode a goroutine runs
+	// each check on disk.
 	sending sync.Mutex
 	out     io.Writer
 	loaded  bool
-	// reported is the report of each open document in the Quiet mode. opens counts the opens
-	// and the closes of each document, so a delayed report of an earlier open is dropped.
+	// reported is the report of each open document in the Quiet and Loads modes. opens counts
+	// the opens and the closes of each document, so a delayed report of an earlier open is
+	// dropped. analysed are the documents whose delayed report was sent.
 	reported map[string]string
 	opens    map[string]int
+	analysed map[string]bool
 	// checks counts the checks on disk of the DiskChecks mode.
 	checks int
 
@@ -169,6 +173,7 @@ func serve(mode Mode) int {
 		versions: map[string]int{},
 		reported: map[string]string{},
 		opens:    map[string]int{},
+		analysed: map[string]bool{},
 		synced:   true,
 		outside:  os.Getenv(envOutside),
 		renames:  os.Getenv(envRenames),
@@ -406,7 +411,7 @@ func (s *script) opened(params json.RawMessage) {
 		s.publish(s.seen, faults)
 	case s.mode == Pushes && s.declares("capabilities", "textDocument", "publishDiagnostics"):
 		s.publish(s.seen, problems)
-	case s.mode == Quiet:
+	case s.mode == Quiet || s.mode == Loads:
 		s.sending.Lock()
 		s.reported[s.seen] = reportOf(held.TextDocument.Text)
 		s.opens[s.seen]++
@@ -420,8 +425,9 @@ func (s *script) opened(params json.RawMessage) {
 // occurrence of [Broken].
 func reportOf(text string) string { return "[" + strings.Join(broken(text), ",") + "]" }
 
-// delayed publishes the report of the document doc in the Quiet mode after [QuietDelay],
-// unless the client closed or opened doc again after the open that opens counted as opened.
+// delayed publishes the report of the document doc in the Quiet and Loads modes after
+// [QuietDelay], unless the client closed or opened doc again after the open that opens counted
+// as opened, and marks doc as analysed.
 func (s *script) delayed(doc string, opened int) {
 	time.Sleep(QuietDelay)
 	s.sending.Lock()
@@ -429,7 +435,15 @@ func (s *script) delayed(doc string, opened int) {
 	if s.opens[doc] != opened {
 		return
 	}
+	s.analysed[doc] = true
 	write(s.out, published(doc, s.reported[doc]))
+}
+
+// unanalysed reports whether the Loads mode has not yet sent the delayed report of doc.
+func (s *script) unanalysed(doc string) bool {
+	s.sending.Lock()
+	defer s.sending.Unlock()
+	return s.mode == Loads && !s.analysed[doc]
 }
 
 // quietChange keeps the report of the buffer of the document doc in the Quiet mode, and
@@ -503,8 +517,12 @@ func (s *script) request(m message) {
 		}
 		s.answer(id, s.references())
 	case "textDocument/implementation":
-		if s.mode == Ungated {
+		switch s.mode {
+		case Ungated:
 			s.answer(id, "[]")
+			return
+		case Untyped:
+			s.refuse(id, NotAType)
 			return
 		}
 		s.answer(id, "["+location(s.seen, storeName)+"]")
@@ -560,7 +578,7 @@ func (s *script) capabilities() string {
 		`"renameProvider":{"prepareProvider":true}`,
 	}
 	switch s.mode {
-	case Pushes, Ungated, SilentMove, Opened, Short, Quiet:
+	case Pushes, Ungated, SilentMove, Opened, Short, Quiet, Loads:
 	default:
 		fields = append(fields, fmt.Sprintf(
 			`"diagnosticProvider":{"interFileDependencies":true,"workspaceDiagnostics":%t}`,
@@ -596,7 +614,7 @@ func (s *script) symbols() string {
 			kindFunction, location(s.seen, afterRange))
 	case Extracts, Commands:
 		return functions(s.holding[s.seen])
-	case Minified:
+	case Minified, Aims:
 		return bundled(s.holding[s.seen])
 	case Nested:
 		return nested(s.holding[s.seen])
@@ -653,6 +671,9 @@ func symbol(name string, kind int, detail, whole, selection, children string) st
 
 // definition is the answer to textDocument/definition for the mode.
 func (s *script) definition(params json.RawMessage) string {
+	if s.unanalysed(s.seen) {
+		return "[]"
+	}
 	switch s.mode {
 	case OneLocation:
 		return location(s.seen, storeName)
@@ -666,6 +687,11 @@ func (s *script) definition(params json.RawMessage) string {
 	case Pointed, Receivers, Impls, Wrapped:
 		line, character := position(params)
 		return "[" + location(s.seen, point(line, character)) + "]"
+	case Exports:
+		if line, _ := position(params); line == 0 {
+			return "[" + location(s.seen, storeName) + "]"
+		}
+		return "[" + location(s.seen, unenclosed) + "]"
 	case Minified, Nested:
 		found := called(s.holding[s.seen], bundleCallee)
 		if len(found) == 0 {
@@ -697,7 +723,7 @@ func (s *script) references() string {
 		return "[" + location(other, at) + "]"
 	case (s.mode == Loading || s.mode == Stuck || s.mode == Created) && !s.isLoaded():
 		return "[]"
-	case s.mode == Receivers || s.mode == Impls:
+	case s.mode == Receivers || s.mode == Impls || s.mode == Aims:
 		return "[]"
 	case s.mode == Minified || s.mode == Nested:
 		var out []string
@@ -869,7 +895,14 @@ func (s *script) rename(id *int64, params json.RawMessage) {
 	case s.mode == Watches && !s.synced:
 		s.refuse(id, "Resource is out of sync with file system.")
 	case s.mode == Extracts || s.mode == Commands:
-		s.answer(id, s.nameExtracted(stringAt(params, "newName")))
+		fresh := stringAt(params, "newName")
+		if !identifier(fresh) {
+			s.refuse(id, fmt.Sprintf("%s: %q", InvalidName, fresh))
+			return
+		}
+		s.answer(id, s.nameExtracted(fresh))
+	case s.mode == Aims:
+		s.answer(id, s.renameAt(params))
 	case s.renames != "":
 		s.answer(id, strings.NewReplacer("{root}", s.root, "{file}", s.seen).Replace(s.renames))
 	case s.mode == Strict:
@@ -879,6 +912,37 @@ func (s *script) rename(id *int64, params json.RawMessage) {
 		s.answer(id, fmt.Sprintf(`{"changes":{%q:[{"range":%s,"newText":"Vault"},`+
 			`{"range":%s,"newText":"Vault"}]}}`, target, storeInGet, storeName))
 	}
+}
+
+// renameAt is the answer to textDocument/rename in the Aims mode: one edit of the latest
+// document that replaces the word at the position of params with the new name. A position
+// outside every word replaces nothing and inserts the name there.
+func (s *script) renameAt(params json.RawMessage) string {
+	line, character := position(params)
+	lines := strings.Split(s.holding[s.seen], "\n")
+	from, to := character, character
+	if line >= 0 && line < len(lines) {
+		text := []rune(lines[line])
+		for from > 0 && from <= len(text) && identifying(text[from-1]) {
+			from--
+		}
+		for to < len(text) && identifying(text[to]) {
+			to++
+		}
+	}
+	return fmt.Sprintf(`{"changes":{%q:[{"range":%s,"newText":%q}]}}`,
+		s.seen, ranged(line, from, to), stringAt(params, "newName"))
+}
+
+// identifier reports whether name is an identifier: a letter or an underscore, then letters,
+// digits and underscores.
+func identifier(name string) bool {
+	for i, r := range name {
+		if r != '_' && !unicode.IsLetter(r) && (i == 0 || !unicode.IsDigit(r)) {
+			return false
+		}
+	}
+	return name != ""
 }
 
 // rewrite renames Store in the latest document for the Opened and Short modes. The Opened mode
@@ -944,10 +1008,14 @@ func (s *script) diagnose(doc string) string {
 }
 
 // faults are the diagnostics of the WorkspaceDiagnostics mode for the document doc: an error at
-// each occurrence of [Broken], and an error at the first use of Store while no file declares
-// it.
+// each occurrence of [Broken], an error at the first use of Store while no file declares it,
+// and the error [EmptyFile] for an empty document.
 func (s *script) faults(doc string) []string {
 	out := broken(s.view(doc))
+	if s.view(doc) == "" {
+		out = append(out, fmt.Sprintf(`{"range":%s,"severity":1,"code":"E902","source":"fakecheck","message":%q}`,
+			ranged(0, 0, 0), EmptyFile))
+	}
 	for _, other := range s.files() {
 		if strings.Contains(s.view(other), "type Store") {
 			return out

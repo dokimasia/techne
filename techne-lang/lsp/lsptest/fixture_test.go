@@ -51,6 +51,20 @@ func TestFixture(t *testing.T) {
 		})
 	})
 
+	t.Run("Locals", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("declares Wait on line 2", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, line(lsptest.Locals, 2)[5:9], "Wait", "line 2, characters 5 to 9")
+		})
+
+		t.Run("declares the local t on line 3", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, line(lsptest.Locals, 3)[5:6], "t", "line 3, character 5")
+		})
+	})
+
 	t.Run("Emoji", func(t *testing.T) {
 		t.Parallel()
 
@@ -121,6 +135,11 @@ func TestFixture(t *testing.T) {
 		t.Run("claims the extension of the language", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, lsptest.Declaration().Extensions, []string{lsptest.Extension}, "the extensions")
+		})
+
+		t.Run("states Removed as the content of a removed file", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, string(lsptest.Declaration().Removed), lsptest.Removed, "the removed content")
 		})
 
 		t.Run("treats the file Test as a test", func(t *testing.T) {

@@ -54,6 +54,15 @@ func TestRename(t *testing.T) {
 			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
 		})
 
+		t.Run("refuses the name that the declaration has before it plans", func(t *testing.T) {
+			t.Parallel()
+			writer := &recorder{}
+			got := renamed(t, writer, `{"scope":"a.fx","name":"Store","new_name":"Store"}`)
+			assert.True(t, got.Failed(), "the failure of the output")
+			assert.Contains(t, got.Error.Reason, "the name that the declaration has", "the reason of the failure")
+			assert.Equal(t, writer.asked.Operation, edit.Operation(""), "the operation sent to the write path")
+		})
+
 		t.Run("refuses a path that leaves the workspace", func(t *testing.T) {
 			t.Parallel()
 			got := renamed(t, &recorder{}, `{"scope":"../b.fx","name":"Store","new_name":"Vault"}`)
@@ -74,6 +83,13 @@ func TestRename(t *testing.T) {
 			got := renamed(t, writer, `{"scope":"a.fx","name":"Get","line":6,"new_name":"Fetch"}`)
 			assert.False(t, got.Failed(), "the failure of the output")
 			assert.Equal(t, writer.asked.Target.Span.Start.Offset, 50, "the offset of the function Get")
+		})
+
+		t.Run("names the declaration of the input as the subject of the request", func(t *testing.T) {
+			t.Parallel()
+			writer := &recorder{}
+			renamed(t, writer, `{"scope":"a.fx","name":"Store","new_name":"Vault"}`)
+			assert.Equal(t, writer.asked.Subject, "Store", "the subject of the request")
 		})
 
 		t.Run("previews a request without dry_run", func(t *testing.T) {

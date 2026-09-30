@@ -20,7 +20,7 @@ func TestDoc(t *testing.T) {
 
 		t.Run("returns an unsupported answer without an error for a language without an engine", func(t *testing.T) {
 			t.Parallel()
-			got, err := query.New(engine.NewCatalog(), router{}).
+			got, err := query.New(engine.NewCatalog(), router{"a.fx": fixture}).
 				Outline(t.Context(), engine.Request{Scope: "a.fx", Language: fixture})
 			assert.NoError(t, err, "Outline of a.fx")
 			assert.Equal(t, got.Status, trust.Unsupported, "the status of the answer")

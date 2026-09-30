@@ -6,7 +6,9 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path"
+	"slices"
 	"strings"
 
 	"go.dokimi.dev/techne/core/source"
@@ -46,6 +48,29 @@ func Languages(r Router, req Request) []source.Language {
 		return nil
 	}
 	return r.Languages()
+}
+
+// Unrouted returns an error that wraps [ErrRefuse] when req names a
+// language that r does not serve, and when req names a language and a file
+// that another language of r claims by its extension. It returns nil
+// otherwise, also for a language named with a path that no language claims.
+func Unrouted(r Router, req Request) error {
+	if req.Language == "" {
+		return nil
+	}
+	served := r.Languages()
+	if !slices.Contains(served, req.Language) {
+		words := make([]string, 0, len(served))
+		for _, one := range served {
+			words = append(words, string(one))
+		}
+		return fmt.Errorf("%w: no language is named %s: the languages are %s",
+			ErrRefuse, req.Language, strings.Join(words, ", "))
+	}
+	if claimed, ok := r.LanguageOf(req.Scope); ok && claimed != req.Language {
+		return fmt.Errorf("%w: %s is %s, and a %s engine does not read it", ErrRefuse, req.Scope, claimed, req.Language)
+	}
+	return nil
 }
 
 // Declined lists why engines could not answer a request, one reason per
@@ -105,6 +130,9 @@ func AskEach[T any](
 	role Role,
 	call func(Engine) (Result[T], error),
 ) ([]Answer[T], Declined, error) {
+	if err := Unrouted(r, req); err != nil {
+		return nil, nil, err
+	}
 	var out []Answer[T]
 	var declined Declined
 	var failed, refused error
@@ -162,6 +190,9 @@ func AskAny[T any](
 	role Role,
 	call func(Engine) (Result[T], error),
 ) (Answer[T], bool, Declined, error) {
+	if err := Unrouted(r, req); err != nil {
+		return Answer[T]{}, false, nil, err
+	}
 	var declined Declined
 	for _, language := range Languages(r, req) {
 		answered, ok, why, err := Ask(ctx, c, language, role, req.Preferred, call)

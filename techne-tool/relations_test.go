@@ -126,6 +126,32 @@ func TestRelations(t *testing.T) {
 			assert.Equal(t, over.relating[0], stored()[0].ID, "the ID of the request")
 		})
 
+		t.Run("prints the column of each of two sites on one line", func(t *testing.T) {
+			t.Parallel()
+			over := calling()
+			twice := over.edges[0]
+			twice.At.Start.Column = 20
+			over.edges = append(over.edges, twice)
+			got := relatedOver(t, over, store).Render()
+			assert.Contains(t, got, "a.fx:12:2", "the render of the first site")
+			assert.Contains(t, got, "a.fx:12:21", "the render of the second site")
+		})
+
+		t.Run("asks about the importers of a name that no declaration has", func(t *testing.T) {
+			t.Parallel()
+			over := calling()
+			got := relatedOver(t, over, `{"scope":"a.fx","name":"clock","relation":"imported-by"}`)
+			assert.False(t, got.Failed(), "the failure of the output")
+			assert.Length(t, over.relating, 1, "the requests of Relate")
+			assert.Equal(t, over.relating[0].Name(), "clock", "the name of the request")
+		})
+
+		t.Run("refuses a name that no declaration has for another relation", func(t *testing.T) {
+			t.Parallel()
+			got := relatedOver(t, calling(), `{"scope":"a.fx","name":"clock","relation":"called-by"}`)
+			assert.True(t, got.Failed(), "the failure of the output")
+		})
+
 		t.Run("asks with the limit of the input", func(t *testing.T) {
 			t.Parallel()
 			over := calling()

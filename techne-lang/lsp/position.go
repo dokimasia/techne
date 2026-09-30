@@ -153,6 +153,11 @@ func (d document) text(s source.Span) string {
 	return string(d.content[from:to])
 }
 
+// word returns the identifier at the protocol position p, by the rule of [lang.WordAt].
+func (d document) word(p protocol.Position) string {
+	return lang.WordAt(string(d.content), d.position(p).Offset)
+}
+
 // sourceLine returns the line that s starts on, cut by [lang.Excerpt] around the start of s,
 // without leading and trailing white space. It returns the empty string for a line outside
 // the document.

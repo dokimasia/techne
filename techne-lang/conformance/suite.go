@@ -408,6 +408,20 @@ func Run(t *testing.T, s Suite) {
 			assert.Equal(t, got.Items[0].Name, wanted.Name, "first item")
 		})
 
+		t.Run("returns a declaration by its qualified name", func(t *testing.T) {
+			t.Parallel()
+			at := slices.IndexFunc(everything.Items, func(s sema.Symbol) bool {
+				return s.Kind != sema.KindImport && strings.Contains(s.ID.Name(), ".")
+			})
+			if at < 0 {
+				t.Skip("the fixture qualifies no declaration")
+			}
+			wanted := everything.Items[at]
+			got := search(t, e, engine.Query{Text: wanted.ID.Name(), Private: true, Include: engine.BindAll})
+			assert.NotEmpty(t, got.Items, "the matches of "+wanted.ID.Name())
+			assert.Equal(t, got.Items[0].ID, wanted.ID, "the first match of "+wanted.ID.Name())
+		})
+
 		t.Run("leaves out an unexported declaration without Private", func(t *testing.T) {
 			t.Parallel()
 			hidden := slices.IndexFunc(s.Declares, func(d Declared) bool { return d.Visibility == sema.Unexported })
@@ -553,6 +567,20 @@ func Run(t *testing.T, s Suite) {
 			t.Parallel()
 			for _, d := range imported {
 				finds(t, e, declared, d.Simple, d)
+			}
+		})
+
+		t.Run("returns the files of an import from the scope of a file without imports", func(t *testing.T) {
+			t.Parallel()
+			quiet := "quiet" + s.Declaration.Extensions[0]
+			widened := maps.Clone(fsys)
+			widened[quiet] = &fstest.MapFile{Data: []byte{}}
+			wide := build(t, widened, s)
+			for _, d := range imported {
+				want := farNames(importedBy(t, wide, d.Name))
+				got := farNames(importedIn(t, wide, source.Path(quiet), d.Name))
+				assert.NotEmpty(t, got, "the files that import "+d.Name+" from the scope "+quiet)
+				assert.Equal(t, got, want, "the files that import "+d.Name+" from the scope "+quiet)
 			}
 		})
 
@@ -1057,8 +1085,15 @@ func importsOf(want []Declared) []Declared {
 // workspace root.
 func importedBy(t *testing.T, e *treesitter.Engine, name string) []sema.Relation {
 	t.Helper()
-	of := sema.NewID(e.Language(), engine.Root, name, sema.KindImport)
-	got, err := e.Relate(t.Context(), engine.Request{Scope: engine.Root}, of, sema.ImportedBy)
+	return importedIn(t, e, engine.Root, name)
+}
+
+// importedIn returns the relations of the files that import name, asked from
+// scope.
+func importedIn(t *testing.T, e *treesitter.Engine, scope source.Path, name string) []sema.Relation {
+	t.Helper()
+	of := sema.NewID(e.Language(), scope, name, sema.KindImport)
+	got, err := e.Relate(t.Context(), engine.Request{Scope: scope}, of, sema.ImportedBy)
 	assert.NoError(t, err, "Relate of the files that import "+name)
 	return got.Items
 }

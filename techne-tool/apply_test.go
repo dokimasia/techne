@@ -19,24 +19,21 @@ import (
 const handle = "0123456789abcdef0123456789abcdef"
 
 // committer is a write path that records the handle it receives. It refuses the commit with
-// the reason refuses when refuses is set, writes nothing when idle is set, and otherwise
-// writes a rename of Store in a.fx.
+// the reason refuses, as for a handle without a preview, when refuses is set, and otherwise
+// writes the rename of Store in a.fx that a preview about the directory pkg planned.
 type committer struct {
 	asked   string
 	refuses string
-	idle    bool
 }
 
 func (c *committer) Commit(_ context.Context, handle string) (edit.Outcome, error) {
 	c.asked = handle
-	switch {
-	case c.refuses != "":
+	if c.refuses != "" {
 		return edit.Outcome{Status: trust.Refused, Reason: c.refuses}, nil
-	case c.idle:
-		return edit.Outcome{Operation: edit.RenameSymbol, Status: trust.OK, Applied: true}, nil
 	}
 	return edit.Outcome{
 		Operation: edit.RenameSymbol,
+		Request:   edit.Request{Operation: edit.RenameSymbol, Scope: "pkg", Language: "fx", Subject: "Store"},
 		Status:    trust.OK,
 		Applied:   true,
 		Changed:   []source.Path{"a.fx"},
@@ -83,18 +80,23 @@ func TestApply(t *testing.T) {
 			assert.True(t, got.Applied, "Applied of the output")
 		})
 
-		t.Run("returns the first file written as the target and the path", func(t *testing.T) {
+		t.Run("returns the target of the preview", func(t *testing.T) {
 			t.Parallel()
 			got := applied(t, &committer{}, call)
-			assert.Equal(t, got.Target, "a.fx", "the target of the output")
-			assert.Equal(t, got.Scope.Path, "a.fx", "the path of the scope")
+			assert.Equal(t, got.Target, "Store", "the target of the output")
 		})
 
-		t.Run("returns no path for a change that wrote no file", func(t *testing.T) {
+		t.Run("returns the scope of the preview", func(t *testing.T) {
 			t.Parallel()
-			got := applied(t, &committer{idle: true}, call)
+			got := applied(t, &committer{}, call)
+			assert.Equal(t, got.Scope, tool.Scope{Language: "fx", Unit: "pkg"}, "the scope of the output")
+		})
+
+		t.Run("returns the handle as the target without a preview", func(t *testing.T) {
+			t.Parallel()
+			got := applied(t, &committer{refuses: "no preview has that handle"}, call)
 			assert.Equal(t, got.Target, handle, "the target of the output")
-			assert.Empty(t, got.Scope.Path, "the path of the scope")
+			assert.Equal(t, got.Scope, tool.Scope{}, "the scope of the output")
 		})
 
 		t.Run("returns the operation of the preview", func(t *testing.T) {

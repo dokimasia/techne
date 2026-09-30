@@ -15,6 +15,7 @@ import (
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/lang"
+	"go.lsp.dev/protocol"
 )
 
 // Plan returns the changes of an operation and writes nothing. The write path of techne
@@ -56,12 +57,18 @@ func (e *Engine) Plan(
 // preloads is the number of files that [Engine.preload] opens for one plan.
 const preloads = 200
 
-// preload opens the files of the workspace that write word as a word, for a [Server.Scoped]
-// server, so that the server finds the uses of word in them. It skips the file at skip, which
-// the plan has open. preload returns a caveat when more files write word than it opens, and
-// nil otherwise.
-func (e *Engine) preload(ctx context.Context, held *session, word string, skip source.Path) (*trust.Caveat, error) {
-	if !e.server.Scoped || word == "" {
+// preload opens the files of the workspace that writes reports as writing what, for a
+// [Server.Scoped] server, so that the server finds the uses in them. It skips the file at skip,
+// which the plan has open. preload returns a caveat when more files write what than it opens,
+// and nil otherwise.
+func (e *Engine) preload(
+	ctx context.Context,
+	held *session,
+	what string,
+	writes func(p source.Path, content []byte) bool,
+	skip source.Path,
+) (*trust.Caveat, error) {
+	if !e.server.Scoped || what == "" {
 		return nil, nil
 	}
 	files, err := e.walk(engine.Request{Scope: engine.Root})
@@ -74,7 +81,7 @@ func (e *Engine) preload(ctx context.Context, held *session, word string, skip s
 			continue
 		}
 		content, err := os.ReadFile(e.fullPath(p))
-		if err == nil && bytes.Contains(content, []byte(word)) && lang.Worded(string(content), word) >= 0 {
+		if err == nil && writes(p, content) {
 			writers = append(writers, p)
 		}
 	}
@@ -89,8 +96,37 @@ func (e *Engine) preload(ctx context.Context, held *session, word string, skip s
 	return &trust.Caveat{
 		Code: trust.CaveatIndexWarming,
 		Note: fmt.Sprintf("%s loads only the files it has open, and techne opened %d of the %d files "+
-			"that write %s, so a use in the others may be missing", e.server.Name, preloads, len(writers), word),
+			"that write %s, so a use in the others may be missing", e.server.Name, preloads, len(writers), what),
 	}, nil
+}
+
+// preloaded runs [Engine.preload] for the declaration whose name is at the protocol position at
+// of doc, over the files that write the name. A declaration that its file does not offer to the
+// rest of a program, such as a parameter or a local, has no use in another file, so preloaded
+// opens no file for it.
+func (e *Engine) preloaded(
+	ctx context.Context,
+	held *session,
+	found *finder,
+	doc document,
+	at protocol.Position,
+) (*trust.Caveat, error) {
+	if !e.server.Scoped {
+		return nil, nil
+	}
+	offered, err := found.offers(ctx, doc.path, at)
+	if err != nil || !offered {
+		return nil, err
+	}
+	word := doc.word(at)
+	return e.preload(ctx, held, word, wording(word), doc.path)
+}
+
+// wording returns the rule of [Engine.preload] for a file that writes word as a word.
+func wording(word string) func(source.Path, []byte) bool {
+	return func(_ source.Path, content []byte) bool {
+		return bytes.Contains(content, []byte(word)) && lang.Worded(string(content), word) >= 0
+	}
 }
 
 // beyond returns the first path of changes that is outside the workspace, or the empty string

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"go.dokimi.dev/techne/core/engine"
+	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/trust"
 )
 
@@ -45,6 +46,12 @@ type Server struct {
 	// Serves maps each role that the server serves to the tier of its answers. A role without
 	// an entry is not served. [Binding] returns the map of a server with a type checker.
 	Serves map[engine.Role]trust.Fidelity
+
+	// Unrelated are the relations whose request the server answers with other relations, which
+	// the engine declines, so another engine of the language answers them. gopls answers the
+	// type hierarchy of a Go type with the interfaces that the type implements, which are not
+	// the types that it embeds.
+	Unrelated []sema.RelationKind
 
 	// Settings are sent as the initializationOptions of initialize and in reply to
 	// workspace/configuration.
@@ -89,10 +96,11 @@ type Server struct {
 	// $/cancelRequest for the request without a reply.
 	Answering time.Duration
 
-	// Scoped reports that the server loads only the files that it has open and the files that
-	// they import, as typescript-language-server does for a file that no tsconfig.json or
-	// jsconfig.json includes. Most JavaScript repositories have neither. Before it plans a
-	// rename or a move, the engine opens the files of the workspace that write the name, so
+	// Scoped reports that the server reads only the files that it has open and what they load,
+	// as typescript-language-server does for a file that no tsconfig.json or jsconfig.json
+	// includes, and tsc --lsp does for a project of a tsconfig.json none of whose files is open.
+	// Before it plans a rename or a move, and before it relates the uses of a declaration that
+	// other files can use, the engine opens the files of the workspace that write the name, so
 	// the server finds the uses in them.
 	Scoped bool
 

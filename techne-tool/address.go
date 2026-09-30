@@ -6,6 +6,7 @@ package tool
 import (
 	"context"
 	"fmt"
+	"path"
 	"strings"
 
 	"go.dokimi.dev/techne/core/engine"
@@ -94,14 +95,8 @@ func paths(list []source.Path) []string {
 // overloads of a method.
 //
 // Any other count is refused with the reason of [ambiguous], and a line on which no declaration
-// of the name is with the site of each declaration of the name. A negative line is refused.
+// of the name is with the site of each declaration of the name.
 func pick(items []sema.Symbol, scope source.Path, name string, kind sema.Kind, line int) (sema.Symbol, *Failure) {
-	if line < 0 {
-		return sema.Symbol{}, &Failure{
-			Code:   trust.Refused.String(),
-			Reason: fmt.Sprintf("line %d: lines count from one", line),
-		}
-	}
 	named := matching(items, name, kind)
 	found := onLine(named, line)
 	if len(found) == 1 {
@@ -111,26 +106,38 @@ func pick(items []sema.Symbol, scope source.Path, name string, kind sema.Kind, l
 		return one, nil
 	}
 	reason := ambiguous(name, scope, found, items)
-	if len(found) == 0 && len(named) > 0 {
+	switch others := matching(items, name, sema.KindUnknown); {
+	case len(found) == 0 && len(named) > 0:
 		reason = fmt.Sprintf("%q declares no %q on line %d. It declares %s",
 			scope, name, line, strings.Join(sites(named), ", "))
+	case len(named) == 0 && len(others) > 0:
+		reason = fmt.Sprintf("%q declares no %s called %q. It declares %s",
+			scope, kind, name, strings.Join(sites(others), ", "))
 	}
 	return sema.Symbol{}, &Failure{Code: trust.Refused.String(), Reason: reason}
 }
 
-// onLine returns the declarations of found whose span contains line, which counts from one. A
+// onLine returns the declarations of found that start on line, which counts from one, and
+// otherwise the declarations whose span contains line. A declaration that starts on the line is
+// the one that the line names, although a declaration of another file can span the line. A
 // line of zero returns found.
 func onLine(found []sema.Symbol, line int) []sema.Symbol {
 	if line == 0 {
 		return found
 	}
-	var out []sema.Symbol
+	var starting, spanning []sema.Symbol
 	for _, s := range found {
-		if s.Span.Start.Line+1 <= line && line <= max(s.Span.End.Line, s.Span.Start.Line)+1 {
-			out = append(out, s)
+		switch {
+		case s.Span.Start.Line+1 == line:
+			starting = append(starting, s)
+		case s.Span.Start.Line+1 < line && line <= s.Span.End.Line+1:
+			spanning = append(spanning, s)
 		}
 	}
-	return out
+	if len(starting) > 0 {
+		return starting
+	}
+	return spanning
 }
 
 // together returns the declaration that two or more declarations of one name address, and
@@ -187,19 +194,30 @@ func every(found []sema.Symbol, rule func(sema.Symbol) bool) bool {
 }
 
 // matching returns the declarations of found that name and kind select. A name selects a
-// declaration of that name, or of that qualified name in its ID, such as Store.Get for the
-// method Get of Store. [sema.KindUnknown] selects every kind.
+// declaration of that name, of that qualified name in its ID, such as Store.Get for the method
+// Get of Store, or of that qualified name after the last element of its unit, such as
+// fake.Clock for Clock in the unit clock/fake. [sema.KindUnknown] selects every kind.
 func matching(found []sema.Symbol, name string, kind sema.Kind) []sema.Symbol {
 	var out []sema.Symbol
 	for _, s := range found {
 		if kind != sema.KindUnknown && s.Kind != kind {
 			continue
 		}
-		if s.Name == name || s.ID.Name() == name {
+		if s.Name == name || s.ID.Name() == name || unitQualified(s.ID) == name {
 			out = append(out, s)
 		}
 	}
 	return out
+}
+
+// unitQualified returns the qualified name of id after the last element of its unit, as
+// fake.Clock for Clock in the unit clock/fake, or the empty string for an ID in the root unit.
+func unitQualified(id sema.ID) string {
+	unit := path.Base(string(id.Unit()))
+	if unit == "." || unit == "/" || unit == "" {
+		return ""
+	}
+	return sema.Qualify(unit, id.Name())
 }
 
 // ambiguous returns the reason that a name addresses no declaration or more than one. The

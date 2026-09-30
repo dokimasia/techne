@@ -272,11 +272,14 @@ func link(symbols []sema.Symbol, containers []int) {
 // indexes that Parents returns. A declaration that no code outside its
 // scope can name is sema.Unexported: a kind that sema.Kind.Declares
 // excludes, and a variable or constant inside a function, a method or a
-// constructor. The declaration of the language reads the visibility of
-// every other declaration from its name.
+// constructor. A re-exported import can be named outside its file. The
+// declaration of the language reads the visibility of every other
+// declaration from its name.
 func (e *Engine) visibility(found []declaration, containers []int, i int) sema.Visibility {
 	kind := found[i].kind
-	if !kind.Declares() || (kind == sema.KindVariable || kind == sema.KindConstant) && local(found, containers, i) {
+	switch {
+	case found[i].reexported:
+	case !kind.Declares(), (kind == sema.KindVariable || kind == sema.KindConstant) && local(found, containers, i):
 		return sema.Unexported
 	}
 	return e.declared.Visibility(found[i].name)

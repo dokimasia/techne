@@ -26,8 +26,8 @@ type ExtractInput struct {
 }
 
 // Extract returns the tool that moves a run of lines into a new function and calls the
-// function in their place. It refuses an empty NewName and a selection that [selected]
-// refuses.
+// function in their place. It refuses a path that [filed] refuses, an empty NewName and a
+// selection that [selected] refuses.
 func Extract(writes Writer) (Tool, error) {
 	return New(string(edit.ExtractFunction), extractDescription,
 		func(ctx context.Context, in ExtractInput) (Written, error) {
@@ -37,6 +37,9 @@ func Extract(writes Writer) (Tool, error) {
 					failure.Code, failure.Reason), nil
 			}
 			held := writing(path, in.Language)
+			if failure = filed("path", path); failure != nil {
+				return declined(edit.ExtractFunction, held, in.NewName, failure.Code, failure.Reason), nil
+			}
 
 			if in.NewName == "" {
 				return declined(edit.ExtractFunction, held, in.NewName, trust.Refused.String(),
@@ -61,16 +64,9 @@ func Extract(writes Writer) (Tool, error) {
 
 // selected returns the span of the lines from first to last of the file at path, counted
 // from zero as the vocabulary counts them. It leaves the offsets unset, because only an engine
-// reads the file that they need. It refuses a first line below one and a last line before the
-// first.
+// reads the file that they need. It refuses a last line before the first.
 func selected(path source.Path, first, last int) (source.Span, *Failure) {
-	switch {
-	case first < 1:
-		return source.Span{}, &Failure{
-			Code:   trust.Refused.String(),
-			Reason: fmt.Sprintf("first_line %d: lines count from one", first),
-		}
-	case last < first:
+	if last < first {
 		return source.Span{}, &Failure{
 			Code: trust.Refused.String(),
 			Reason: fmt.Sprintf(

@@ -10,6 +10,7 @@ import (
 
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
+	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/lang"
@@ -48,6 +49,7 @@ func (e *Engine) renaming(
 	if err != nil {
 		return engine.Result[edit.Change]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
+	defer e.reading()()
 	ctx, done := e.answered(ctx)
 	defer done()
 	if !provides(held.capable.RenameProvider) {
@@ -57,7 +59,7 @@ func (e *Engine) renaming(
 	if err != nil {
 		return engine.Result[edit.Change]{}, err
 	}
-	short, err := e.preload(ctx, held, lang.WordAt(string(doc.content), doc.position(at).Offset), doc.path)
+	short, err := e.preloaded(ctx, held, newFinder(e, held), doc, at)
 	if err != nil {
 		return engine.Result[edit.Change]{}, err
 	}
@@ -135,8 +137,11 @@ func (e *Engine) targeted(req engine.Request, target edit.Target) (lang.Files, b
 // aimed opens the file of target and returns the protocol position of the name of the
 // declaration that target names, and the document of the file.
 //
-// A span names the innermost declaration that contains its start, and a span outside every
-// declaration names its own start. A declaration is looked up in the files of the walk, and a
+// A span names the declaration of the outline engine of the language with that span, because a
+// tool addresses a declaration by the span that the engine reports, and the engine reports the
+// locals and the parameters that a server leaves out of its document symbols. Any other span
+// names the innermost document symbol of the server that contains its start, and a span outside
+// every symbol names its own start. A declaration is looked up in the files of the walk, and a
 // declaration that no file declares returns [engine.ErrRefuse].
 func (e *Engine) aimed(
 	ctx context.Context,
@@ -161,6 +166,13 @@ func (e *Engine) aimed(
 	if err != nil {
 		return protocol.Position{}, document{}, err
 	}
+	parsed, known, err := e.parsedAt(ctx, held, target.Span)
+	switch {
+	case err != nil:
+		return protocol.Position{}, document{}, err
+	case known:
+		return naming(doc, parsed), doc, nil
+	}
 	symbols, err := e.symbols(ctx, held, doc)
 	if err != nil {
 		return protocol.Position{}, document{}, err
@@ -170,6 +182,24 @@ func (e *Engine) aimed(
 		return naming(doc, inside), doc, nil
 	}
 	return start, doc, nil
+}
+
+// parsedAt returns the declaration of the outline engine of the language whose span is span,
+// and reports whether there is one. An engine without an outline engine reports none.
+func (e *Engine) parsedAt(ctx context.Context, held *session, span source.Span) (sema.Symbol, bool, error) {
+	if e.outliner == nil {
+		return sema.Symbol{}, false, nil
+	}
+	kept, err := newFinder(e, held).file(ctx, span.Path)
+	if err != nil {
+		return sema.Symbol{}, false, err
+	}
+	for _, one := range kept.symbols {
+		if one.Span.Start.Offset == span.Start.Offset && one.Span.End.Offset == span.End.Offset {
+			return one, true, nil
+		}
+	}
+	return sema.Symbol{}, false, nil
 }
 
 // using returns the uses of the declaration at position at from textDocument/references,
@@ -193,7 +223,7 @@ func (e *Engine) using(
 		return nil
 	}
 	for _, one := range answered {
-		if p := e.pathOf(one.URI); !outside(p) {
+		if p := e.pathOf(one.URI); !lang.Outside(p) {
 			_, _ = e.open(ctx, held, p)
 		}
 	}
@@ -249,7 +279,7 @@ func (e *Engine) uncovered(uses []protocol.Location, changes []edit.Change) (str
 	docs := map[source.Path]document{}
 	for _, one := range uses {
 		p := e.pathOf(one.URI)
-		if outside(p) {
+		if lang.Outside(p) {
 			continue
 		}
 		at := fmt.Sprintf("%s:%d", p, one.Range.Start.Line+1)

@@ -44,6 +44,14 @@ func TestHeld(t *testing.T) {
 			assert.True(t, got.Applied, "the application of the change")
 			assert.Empty(t, got.Handle, "the handle of the outcome")
 		})
+
+		t.Run("returns the request in the outcome", func(t *testing.T) {
+			t.Parallel()
+			_, s := serving(t, planner{}, clean())
+			got, err := s.Apply(t.Context(), asking(true))
+			assert.NoError(t, err, "Apply")
+			assert.Equal(t, got.Request, asking(true), "the request of the outcome")
+		})
 	})
 
 	t.Run("Commit", func(t *testing.T) {
@@ -61,6 +69,30 @@ func TestHeld(t *testing.T) {
 			assert.Equal(t, files.at("a.fx"), "// Doc.\n"+original, "the content of a.fx")
 		})
 
+		t.Run("returns the request of the preview without a dry run", func(t *testing.T) {
+			t.Parallel()
+			_, s := serving(t, planner{}, clean())
+			asked := asking(true)
+			asked.Subject = "Store"
+			preview, err := s.Apply(t.Context(), asked)
+			assert.NoError(t, err, "Apply")
+			got, err := s.Commit(t.Context(), preview.Handle)
+			assert.NoError(t, err, "Commit")
+			asked.DryRun = false
+			assert.Equal(t, got.Request, asked, "the request of the commit")
+		})
+
+		t.Run("returns the request of the preview for a plan whose file changed", func(t *testing.T) {
+			t.Parallel()
+			files, s := serving(t, planner{}, clean())
+			preview, err := s.Apply(t.Context(), asking(true))
+			assert.NoError(t, err, "Apply")
+			files.put("a.fx", "somebody else\n")
+			got, err := s.Commit(t.Context(), preview.Handle)
+			assert.NoError(t, err, "Commit")
+			assert.Equal(t, got.Request, asking(false), "the request of the commit")
+		})
+
 		t.Run("refuses a handle that no preview returned", func(t *testing.T) {
 			t.Parallel()
 			_, s := serving(t, planner{}, clean())
@@ -68,6 +100,7 @@ func TestHeld(t *testing.T) {
 			assert.NoError(t, err, "Commit")
 			assert.False(t, got.Applied, "the application of the change")
 			assert.Contains(t, got.Reason, "preview again", "the reason of the refusal")
+			assert.Equal(t, got.Request.Operation, "", "the operation of the request")
 		})
 
 		t.Run("refuses a handle the second time", func(t *testing.T) {

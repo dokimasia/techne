@@ -27,7 +27,9 @@ const separators = `/\:.`
 // Relate returns the import relations of a declaration: the files that
 // import it, for [sema.ImportedBy], and the imports of its file, for
 // [sema.Imports]. The tags query of every language captures imports as
-// [sema.KindImport], so these relations do not need name binding.
+// [sema.KindImport], so these relations do not need name binding. The files
+// that import a name are read from the whole workspace, and the imports of a
+// file from the scope.
 //
 // Relate returns a result with Skipped set for a scope without a file of
 // the language. For any other relation kind it returns
@@ -63,6 +65,14 @@ func (e *Engine) Relate(
 	if kind != sema.Imports && kind != sema.ImportedBy {
 		return engine.Result[sema.Relation]{}, fmt.Errorf(
 			"%w: %s reads imports, and %s needs name binding", engine.ErrDecline, e.Name(), kind)
+	}
+	// A file anywhere in the workspace can import the name.
+	if kind == sema.ImportedBy {
+		everywhere := req
+		everywhere.Scope = engine.Root
+		if files, err = e.walk(everywhere); err != nil {
+			return engine.Result[sema.Relation]{}, err
+		}
 	}
 
 	name := of.Name()

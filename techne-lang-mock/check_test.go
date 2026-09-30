@@ -115,24 +115,21 @@ func TestCheck(t *testing.T) {
 			assert.Empty(t, got.Items, "the findings of src/client.mock")
 		})
 
-		t.Run("runs its check for every list of suites", func(t *testing.T) {
+		t.Run("runs its check for no suite and for its own suite", func(t *testing.T) {
 			t.Parallel()
-			for _, suites := range [][]string{nil, {mock.Suite}, {"lint"}} {
+			for _, suites := range [][]string{nil, {mock.Suite}} {
 				got, err := over(t, broken()).Verify(t.Context(), engine.Request{Scope: "."}, suites)
 				assert.NoError(t, err, "Verify of the workspace")
 				assert.Length(t, got.Items, 1, "the findings of the workspace")
 			}
 		})
 
-		t.Run("returns a caveat that lists the suites that the language does not run", func(t *testing.T) {
+		t.Run("declines the suites that the language does not run", func(t *testing.T) {
 			t.Parallel()
-			got, err := over(t, broken()).Verify(t.Context(), engine.Request{Scope: "."},
+			_, err := over(t, broken()).Verify(t.Context(), engine.Request{Scope: "."},
 				[]string{"lint", mock.Suite, "vet"})
-			assert.NoError(t, err, "Verify of the workspace")
-			assert.Equal(t, got.Caveats[len(got.Caveats)-1], trust.Caveat{
-				Code: trust.CaveatUnsupported,
-				Note: "the mock language runs its one check, resolve, and none of these suites: lint, vet",
-			}, "the caveat of the suites")
+			assert.ErrorIs(t, err, engine.ErrDecline, "Verify with lint and vet")
+			assert.Contains(t, err.Error(), "runs only resolve, and not lint, vet", "the reason of the decline")
 		})
 
 		t.Run("returns a skipped result for a scope without a file of the language", func(t *testing.T) {

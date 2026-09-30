@@ -10,6 +10,7 @@ import (
 	ts "github.com/tree-sitter/go-tree-sitter"
 	binding "github.com/tree-sitter/tree-sitter-go/bindings/go"
 	"go.dokimi.dev/techne/core/engine"
+	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/lang"
 	"go.dokimi.dev/techne/lang/engines"
@@ -53,8 +54,13 @@ func Declaration() lang.Declaration {
 		IsTest:     IsTest,
 		Namespace:  Unit,
 		Visibility: Visibility,
+		Removed:    removed,
 	}
 }
+
+// removed is the content of a deleted Go file. No build satisfies its build constraint, so the
+// file is in no package, and a file without a package clause would not parse.
+var removed = []byte("//go:build ignore && !ignore\n\npackage removed\n")
 
 // Grammar returns the tree-sitter grammar of Go with the upstream tags
 // query and the patterns of the module.
@@ -83,6 +89,9 @@ func Server() lsp.Server {
 		LanguageID: lsp.IdentityGo,
 		Serves:     lsp.Binding(),
 		Extracts:   lsp.Refactor{Kind: "refactor.extract.function"},
+		// gopls answers the type hierarchy with the interfaces that a type implements, and the
+		// type checker of package checker answers what a type embeds.
+		Unrelated: []sema.RelationKind{sema.Embeds, sema.EmbeddedBy},
 	}
 }
 

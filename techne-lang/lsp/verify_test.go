@@ -35,12 +35,12 @@ func TestVerify(t *testing.T) {
 			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the answer")
 		})
 
-		t.Run("adds a caveat for the suites it ignores", func(t *testing.T) {
+		t.Run("declines a suite", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, lsptest.Default, sample()).
+			_, err := serving(t, lsptest.Default, sample()).
 				Verify(t.Context(), engine.Request{Scope: "a.fake"}, []string{"vet"})
-			assert.NoError(t, err, "Verify with the suite vet")
-			assert.True(t, hasCaveat(got.Caveats, trust.CaveatUnsupported), "the answer has an unsupported caveat")
+			assert.ErrorIs(t, err, engine.ErrDecline, "Verify with the suite vet")
+			assert.Contains(t, err.Error(), "runs no suite, and not vet", "the reason of the decline")
 		})
 
 		t.Run("skips a scope without a file of the language", func(t *testing.T) {

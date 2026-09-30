@@ -234,10 +234,19 @@ func TestService(t *testing.T) {
 		t.Run("asks the language that the request names", func(t *testing.T) {
 			t.Parallel()
 			c := catalogue(t, answering{name: "parser", fidelity: trust.Syntactic, found: symbol("weak")})
-			got, err := query.New(c, router{}).Outline(t.Context(),
+			got, err := query.New(c, routes).Outline(t.Context(),
 				engine.Request{Scope: "unrouted", Language: fixture})
 			assert.NoError(t, err, "Outline of unrouted")
 			assert.Equal(t, got.Status, trust.OK, "the status of the answer")
+		})
+
+		t.Run("refuses a language that the router does not serve", func(t *testing.T) {
+			t.Parallel()
+			c := catalogue(t, answering{name: "parser", fidelity: trust.Syntactic, found: symbol("weak")})
+			got, err := query.New(c, router{}).Outline(t.Context(),
+				engine.Request{Scope: "unrouted", Language: fixture})
+			assert.NoError(t, err, "Outline of unrouted")
+			assert.Equal(t, got.Status, trust.Refused, "the status of the answer")
 		})
 
 		t.Run("returns a degraded answer below the preferred tier", func(t *testing.T) {

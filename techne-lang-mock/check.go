@@ -70,9 +70,9 @@ func (e *Engine) Check(
 // file of the workspace that is too large to read can declare the name of a use, so it makes
 // the answer partial.
 //
-// The language has one check, [Suite], which Verify runs for every request. A caveat lists
-// the other suites that req names. Verify returns a skipped result for a scope without a file
-// of the language.
+// The language has one check, [Suite], which Verify runs for every request, and it declines a
+// request that names another suite, by the rule of [engine.Unrun]. Verify returns a skipped
+// result for a scope without a file of the language.
 func (e *Engine) Verify(
 	ctx context.Context,
 	req engine.Request,
@@ -84,6 +84,12 @@ func (e *Engine) Verify(
 	}
 	all, err := e.read(ctx, everywhere(req))
 	if err != nil {
+		return engine.Result[edit.Finding]{}, err
+	}
+	if !all.claims(req.Scope) {
+		return engine.Result[edit.Finding]{Skipped: true, Completeness: trust.ScopeTotal}, nil
+	}
+	if err := engine.Unrun(e.Name(), []string{Suite}, suites); err != nil {
 		return engine.Result[edit.Finding]{}, err
 	}
 	declared := map[string]bool{}
@@ -108,15 +114,7 @@ func (e *Engine) Verify(
 		}
 	}
 
-	answer := result(e, out, all, req.Scope)
-	if others := slices.DeleteFunc(slices.Clone(suites), func(s string) bool { return s == Suite }); len(others) > 0 {
-		answer.Caveats = append(answer.Caveats, trust.Caveat{
-			Code: trust.CaveatUnsupported,
-			Note: "the mock language runs its one check, " + Suite + ", and none of these suites: " +
-				strings.Join(others, ", "),
-		})
-	}
-	return answer, nil
+	return result(e, out, all, req.Scope), nil
 }
 
 // quoted returns the text that at covers in content, without the white space around it, or

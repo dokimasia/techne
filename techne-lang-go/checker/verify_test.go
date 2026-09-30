@@ -113,14 +113,11 @@ func TestVerify(t *testing.T) {
 			assert.True(t, got.Skipped, "the answer is skipped")
 		})
 
-		t.Run("returns a caveat that names the suites that it does not run", func(t *testing.T) {
+		t.Run("declines a suite that it does not run", func(t *testing.T) {
 			t.Parallel()
-			got, err := serving(t, whole()).Verify(t.Context(), engine.Request{Scope: "."}, []string{"vet"})
-			assert.NoError(t, err, "Verify with the suite vet")
-			assert.Equal(t, got.Caveats, []trust.Caveat{{
-				Code: trust.CaveatUnsupported,
-				Note: "the type checker runs its own analysis and none of these suites: vet",
-			}}, "the caveats of the answer")
+			_, err := serving(t, whole()).Verify(t.Context(), engine.Request{Scope: "."}, []string{"vet"})
+			assert.ErrorIs(t, err, engine.ErrDecline, "Verify with the suite vet")
+			assert.Contains(t, err.Error(), "go/types runs no suite, and not vet", "the reason of the decline")
 		})
 	})
 

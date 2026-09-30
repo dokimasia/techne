@@ -13,9 +13,9 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 )
 
-// Verify returns the findings of the server for the files of the scope on disk. It ignores
-// suites, because a server runs one analysis, and adds a [trust.CaveatUnsupported] caveat when
-// req names any.
+// Verify returns the findings of the server for the files of the scope on disk. A server runs
+// one analysis and no suite, so Verify declines a request that names a suite, by the rule of
+// [engine.Unrun].
 //
 // Verify opens every file of the scope, waits for the server to settle, and then collects the
 // diagnostics of each file: from textDocument/diagnostic for a server that offers pull
@@ -51,11 +51,15 @@ func (e *Engine) verifying(
 	if len(files.Read) == 0 && len(files.Unread) == 0 {
 		return engine.Result[edit.Finding]{Skipped: true, Completeness: trust.ScopeTotal}, nil
 	}
+	if unrun := engine.Unrun(e.server.Name, nil, suites); unrun != nil {
+		return engine.Result[edit.Finding]{}, unrun
+	}
 
 	held, err := e.running(ctx)
 	if err != nil {
 		return engine.Result[edit.Finding]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
+	defer e.reading()()
 	ctx, done := e.answered(ctx)
 	defer done()
 	var docs []document
@@ -93,7 +97,9 @@ func (e *Engine) verifying(
 	if waited || len(files.Unread) > 0 {
 		covered = trust.ScopePartial
 	}
-	caveats = append(caveats, reasons(suites, waited)...)
+	if waited {
+		caveats = append(caveats, unreported)
+	}
 	caveats = append(caveats, e.shortfall(checked)...)
 	return engine.Result[edit.Finding]{
 		Items:        out,
@@ -119,21 +125,8 @@ func (e *Engine) shortfall(checked bool) []trust.Caveat {
 	return nil
 }
 
-// reasons returns the caveats of a verification beyond those of every answer: one for
-// suites that the server ignored, and one for files that received no report.
-func reasons(suites []string, waited bool) []trust.Caveat {
-	var out []trust.Caveat
-	if len(suites) > 0 {
-		out = append(out, trust.Caveat{
-			Code: trust.CaveatUnsupported,
-			Note: "a language server runs one analysis, so the result ignores the suites named",
-		})
-	}
-	if waited {
-		out = append(out, trust.Caveat{
-			Code: trust.CaveatIndexWarming,
-			Note: "the server reported nothing about some files, so they may have findings",
-		})
-	}
-	return out
+// unreported is the caveat of a verification in which a file received no report.
+var unreported = trust.Caveat{
+	Code: trust.CaveatIndexWarming,
+	Note: "the server reported nothing about some files, so they may have findings",
 }

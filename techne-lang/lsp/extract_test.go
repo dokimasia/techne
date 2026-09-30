@@ -106,6 +106,13 @@ func TestExtract(t *testing.T) {
 			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of Plan")
 		})
 
+		t.Run("refuses a name that the server refuses to rename to", func(t *testing.T) {
+			t.Parallel()
+			_, err := lifting(t, serving(t, lsptest.Extracts, sample()), "1x")
+			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of Plan")
+			assert.Contains(t, err.Error(), lsptest.InvalidName, "the error of Plan")
+		})
+
 		t.Run("refuses lines past the end of the file", func(t *testing.T) {
 			t.Parallel()
 			_, err := serving(t, lsptest.Extracts, sample()).Plan(t.Context(),

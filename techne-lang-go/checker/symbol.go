@@ -244,10 +244,20 @@ func underlying(of *types.TypeName) sema.Kind {
 }
 
 // signature returns the declaration of an object without its body, as the type checker writes
-// it, relative to the package that declares it. It returns the first line of a declaration
-// that spans lines, such as a struct type.
+// it, relative to the package that declares it. A defined struct or interface type ends at its
+// keyword, as type T struct, without its fields or its methods. It returns the first line of a
+// declaration that spans lines.
 func signature(of types.Object) string {
-	held := types.ObjectString(of, types.RelativeTo(of.Pkg()))
+	qualifier := types.RelativeTo(of.Pkg())
+	held := types.ObjectString(of, qualifier)
+	if named, defined := of.(*types.TypeName); defined && !named.IsAlias() {
+		switch body := named.Type().Underlying().(type) {
+		case *types.Struct:
+			held = strings.TrimSuffix(held, types.TypeString(body, qualifier)) + "struct"
+		case *types.Interface:
+			held = strings.TrimSuffix(held, types.TypeString(body, qualifier)) + "interface"
+		}
+	}
 	if at := strings.IndexByte(held, '\n'); at >= 0 {
 		held = held[:at]
 	}

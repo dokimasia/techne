@@ -50,6 +50,22 @@ func TestResolve(t *testing.T) {
 			assert.Equal(t, requested(t, log, "textDocument/documentSymbol"), 0, "the requests for symbols")
 		})
 
+		t.Run("follows a definition that no declaration contains to its own definition", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.Exports, sample()).
+				Resolve(t.Context(), engine.Request{Scope: "a.fake"}, source.Position{Line: 8, Column: 28})
+			assert.NoError(t, err, "Resolve of a name whose definition is an export")
+			assert.Equal(t, names(got.Items), []string{"Store"}, "the declarations that the name denotes")
+		})
+
+		t.Run("asks again after the report of a file whose first definition is empty", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.Loads, sample()).
+				Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
+			assert.NoError(t, err, "Resolve in a file that the server loads")
+			assert.Equal(t, names(got.Items), []string{"Store"}, "the declarations that Store denotes")
+		})
+
 		t.Run("returns nothing for a name without a definition", func(t *testing.T) {
 			t.Parallel()
 			got, err := serving(t, lsptest.Unresolved, sample()).

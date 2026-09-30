@@ -56,6 +56,12 @@ class Cache {
 export function helper(a, b) {
   return a;
 }
+
+export function pick({ depth = 0, key: label = "" }, [first = 1]) {}
+`,
+			"pkg/index.js": `export * as Shapes from "./shapes.js";
+export { Store as Vault } from "./store.js";
+export default helper(1);
 `,
 		},
 		Declares: []conformance.Declared{
@@ -85,6 +91,16 @@ export function helper(a, b) {
 			{Name: "size", Kind: sema.KindField},
 			{Name: "start", Kind: sema.KindParameter, Visibility: sema.Unexported},
 			{Name: "total", Kind: sema.KindImport, Visibility: sema.Unexported, Simple: "total"},
+			{Name: "pick", Kind: sema.KindFunction},
+			{Name: "depth", Kind: sema.KindParameter, Visibility: sema.Unexported},
+			{Name: "label", Kind: sema.KindParameter, Visibility: sema.Unexported},
+			{Name: "first", Kind: sema.KindParameter, Visibility: sema.Unexported},
+			{Name: "Shapes", Kind: sema.KindModule},
+			{Name: "./shapes.js", Kind: sema.KindImport, Visibility: sema.Unexported, Simple: "shapes"},
+			{Name: "./store.js", Kind: sema.KindImport, Visibility: sema.Unexported, Simple: "store"},
+			{Name: "Store", Kind: sema.KindImport, Simple: "Store"},
+			{Name: "Vault", Kind: sema.KindConstant},
+			{Name: "default", Kind: sema.KindConstant},
 		},
 	})
 }

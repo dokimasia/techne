@@ -71,8 +71,17 @@ func TestSearch(t *testing.T) {
 
 		t.Run("keeps the order of the engine", func(t *testing.T) {
 			t.Parallel()
-			got := searched(t, serving(function("Second", ""), function("First", "")), `{"text":"","scope":"a.fx"}`)
+			got := searched(t, serving(function("Second", ""), function("First", "")), `{"text":"s","scope":"a.fx"}`)
 			assert.Equal(t, names(got.Items), []string{"Second", "First"}, "the matches")
+		})
+
+		t.Run("refuses a text of white space before it asks the engine", func(t *testing.T) {
+			t.Parallel()
+			over := serving(function("Digest", ""))
+			got := searched(t, over, `{"text":" ","scope":"a.fx"}`)
+			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
+			assert.Contains(t, got.Error.Reason, "outline tool", "the reason of the failure")
+			assert.Empty(t, over.searched, "the queries of the engine")
 		})
 
 		t.Run("supports no negative claim at the syntactic tier", func(t *testing.T) {

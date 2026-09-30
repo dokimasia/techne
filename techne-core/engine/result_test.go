@@ -28,6 +28,12 @@ func TestResult(t *testing.T) {
 			assert.Equal(t, got.Provenance.Engine, "checker", "engine")
 		})
 
+		t.Run("takes the language from the engine", func(t *testing.T) {
+			t.Parallel()
+			got := engine.Publish(total, checker, engine.RoleOutline, trust.None)
+			assert.Equal(t, got.Language, checker.Language(), "language")
+		})
+
 		t.Run("takes the tier from the engine", func(t *testing.T) {
 			t.Parallel()
 			got := engine.Publish(total, checker, engine.RoleOutline, trust.None)

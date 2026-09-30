@@ -4,6 +4,7 @@
 package tool
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 
@@ -20,6 +21,9 @@ type Scope struct {
 	Language string `json:"language,omitempty"`
 	Unit     string `json:"unit,omitempty"`
 	Path     string `json:"path,omitempty"`
+	// Directory is the directory of an answer about a directory of two or more units, which
+	// states no unit.
+	Directory string `json:"directory,omitempty"`
 }
 
 // Answer is the output of the outline, search and resolve tools: the scope, the declarations,
@@ -78,14 +82,14 @@ func provenance(p trust.Provenance) Provenance {
 	return out
 }
 
-// published returns the answer of a read tool: the declarations of a at the level d with the
-// bindings of include, nested by [Declared], and the evidence of a. A declaration in the file
-// of scope states no path, by the rule of [stated]. An answer that no engine served has a
-// [Failure] whose reason is the first note of its caveats.
-func published(a engine.Answer[sema.Symbol], scope Scope, d Detail, include engine.Bindings) Answer {
+// published returns the answer of a read tool: items, the declarations of a as [Declared] or
+// [Resolved] builds them, and the evidence of a. A declaration in the file of scope states no
+// path, by the rule of [stated]. An answer that no engine served has a [Failure] whose reason is
+// the first note of its caveats.
+func published(a engine.Answer[sema.Symbol], scope Scope, items []Declaration) Answer {
 	out := Answer{
 		Scope:      scope,
-		Items:      stated(Declared(a.Items, d, include), scope.Path),
+		Items:      stated(items, scope.Path),
 		Provenance: provenance(a.Provenance),
 	}
 	switch a.Status {
@@ -150,12 +154,9 @@ func (a Answer) Render() string {
 func (a Answer) heading() string { return headed(a.Scope, count(a.Items)) }
 
 // headed returns the first line of the render of an answer about scope with n declarations:
-// the file or the unit, the language and the unit, and the count.
+// the file, the unit or the directory, the language and the unit, and the count.
 func headed(scope Scope, n int) string {
-	about := scope.Path
-	if about == "" {
-		about = scope.Unit
-	}
+	about := cmp.Or(scope.Path, scope.Unit, scope.Directory)
 	unit := scope.Unit
 	if unit == "." {
 		unit = ""

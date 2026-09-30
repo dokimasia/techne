@@ -27,6 +27,21 @@ type greetOut struct {
 	Greeting string `json:"greeting"`
 }
 
+// placedIn is an input with a required and an optional integer.
+type placedIn struct {
+	Line  int `json:"line"`
+	Limit int `json:"limit,omitempty"`
+}
+
+// placing returns a tool named place that returns its input.
+func placing(t *testing.T) tool.Tool {
+	t.Helper()
+	built, err := tool.New("place", "PREFER OVER counting by hand.",
+		func(_ context.Context, in placedIn) (placedIn, error) { return in, nil })
+	assert.NoError(t, err, "the error of New")
+	return built
+}
+
 // greeter returns a tool named greet that returns a greeting of the name of its input, and
 // returns an error for an empty name.
 func greeter(t *testing.T) tool.Tool {
@@ -98,6 +113,16 @@ func TestTool(t *testing.T) {
 			assert.Equal(t, enum(in["preferred_fidelity"]), words(trust.Fidelities()), "the enum of preferred_fidelity")
 			assert.Equal(t, enum(relations.InputSchema().Properties["relation"]), words(sema.RelationKinds()),
 				"the enum of relation")
+		})
+
+		t.Run("gives a required integer the minimum 1", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, *placing(t).InputSchema().Properties["line"].Minimum, 1.0, "the minimum of line")
+		})
+
+		t.Run("gives an optional integer the minimum 0", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, *placing(t).InputSchema().Properties["limit"].Minimum, 0.0, "the minimum of limit")
 		})
 
 		t.Run("keeps the description of a word field", func(t *testing.T) {
@@ -187,6 +212,27 @@ func TestTool(t *testing.T) {
 			_, err := greeter(t).Execute(t.Context(), json.RawMessage(`{"times":2}`))
 			assert.HasError(t, err, "the error of Execute")
 			assert.Equal(t, err.Error(), `tool: greet needs "name"`, "the error of Execute")
+		})
+
+		t.Run("returns an error for an optional number below 0", func(t *testing.T) {
+			t.Parallel()
+			_, err := placing(t).Execute(t.Context(), json.RawMessage(`{"line":1,"limit":-1}`))
+			assert.HasError(t, err, "the error of Execute")
+			assert.Equal(t, err.Error(), `tool: place takes "limit" of at least 0, not -1`, "the error of Execute")
+		})
+
+		t.Run("returns an error for a required number below 1", func(t *testing.T) {
+			t.Parallel()
+			_, err := placing(t).Execute(t.Context(), json.RawMessage(`{"line":0}`))
+			assert.HasError(t, err, "the error of Execute")
+			assert.Equal(t, err.Error(), `tool: place takes "line" of at least 1, not 0`, "the error of Execute")
+		})
+
+		t.Run("returns the output for numbers at their minimum", func(t *testing.T) {
+			t.Parallel()
+			got, err := placing(t).Execute(t.Context(), json.RawMessage(`{"line":1,"limit":0}`))
+			assert.NoError(t, err, "the error of Execute")
+			assert.Equal(t, string(got.Payload), `{"line":1}`, "the payload")
 		})
 
 		t.Run("reads an absent input as an empty object", func(t *testing.T) {

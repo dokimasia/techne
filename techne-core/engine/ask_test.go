@@ -48,6 +48,40 @@ func refusing(reason string) error {
 func TestAsk(t *testing.T) {
 	t.Parallel()
 
+	t.Run("Unrouted", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns nil for a request without a language", func(t *testing.T) {
+			t.Parallel()
+			assert.NoError(t, engine.Unrouted(router{}, engine.Request{Scope: "a.fx"}), "Unrouted")
+		})
+
+		t.Run("returns nil for the language that claims the file", func(t *testing.T) {
+			t.Parallel()
+			assert.NoError(t, engine.Unrouted(router{}, engine.Request{Scope: "a.fx", Language: fixture}), "Unrouted")
+		})
+
+		t.Run("returns nil for a language and a file that no language claims", func(t *testing.T) {
+			t.Parallel()
+			assert.NoError(t, engine.Unrouted(router{}, engine.Request{Scope: "a.txt", Language: other}), "Unrouted")
+		})
+
+		t.Run("refuses a language that the router does not serve", func(t *testing.T) {
+			t.Parallel()
+			err := engine.Unrouted(router{}, engine.Request{Scope: "a.fx", Language: "cobol"})
+			assert.ErrorIs(t, err, engine.ErrRefuse, "Unrouted of cobol")
+			assert.Contains(t, err.Error(), "no language is named cobol: the languages are fixture, other",
+				"the reason of the refusal")
+		})
+
+		t.Run("refuses a file that another language claims", func(t *testing.T) {
+			t.Parallel()
+			err := engine.Unrouted(router{}, engine.Request{Scope: "a.fx", Language: other})
+			assert.ErrorIs(t, err, engine.ErrRefuse, "Unrouted of a.fx as other")
+			assert.Contains(t, err.Error(), "a.fx is fixture", "the reason of the refusal")
+		})
+	})
+
 	t.Run("Languages", func(t *testing.T) {
 		t.Parallel()
 
@@ -296,6 +330,17 @@ func TestAsk(t *testing.T) {
 			assert.NoError(t, err, "AskAny")
 			assert.True(t, ok, "answered")
 			assert.Equal(t, got.Provenance.Engine, "fixture", "engine")
+			assert.Equal(t, calls, 0, "other calls")
+		})
+
+		t.Run("refuses a file that another language claims before it asks an engine", func(t *testing.T) {
+			t.Parallel()
+			calls := 0
+			c := catalog(t, fake{name: "other", language: other, fidelity: trust.Syntactic, calls: &calls})
+			_, ok, _, err := engine.AskAny(t.Context(), c, router{},
+				engine.Request{Scope: "a.fx", Language: other}, engine.RoleOutline, outline)
+			assert.ErrorIs(t, err, engine.ErrRefuse, "AskAny")
+			assert.False(t, ok, "answered")
 			assert.Equal(t, calls, 0, "other calls")
 		})
 

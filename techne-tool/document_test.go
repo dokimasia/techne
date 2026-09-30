@@ -110,6 +110,15 @@ func TestDocument(t *testing.T) {
 			assert.Equal(t, got.Error.Code, "refused", "the code of the failure")
 		})
 
+		t.Run("refuses a documentation of white space", func(t *testing.T) {
+			t.Parallel()
+			writer := &recorder{}
+			got := documenting(t, writer, `{"scope":"a.fx","name":"Store","doc":"  \n\t "}`)
+			assert.True(t, got.Failed(), "the failure of the output")
+			assert.Contains(t, got.Error.Reason, "doc is empty", "the reason of the failure")
+			assert.Equal(t, writer.asked.Operation, edit.Operation(""), "the operation sent to the write path")
+		})
+
 		t.Run("refuses a path that leaves the workspace", func(t *testing.T) {
 			t.Parallel()
 			got := documenting(t, &recorder{}, `{"scope":"../b.fx","name":"Store","doc":"x"}`)

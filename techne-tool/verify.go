@@ -21,7 +21,7 @@ type VerifyInput struct {
 	Scope     string       `json:"scope"                        jsonschema:"file or directory, relative to the workspace root"`
 	Suites    []string     `json:"suites,omitempty"             jsonschema:"the checks to run, in the words of the language"`
 	Language  string       `json:"language,omitempty"           jsonschema:"the language to ask, in place of the languages of the scope"`
-	MaxIssues int          `json:"max_issues,omitempty"         jsonschema:"the number of issues to return, all when omitted"`
+	MaxIssues int          `json:"max_issues,omitempty"         jsonschema:"the number of issues to return, all when omitted or 0"`
 	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence the caller wants: a weaker answer is degraded, not refused"`
 }
 

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -231,13 +232,13 @@ func (e *Engine) list(
 }
 
 // signature returns the line on which the name of a declaration starts, cut by [lang.Excerpt]
-// around the name, without leading and trailing white space. For an empty line it returns
-// the name and the detail the server reported, such as the parameters and results gopls
-// reports.
+// around the name, without leading and trailing white space and without a brace at its end
+// that opens the body, as the parser leaves out the body. For an empty line it returns the name
+// and the detail the server reported, such as the parameters and results gopls reports.
 func signature(name string, at protocol.Range, detail string, doc document) string {
 	named := source.Span{Start: doc.position(at.Start)}
 	if line := doc.sourceLine(named); line != "" {
-		return line
+		return strings.TrimSpace(strings.TrimSuffix(line, "{"))
 	}
 	return strings.TrimSpace(name + " " + detail)
 }
@@ -412,7 +413,7 @@ func newFinder(e *Engine, held *session) *finder {
 // [lang.Largest] have an empty outline. Any other failure to read p is returned: the server
 // named p, so the file must be readable.
 func (f *finder) file(ctx context.Context, p source.Path) (outline, error) {
-	if f.engine.outliner == nil || outside(p) {
+	if f.engine.outliner == nil || lang.Outside(p) {
 		return f.opened(ctx, p)
 	}
 	if kept, known := f.parsed[p]; known {
@@ -480,6 +481,22 @@ func (f *finder) symbolised(
 	kept := outlined(doc, symbols)
 	f.served[p] = kept
 	return kept, nil
+}
+
+// offers reports whether the file at p offers the declaration whose name is at the protocol
+// position at to the rest of a program. A parameter, a label and a local are not offered, and a
+// declaration that the outline of the file does not contain is.
+func (f *finder) offers(ctx context.Context, p source.Path, at protocol.Position) (bool, error) {
+	kept, err := f.file(ctx, p)
+	if err != nil {
+		return true, err
+	}
+	for _, one := range kept.symbols {
+		if naming(kept.doc, one) == at {
+			return slices.ContainsFunc(kept.offered, func(o sema.Symbol) bool { return o.Span == one.Span }), nil
+		}
+	}
+	return true, nil
 }
 
 // at returns the innermost declaration of the file at p that contains the protocol position

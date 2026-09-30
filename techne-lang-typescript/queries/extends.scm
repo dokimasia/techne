@@ -72,6 +72,20 @@
 (import_clause (identifier) @name) @definition.import
 (labeled_statement label: (statement_identifier) @name) @definition.label
 
+;; A re-export imports what it offers: its source is an import, and each
+;; name it takes from the source is an import that the file offers to the
+;; rest of a program. The alias under which a module offers a binding of
+;; another is a constant, because a module export is a read-only binding,
+;; and a namespace export is a module. A default export of an expression
+;; binds the name default.
+(export_statement source: (string (string_fragment) @name)) @definition.import
+(export_statement
+  (export_clause (export_specifier name: [(identifier) @name (string) @name]) @definition.reexport)
+  source: (string))
+(export_specifier alias: [(identifier) @name (string) @name] @definition.constant)
+(namespace_export [(identifier) @name (string) @name]) @definition.module
+(export_statement "default" @name value: (_)) @definition.constant
+
 ;; An object literal declares its properties: TypeScript gives the
 ;; literal an anonymous type and binds a symbol per key. A generator
 ;; reading a configuration object needs them.
@@ -79,20 +93,31 @@
 (shorthand_property_identifier) @name @definition.field
 
 ;; Destructuring binds names without naming a declarator: `const {a, b}`
-;; and `function f({a}, [b])` each declare what they pull apart.
+;; and `function f({a}, [b])` each declare what they pull apart, and so
+;; do the forms with a default, `{a = 1}`, `{k: a = 1}` and `[a = 1]`.
 (object_pattern [(shorthand_property_identifier_pattern) @name
-                 (pair_pattern value: (identifier) @name)]) @definition.variable
-(array_pattern (identifier) @name) @definition.variable
+                 (object_assignment_pattern left: (shorthand_property_identifier_pattern) @name)
+                 (pair_pattern value: (identifier) @name)
+                 (pair_pattern value: (assignment_pattern left: (identifier) @name))]) @definition.variable
+(array_pattern [(identifier) @name
+                (assignment_pattern left: (identifier) @name)]) @definition.variable
 (rest_pattern (identifier) @name) @definition.variable
 
 (required_parameter
   pattern: (object_pattern [(shorthand_property_identifier_pattern) @name
-                            (pair_pattern value: (identifier) @name)])) @definition.parameter
+                            (object_assignment_pattern left: (shorthand_property_identifier_pattern) @name)
+                            (pair_pattern value: (identifier) @name)
+                            (pair_pattern value: (assignment_pattern left: (identifier) @name))
+                            (rest_pattern (identifier) @name)])) @definition.parameter
 (optional_parameter
   pattern: (object_pattern [(shorthand_property_identifier_pattern) @name
-                            (pair_pattern value: (identifier) @name)])) @definition.parameter
+                            (object_assignment_pattern left: (shorthand_property_identifier_pattern) @name)
+                            (pair_pattern value: (identifier) @name)
+                            (pair_pattern value: (assignment_pattern left: (identifier) @name))
+                            (rest_pattern (identifier) @name)])) @definition.parameter
 (required_parameter
-  pattern: (array_pattern (identifier) @name)) @definition.parameter
+  pattern: (array_pattern [(identifier) @name
+                           (assignment_pattern left: (identifier) @name)])) @definition.parameter
 (required_parameter
   pattern: (rest_pattern (identifier) @name)) @definition.parameter
 (catch_clause parameter: (identifier) @name) @definition.variable

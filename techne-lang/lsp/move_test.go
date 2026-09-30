@@ -4,6 +4,7 @@
 package lsp_test
 
 import (
+	"fmt"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -20,6 +21,20 @@ func moved(t *testing.T, e *lsp.Engine, from, to string) (engine.Result[edit.Cha
 	return e.Plan(t.Context(), engine.Request{Scope: source.Path(from)}, edit.MoveFile,
 		edit.Target{Kind: edit.TargetFile, Path: source.Path(from)},
 		edit.Args{edit.ArgDestination: to})
+}
+
+// preloading returns an engine of a scoped server over swap/recipe.fake, which declares
+// [lsptest.Content], and one file more than [Engine.preload] opens in another directory, each
+// with the content text.
+func preloading(t *testing.T, text string) *lsp.Engine {
+	t.Helper()
+	files := map[string]string{"swap/recipe.fake": lsptest.Content}
+	for i := range 201 {
+		files[fmt.Sprintf("other/f%d.fake", i)] = text
+	}
+	server := lsptest.Server(lsptest.Scoped)
+	server.Scoped = true
+	return lsptest.Engine(t, lsptest.Workspace(t, files), server)
 }
 
 func TestMove(t *testing.T) {
@@ -47,6 +62,20 @@ func TestMove(t *testing.T) {
 			got, err := moved(t, lsptest.Engine(t, root, server), "a.fake", "c.fake")
 			assert.NoError(t, err, "Plan of a move by a scoped server")
 			assert.Equal(t, paths(got.Items), []source.Path{"a.fake", "b.fake", "a.fake"}, "the files the move changes")
+		})
+
+		t.Run("leaves out the files that write the stem in another directory for a scoped server", func(t *testing.T) {
+			t.Parallel()
+			got, err := moved(t, preloading(t, "var recipe = 1\n"), "swap/recipe.fake", "swap/motion.fake")
+			assert.NoError(t, err, "Plan of a move by a scoped server")
+			assert.False(t, cutShort(got.Caveats), "the plan has the caveat of a short preload")
+		})
+
+		t.Run("counts the files that write the directory and the stem for a scoped server", func(t *testing.T) {
+			t.Parallel()
+			got, err := moved(t, preloading(t, "// imports swap/recipe\n"), "swap/recipe.fake", "swap/motion.fake")
+			assert.NoError(t, err, "Plan of a move by a scoped server")
+			assert.True(t, cutShort(got.Caveats), "the plan has the caveat of a short preload")
 		})
 
 		t.Run("declines a server without willRenameFiles", func(t *testing.T) {

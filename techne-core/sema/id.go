@@ -46,6 +46,18 @@ func (i ID) Name() string {
 	return after
 }
 
+// Unit returns the unit in i, such as ./internal/fsx for
+// go:./internal/fsx#Store.Digest:method, or an empty path if i does not have
+// the form that NewID returns.
+func (i ID) Unit() source.Path {
+	before, _, found := strings.Cut(string(i), "#")
+	if !found {
+		return ""
+	}
+	_, unit, _ := strings.Cut(before, ":")
+	return source.Path(unit)
+}
+
 // Base returns the part of the qualified name in i after its last dot, such
 // as Get for Store.Get. It returns a name without a dot whole, and an empty
 // string if i does not have the form that NewID returns.

@@ -4,6 +4,7 @@
 package lsp_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,6 +18,7 @@ import (
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/lang"
+	"go.dokimi.dev/techne/lang/lsp"
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
 
@@ -46,6 +48,19 @@ func used() map[string]string {
 		"a.fake": lsptest.Bundle(3),
 		"b.fake": "package a\nfunc Use() int {\n\tvar held = F0()\n\treturn held\n}\n",
 	}
+}
+
+// writersOfStore returns an engine of a scoped server over [lsptest.Content] in a.fake and one
+// file more than a preload opens, each of which writes Store.
+func writersOfStore(t *testing.T) *lsp.Engine {
+	t.Helper()
+	files := sample()
+	for i := range 201 {
+		files[fmt.Sprintf("other/f%d.fake", i)] = "var _ Store\n"
+	}
+	server := lsptest.Server(lsptest.Scoped)
+	server.Scoped = true
+	return lsptest.Engine(t, lsptest.Workspace(t, files), server)
 }
 
 // requested returns how many requests of method the file log of [lsptest.RecordRequests]
@@ -93,6 +108,35 @@ func TestRelate(t *testing.T) {
 				"the line of the use of F0 ends at the use: "+via)
 			assert.True(t, len(via) <= lang.LineLimit+len("…"),
 				"the line of the use of F0 is at most lang.LineLimit bytes and an ellipsis: "+via)
+		})
+
+		t.Run("finds a use in a file that a scoped server had not opened", func(t *testing.T) {
+			t.Parallel()
+			server := lsptest.Server(lsptest.Scoped)
+			server.Scoped = true
+			root := lsptest.Workspace(t, map[string]string{"a.fake": lsptest.Content, "b.fake": "var _ Store\n"})
+			got, err := lsptest.Engine(t, root, server).Relate(t.Context(), request,
+				declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of the uses of Store")
+			inB := func(one sema.Relation) bool { return one.At.Path == "b.fake" }
+			assert.True(t, slices.ContainsFunc(got.Items, inB), "the uses of Store include b.fake")
+		})
+
+		t.Run("returns a partial answer past the files that a scoped server opens", func(t *testing.T) {
+			t.Parallel()
+			store := declared("Store", sema.KindStruct)
+			got, err := writersOfStore(t).Relate(t.Context(), request, store, sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of the uses of Store")
+			assert.Equal(t, got.Completeness, trust.ScopePartial, "the completeness of the answer")
+			assert.True(t, cutShort(got.Caveats), "the answer has the caveat of a short preload")
+		})
+
+		t.Run("opens no other file for a relation from the declaration", func(t *testing.T) {
+			t.Parallel()
+			store := declared("Store", sema.KindStruct)
+			got, err := writersOfStore(t).Relate(t.Context(), request, store, sema.References)
+			assert.NoError(t, err, "Relate of what Store refers to")
+			assert.False(t, cutShort(got.Caveats), "the answer has the caveat of a short preload")
 		})
 
 		t.Run("returns the relations up to the limit of the request", func(t *testing.T) {
@@ -180,6 +224,15 @@ func TestRelate(t *testing.T) {
 			assert.Equal(t, edges(got.Items), []string{"Store"}, "the supertypes of Store")
 		})
 
+		t.Run("declines a relation that the server answers with other relations", func(t *testing.T) {
+			t.Parallel()
+			server := lsptest.Server(lsptest.Default)
+			server.Unrelated = []sema.RelationKind{sema.Embeds}
+			_, err := lsptest.Engine(t, lsptest.Workspace(t, sample()), server).Relate(t.Context(), request,
+				declared("Store", sema.KindStruct), sema.Embeds)
+			assert.ErrorIs(t, err, engine.ErrDecline, "Relate of the supertypes of Store")
+		})
+
 		t.Run("returns the subtypes of a type", func(t *testing.T) {
 			t.Parallel()
 			got, err := serving(t, lsptest.Default, sample()).Relate(t.Context(), request,
@@ -219,6 +272,14 @@ func TestRelate(t *testing.T) {
 				declared("Store", sema.KindStruct), sema.CalledBy)
 			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Relate")
 			assert.Contains(t, err.Error(), "not a function", "the error of Relate")
+		})
+
+		t.Run("refuses a question that the server responds to with an error", func(t *testing.T) {
+			t.Parallel()
+			_, err := serving(t, lsptest.Untyped, sample()).Relate(t.Context(), request,
+				declared("Store", sema.KindStruct), sema.ImplementedBy)
+			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of Relate")
+			assert.Contains(t, err.Error(), lsptest.NotAType, "the error of Relate")
 		})
 
 		t.Run("declines a question that the server does not answer in time", func(t *testing.T) {

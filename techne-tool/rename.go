@@ -5,6 +5,7 @@ package tool
 
 import (
 	"context"
+	"fmt"
 
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/trust"
@@ -22,7 +23,8 @@ type RenameInput struct {
 }
 
 // Rename returns the tool that renames one declaration and every reference to it. It refuses
-// an empty NewName before it looks for the declaration.
+// an empty NewName before it looks for the declaration, and a NewName that is the name of the
+// declaration before it plans.
 func Rename(reads Outliner, writes Writer) (Tool, error) {
 	return New(string(edit.RenameSymbol), renameDescription,
 		func(ctx context.Context, in RenameInput) (Written, error) {
@@ -42,6 +44,10 @@ func Rename(reads Outliner, writes Writer) (Tool, error) {
 				return declined(edit.RenameSymbol, held, in.Name, failure.Code, failure.Reason), nil
 			}
 			held.Language = string(found.Language)
+			if in.NewName == found.Name {
+				return declined(edit.RenameSymbol, held, in.Name, trust.Refused.String(),
+					fmt.Sprintf("new_name is %s, the name that the declaration has", found.Name)), nil
+			}
 
 			return asked(ctx, writes, edit.RenameSymbol, held, in.Name, edit.Request{
 				Operation: edit.RenameSymbol,

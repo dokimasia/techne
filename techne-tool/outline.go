@@ -4,6 +4,7 @@
 package tool
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"path"
@@ -26,7 +27,7 @@ type OutlineInput struct {
 	Private   bool         `json:"private,omitempty"            jsonschema:"keep the declarations that are not visible outside their unit"`
 	Include   []Include    `json:"include,omitempty"            jsonschema:"bindings to add beside the declarations that the files offer"`
 	Tests     bool         `json:"tests,omitempty"              jsonschema:"read the files that the language treats as tests"`
-	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"ceiling of the answer in tokens, 6000 when omitted"`
+	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"ceiling of the answer in tokens, 6000 when omitted or 0"`
 	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence the caller wants: a weaker answer is degraded, not refused"`
 }
 
@@ -58,7 +59,7 @@ func Outline(reads Outliner) (Tool, error) {
 				return Answer{}, err
 			}
 
-			out := published(answered, about(scope, in.Language, answered), detail, include)
+			out := published(answered, about(scope, in.Language, answered), Declared(answered.Items, detail, include))
 			out.Items = Narrow{
 				Names: in.Names, Kind: kind,
 				Prefix: in.Prefix, Private: in.Private,
@@ -75,11 +76,13 @@ const outlineDescription = "PREFER OVER read for finding what a file or director
 	"they cost more than reading it: narrow them with names, kind or prefix."
 
 // about returns the scope of an answer about scope. The language is the language of the
-// declarations of a when they share one, empty when they are of more than one language, and
-// asked when there are none. A scope that names a file states the file and its unit, and a
-// directory is the unit.
+// declarations of a when they share one, and empty when they are of more than one language.
+// Without declarations it is asked, or else the language of the engine that published a. A
+// scope that names a file states the file and its unit. A directory is the unit when its
+// declarations are of one unit, and an answer about a directory of two or more units states the
+// directory and no unit.
 func about(scope source.Path, asked string, a engine.Answer[sema.Symbol]) Scope {
-	out := Scope{Language: asked}
+	out := Scope{Language: cmp.Or(asked, string(a.Language))}
 	for i, s := range a.Items {
 		if i == 0 {
 			out.Language = string(s.Language)
@@ -94,6 +97,12 @@ func about(scope source.Path, asked string, a engine.Answer[sema.Symbol]) Scope 
 		return out
 	}
 	out.Unit = string(scope)
+	for _, s := range a.Items {
+		if s.ID.Unit() != a.Items[0].ID.Unit() {
+			out.Unit, out.Directory = "", string(scope)
+			break
+		}
+	}
 	return out
 }
 
@@ -103,6 +112,18 @@ func names(scope source.Path) bool {
 	base := path.Base(string(scope))
 	suffix := path.Ext(base)
 	return suffix != "" && suffix != base
+}
+
+// filed returns a refusal for a path that [names] reports as no file, for a field of a tool
+// that takes one file.
+func filed(field string, p source.Path) *Failure {
+	if names(p) {
+		return nil
+	}
+	return &Failure{
+		Code:   trust.Refused.String(),
+		Reason: fmt.Sprintf("%s %q names a directory, and %s names one file", field, p, field),
+	}
 }
 
 // relative returns p as a path of the workspace, and the root for the empty path. A backslash

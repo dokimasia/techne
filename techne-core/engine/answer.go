@@ -21,6 +21,11 @@ type Answer[T any] struct {
 	Status     trust.Status
 	Provenance trust.Provenance
 
+	// Language is the language of the engine that published the answer. It is
+	// empty for an answer that a service merged from the answers of several
+	// languages.
+	Language source.Language
+
 	// Skipped is [Result.Skipped] of the engine that answered. Services use it
 	// to leave the answer out of a merge across languages. Callers read
 	// Provenance.

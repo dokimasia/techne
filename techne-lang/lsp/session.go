@@ -137,6 +137,21 @@ func (c timed) Call(ctx context.Context, method string, params, result any) (jso
 	return c.Conn.Call(ctx, method, params, result)
 }
 
+// replied returns err of the request what to server. An error response of the server, a
+// [*jsonrpc2.Error], returns an error that wraps [engine.ErrRefuse] with the message of the
+// server, because the server refused the request as the caller posed it. RequestCancelled and
+// ContentModified of LSP 3.17 are no refusal, and neither is any other error, such as a closed
+// connection or a context that is done: replied wraps them without it, and [Engine.unanswered]
+// declines the first two.
+func replied(server, what string, err error) error {
+	_, responded := errors.AsType[*jsonrpc2.Error](err)
+	cancelled := errors.Is(err, protocol.ErrRequestCancelled) || errors.Is(err, protocol.ErrContentModified)
+	if responded && !cancelled {
+		return fmt.Errorf("%w: %s: %s: %s", engine.ErrRefuse, server, what, reasoned(err))
+	}
+	return fmt.Errorf("lsp: %s: %s: %w", server, what, err)
+}
+
 // launch is a started server whose handshake runs apart from the questions that wait for it.
 // done is closed when the handshake ends, and err is the error of the handshake after that.
 type launch struct {

@@ -22,15 +22,12 @@ import (
 	"go.dokimi.dev/techne/lang"
 )
 
-// removed is the content that a load reads for a file that a change deletes. No build
-// satisfies its build constraint, so the file is in no package, as a deleted file is.
-var removed = []byte("//go:build ignore && !ignore\n\npackage removed\n")
-
 // Verify returns the errors that the type checker reports for the Go files in the scope of req,
 // and for its test files only when req includes tests.
 //
-// The type checker runs one analysis, and a caveat lists the suites that Verify does not run.
-// Verify returns a skipped result for a scope without a Go file. A module in the scope that
+// The type checker runs one analysis and no suite, so Verify declines a request that names a
+// suite, by the rule of [engine.Unrun]. Verify returns a skipped result for a scope without a Go
+// file. A module in the scope that
 // fails to load makes the answer partial, and a caveat lists it with its error.
 func (e *Engine) Verify(
 	ctx context.Context,
@@ -44,6 +41,9 @@ func (e *Engine) Verify(
 	}
 	if !w.claims(scope) {
 		return engine.Result[edit.Finding]{Skipped: true, Completeness: trust.ScopeTotal}, nil
+	}
+	if unrun := engine.Unrun(e.Name(), nil, suites); unrun != nil {
+		return engine.Result[edit.Finding]{}, unrun
 	}
 	v, err := e.current(ctx, w)
 	if err != nil {
@@ -60,7 +60,7 @@ func (e *Engine) Verify(
 	return engine.Result[edit.Finding]{
 		Items:        e.faults(v, sources{}, func(p source.Path) bool { return within[p] }),
 		Completeness: covered,
-		Caveats:      slices.Concat(missing, reasons(suites)),
+		Caveats:      missing,
 	}, nil
 }
 
@@ -88,7 +88,7 @@ func (e *Engine) Check(
 		full := e.fullPath(p)
 		content := files[p]
 		if content == nil {
-			overlay[full], unchanged = removed, false
+			overlay[full], unchanged = e.declared.Removed, false
 			continue
 		}
 		overlay[full] = content
@@ -215,16 +215,4 @@ func placed(pos string) (string, int, int) {
 		return file, numbers[0], 0
 	}
 	return file, 0, 0
-}
-
-// reasons returns the caveat that lists the suites that a caller asked for, which the type
-// checker does not run, or nil for none.
-func reasons(suites []string) []trust.Caveat {
-	if len(suites) == 0 {
-		return nil
-	}
-	return []trust.Caveat{{
-		Code: trust.CaveatUnsupported,
-		Note: "the type checker runs its own analysis and none of these suites: " + strings.Join(suites, ", "),
-	}}
 }

@@ -4,8 +4,12 @@
 package golang_test
 
 import (
+	"go/build/constraint"
+	"go/parser"
+	"go/token"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -35,6 +39,19 @@ func TestLanguage(t *testing.T) {
 			assert.Equal(t, golang.Declaration().Extensions, []string{".go"}, "the extensions of Go")
 		})
 
+		t.Run("removes a file with a build constraint that no build satisfies", func(t *testing.T) {
+			t.Parallel()
+			removed := golang.Declaration().Removed
+			header, _, _ := strings.Cut(string(removed), "\n")
+			expr, err := constraint.Parse(header)
+			assert.NoError(t, err, "the build constraint of the removed content")
+			for _, every := range []bool{false, true} {
+				assert.False(t, expr.Eval(func(string) bool { return every }), "the constraint under a build")
+			}
+			_, err = parser.ParseFile(token.NewFileSet(), "removed.go", removed, parser.PackageClauseOnly)
+			assert.NoError(t, err, "the parse of the removed content")
+		})
+
 		t.Run("lists the manifests of a Go project", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, golang.Declaration().Manifests, []string{"go.mod", "go.work"}, "the manifests of Go")
@@ -58,6 +75,12 @@ func TestLanguage(t *testing.T) {
 		t.Run("runs gopls serve", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, golang.Server().Command, []string{"gopls", "serve"}, "the command of gopls")
+		})
+
+		t.Run("leaves embedding to the type checker", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, golang.Server().Unrelated, []sema.RelationKind{sema.Embeds, sema.EmbeddedBy},
+				"the relations that gopls answers with other relations")
 		})
 
 		t.Run("opens a file as go", func(t *testing.T) {

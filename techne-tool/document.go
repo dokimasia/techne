@@ -5,6 +5,7 @@ package tool
 
 import (
 	"context"
+	"strings"
 
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/trust"
@@ -34,7 +35,7 @@ func Document(reads Outliner, writes Writer) (Tool, error) {
 					failure.Code, failure.Reason), nil
 			}
 			held := writing(scope, in.Language)
-			if in.Doc == "" {
+			if strings.TrimSpace(in.Doc) == "" {
 				return declined(edit.DocumentSymbol, held, in.Name, trust.Refused.String(),
 					"doc is empty: doc is the text to write onto the declaration"), nil
 			}

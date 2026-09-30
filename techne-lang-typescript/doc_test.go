@@ -60,6 +60,12 @@ export class Store implements Readable {
 export function make<T>(value: T): Promise<T> {
   return Promise.resolve(value);
 }
+
+export function pick({ depth = 0, key: label = "" }: Options, [first = 1]: number[]): void {}
+`,
+			"pkg/index.ts": `export * as Shapes from "./shapes";
+export { Store as Vault } from "./store";
+export default make(1);
 `,
 		},
 		Declares: []conformance.Declared{
@@ -92,6 +98,16 @@ export function make<T>(value: T): Promise<T> {
 			{Name: "size", Kind: sema.KindField},
 			{Name: "start", Kind: sema.KindField, Modifiers: []string{"private", "readonly"}},
 			{Name: "value", Kind: sema.KindParameter, Visibility: sema.Unexported},
+			{Name: "pick", Kind: sema.KindFunction},
+			{Name: "depth", Kind: sema.KindParameter, Visibility: sema.Unexported},
+			{Name: "label", Kind: sema.KindParameter, Visibility: sema.Unexported},
+			{Name: "first", Kind: sema.KindParameter, Visibility: sema.Unexported},
+			{Name: "Shapes", Kind: sema.KindModule},
+			{Name: "./shapes", Kind: sema.KindImport, Visibility: sema.Unexported, Simple: "shapes"},
+			{Name: "./store", Kind: sema.KindImport, Visibility: sema.Unexported, Simple: "store"},
+			{Name: "Store", Kind: sema.KindImport, Simple: "Store"},
+			{Name: "Vault", Kind: sema.KindConstant},
+			{Name: "default", Kind: sema.KindConstant},
 		},
 	})
 }

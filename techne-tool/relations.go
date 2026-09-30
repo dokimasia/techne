@@ -26,8 +26,8 @@ type RelationsInput struct {
 	Kind      KindWord     `json:"kind,omitempty"               jsonschema:"the kind of the declaration, for a name of several kinds"`
 	Line      int          `json:"line,omitempty"               jsonschema:"a line of the declaration, counted from one, for a name of several declarations such as the overloads of a method"`
 	Language  string       `json:"language,omitempty"           jsonschema:"the language to ask, in place of the languages of the scope"`
-	Limit     int          `json:"limit,omitempty"              jsonschema:"the number of relations to return, 50 when omitted"`
-	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"ceiling of the answer in tokens, 6000 when omitted"`
+	Limit     int          `json:"limit,omitempty"              jsonschema:"the number of relations to return, 50 when omitted or 0"`
+	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"ceiling of the answer in tokens, 6000 when omitted or 0"`
 	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence the caller wants: a weaker answer is degraded, not refused"`
 }
 
@@ -52,6 +52,9 @@ type Connected struct {
 	In   string `json:"in,omitempty"`
 	Path string `json:"path"`
 	Line int    `json:"line"`
+	// Column is the column of the site in bytes, counted from one, which tells apart two sites
+	// on one line, as the opening and the closing tag of a JSX element are.
+	Column int `json:"column"`
 	// Via is the source line of the site.
 	Via string `json:"via,omitempty"`
 }
@@ -85,7 +88,7 @@ func (o RelationsOutput) heading(n int) string {
 // the site, as the far end of an import is.
 func (c Connected) render() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n%s:%d", c.Path, c.Line)
+	fmt.Fprintf(&b, "\n%s:%d:%d", c.Path, c.Line, c.Column)
 	if c.Name != "" && c.Name != c.Path {
 		fmt.Fprintf(&b, "  in %s", sema.Qualify(c.In, c.Name))
 	}
@@ -125,7 +128,12 @@ func Relations(reads Outliner, relates Relator) (Tool, error) {
 				Limit:     limit,
 			}
 			of, failure := addressed(ctx, reads, req, scope, in.Name, declaredKind, in.Line)
-			if failure != nil {
+			switch {
+			case failure != nil && kind == sema.ImportedBy:
+				// An import names a module or a package, which declares no name of its own in
+				// most languages, so the engine matches the name as written.
+				of = sema.Symbol{ID: sema.NewID(req.Language, scope, in.Name, declaredKind), Name: in.Name}
+			case failure != nil:
 				return relationsRefused(scope, in, failure), nil
 			}
 
@@ -166,12 +174,13 @@ func connected(found []sema.Relation, limit int) []Connected {
 			break
 		}
 		out = append(out, Connected{
-			Name: edge.To.Name,
-			Kind: edge.To.Kind,
-			In:   container(edge.To),
-			Path: string(edge.At.Path),
-			Line: edge.At.Start.Line + 1,
-			Via:  edge.Via,
+			Name:   edge.To.Name,
+			Kind:   edge.To.Kind,
+			In:     container(edge.To),
+			Path:   string(edge.At.Path),
+			Line:   edge.At.Start.Line + 1,
+			Column: edge.At.Start.Column + 1,
+			Via:    edge.Via,
 		})
 	}
 	return out

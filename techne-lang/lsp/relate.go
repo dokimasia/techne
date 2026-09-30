@@ -51,6 +51,11 @@ import (
 // the question is about. A caveat of [trust.CaveatTruncated] counts the sites that the answer
 // leaves out. An error lowers the answer when it is on a line that writes the name of the
 // declaration outside every site that the server named.
+//
+// A [Server.Scoped] server reads only the files that it has open. Before it asks about the
+// relations that point at a declaration that other files can use, Relate opens the files that
+// write the name of the declaration, by the rule of [Engine.preload]. When more files write the
+// name than a preload opens, the answer is partial.
 func (e *Engine) Relate(
 	ctx context.Context,
 	req engine.Request,
@@ -75,15 +80,20 @@ func (e *Engine) relating(
 	if len(files.Read) == 0 && len(files.Unread) == 0 {
 		return engine.Result[sema.Relation]{Skipped: true, Completeness: trust.ScopeTotal}, nil
 	}
-	if !related(kind) {
+	switch {
+	case !related(kind):
 		return engine.Result[sema.Relation]{}, fmt.Errorf(
 			"%w: %s: no request returns %s", engine.ErrDecline, e.server.Name, kind)
+	case slices.Contains(e.server.Unrelated, kind):
+		return engine.Result[sema.Relation]{}, fmt.Errorf(
+			"%w: %s answers the request of %s with other relations", engine.ErrDecline, e.server.Name, kind)
 	}
 
 	held, err := e.running(ctx)
 	if err != nil {
 		return engine.Result[sema.Relation]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
+	defer e.reading()()
 	ctx, done := e.answered(ctx)
 	defer done()
 	found := newFinder(e, held)
@@ -95,13 +105,21 @@ func (e *Engine) relating(
 		return engine.Result[sema.Relation]{}, fmt.Errorf("%w: %s: no declaration in %s matches %s%s",
 			engine.ErrDecline, e.server.Name, req.Scope, of, skipping(files.Unread))
 	}
-	// The files are open, and opening a file starts its analysis in the server.
-	ready := e.settle(ctx, held)
-
 	pick := protocol.TextDocumentPositionParams{
 		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(doc.path))},
 		Position:     naming(doc, subject),
 	}
+	// A relation towards the declaration is written in another file, which a scoped server
+	// reads only while it has the file open.
+	var short *trust.Caveat
+	if incoming(kind) {
+		if short, err = e.preloaded(ctx, held, found, doc, pick.Position); err != nil {
+			return engine.Result[sema.Relation]{}, err
+		}
+	}
+	// The files are open, and opening a file starts its analysis in the server.
+	ready := e.settle(ctx, held)
+
 	var named []site
 	// saw reports whether the server returned any handle on the declaration. An empty reply
 	// from a server without one is no evidence that the declaration has no relation.
@@ -145,6 +163,9 @@ func (e *Engine) relating(
 		covered = trust.ScopePartial
 		caveats = append(caveats, unresolved)
 	}
+	if short != nil {
+		covered, caveats = trust.ScopePartial, append(caveats, *short)
+	}
 	if len(left) > 0 {
 		caveats = append(caveats, trust.Caveat{
 			Code: trust.CaveatTruncated,
@@ -157,6 +178,16 @@ func (e *Engine) relating(
 		Lowered:      reaches,
 		Caveats:      caveats,
 	}, nil
+}
+
+// incoming reports whether the relations of kind point at the declaration they are about, so
+// that other files write them.
+func incoming(kind sema.RelationKind) bool {
+	switch kind {
+	case sema.ReferencedBy, sema.CalledBy, sema.ImplementedBy, sema.EmbeddedBy:
+		return true
+	}
+	return false
 }
 
 // related reports whether a request of LSP 3.17 returns the relations of kind.
@@ -310,7 +341,7 @@ func (e *Engine) referring(
 		Context:                    protocol.ReferenceContext{IncludeDeclaration: true},
 	})
 	if err != nil {
-		return nil, false, fmt.Errorf("lsp: %s: references: %w", e.server.Name, err)
+		return nil, false, replied(e.server.Name, "references", err)
 	}
 	if len(answered) == 0 {
 		return nil, false, nil
@@ -354,7 +385,7 @@ func (e *Engine) implementing(
 		TextDocumentPositionParams: pick,
 	})
 	if err != nil {
-		return nil, false, fmt.Errorf("lsp: %s: implementations: %w", e.server.Name, err)
+		return nil, false, replied(e.server.Name, "implementations", err)
 	}
 	locations := definitions(answered)
 	if len(locations) == 0 {
@@ -442,7 +473,7 @@ func (e *Engine) calls(
 	if kind == sema.CalledBy {
 		answered, err := held.asks.IncomingCalls(ctx, &protocol.CallHierarchyIncomingCallsParams{Item: item})
 		if err != nil {
-			return nil, fmt.Errorf("lsp: %s: incoming calls: %w", e.server.Name, err)
+			return nil, replied(e.server.Name, "incoming calls", err)
 		}
 		for _, one := range answered {
 			out = append(out, e.hierarchy(one.From, one.From.URI, one.FromRanges)...)
@@ -452,7 +483,7 @@ func (e *Engine) calls(
 
 	answered, err := held.asks.OutgoingCalls(ctx, &protocol.CallHierarchyOutgoingCallsParams{Item: item})
 	if err != nil {
-		return nil, fmt.Errorf("lsp: %s: outgoing calls: %w", e.server.Name, err)
+		return nil, replied(e.server.Name, "outgoing calls", err)
 	}
 	for _, one := range answered {
 		out = append(out, e.hierarchy(one.To, item.URI, one.FromRanges)...)
@@ -542,13 +573,13 @@ func (e *Engine) typed(
 	if kind == sema.Embeds {
 		out, err := held.asks.Supertypes(ctx, &protocol.TypeHierarchySupertypesParams{Item: item})
 		if err != nil {
-			return nil, fmt.Errorf("lsp: %s: supertypes: %w", e.server.Name, err)
+			return nil, replied(e.server.Name, "supertypes", err)
 		}
 		return out, nil
 	}
 	out, err := held.asks.Subtypes(ctx, &protocol.TypeHierarchySubtypesParams{Item: item})
 	if err != nil {
-		return nil, fmt.Errorf("lsp: %s: subtypes: %w", e.server.Name, err)
+		return nil, replied(e.server.Name, "subtypes", err)
 	}
 	return out, nil
 }
