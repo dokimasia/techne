@@ -52,8 +52,18 @@ var extracted = map[string]string{
 	"rust": "extracted_corpus", "scala": "extractedCorpus", "typescript": "extractedCorpus",
 }
 
+// The manifest of the corpus, and the variable that names another manifest in its place.
+const (
+	manifest    = "corpus.json"
+	manifestVar = "TECHNE_CORPUS_MANIFEST"
+)
+
 func TestCorpus(t *testing.T) {
-	m, err := corpus.Load("corpus.json")
+	path := manifest
+	if named := os.Getenv(manifestVar); named != "" {
+		path = named
+	}
+	m, err := corpus.Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}

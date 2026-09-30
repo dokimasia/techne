@@ -17,6 +17,8 @@
 //     directory, outside this repository.
 //   - TECHNE_CORPUS_ONLY limits a run to the repositories whose name or
 //     language it lists, separated by commas.
+//   - TECHNE_CORPUS_MANIFEST is the path of a manifest that a run reads in
+//     place of corpus.json, such as one of other repositories.
 //
 // # Repositories
 //
