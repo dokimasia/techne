@@ -12,10 +12,11 @@ import (
 )
 
 // The settings on the wire, as each server reads them. Each is a pin of the name that the
-// server reads: typescript-language-server 6.0.0 from initializationOptions.preferences, and
-// tsc 7.0.2 from the section js/ts of workspace/configuration.
+// server reads: typescript-language-server 6.0.0 from initializationOptions.preferences and
+// initializationOptions.maxTsServerMemory, and tsc 7.0.2 from the section js/ts of
+// workspace/configuration.
 const (
-	typeScriptWire = `{"preferences":{"providePrefixAndSuffixTextForRename":false}}`
+	typeScriptWire = `{"maxTsServerMemory":8192,"preferences":{"providePrefixAndSuffixTextForRename":false}}`
 	nativeWire     = `{"js/ts":{"preferences":{"useAliasesForRenames":false}}}`
 )
 

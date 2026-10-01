@@ -48,7 +48,7 @@ public class Store implements Readable {
     private int size;
 
     public Store(int start) {
-        this.size = start;
+        this.size = start + get();
     }
 
     /// Returns the number of items.

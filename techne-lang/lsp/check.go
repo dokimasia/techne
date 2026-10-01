@@ -4,6 +4,7 @@
 package lsp
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -21,6 +22,12 @@ import (
 
 // mendLimit is the number of error findings in one call for which the engine requests a fix.
 const mendLimit = 8
+
+// checking is the wait of [Server.Checking] when it is zero. One deadline covers every file of
+// a check, and the wait ends when the last report arrives. typescript-language-server
+// published the reports of the 7 files of a rename in three.js after more than 2 seconds on 4
+// cores, and the rename planned in 5.0 seconds with the wait.
+const checking = 30 * time.Second
 
 // unchecked is the caveat on a check by a server that does not return workspace diagnostics.
 var unchecked = trust.Caveat{
@@ -100,7 +107,7 @@ func (e *Engine) checking(ctx context.Context, files map[source.Path][]byte) (en
 			"%w: %s is still loading the workspace", engine.ErrDecline, e.server.Name)
 	}
 
-	by := time.Now().Add(reporting)
+	by := time.Now().Add(cmp.Or(e.server.Checking, checking))
 	var out []edit.Finding
 	for _, p := range mine {
 		reported, said, err := e.diagnostics(ctx, held, p, by, false)

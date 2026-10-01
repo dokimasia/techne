@@ -6,7 +6,9 @@ package lsp
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
+	"maps"
 	"path"
 	"slices"
 	"strings"
@@ -56,6 +58,10 @@ import (
 // relations that point at a declaration that other files can use, Relate opens the files that
 // write the name of the declaration, by the rule of [Engine.preload]. When more files write the
 // name than a preload opens, the answer is partial.
+//
+// A server that returns nothing about the declaration and has stopped answering, as
+// [Engine.silent] finds, is stopped, and Relate asks a new server once. A new server that has
+// stopped answering too returns [engine.ErrDecline].
 func (e *Engine) Relate(
 	ctx context.Context,
 	req engine.Request,
@@ -63,6 +69,9 @@ func (e *Engine) Relate(
 	kind sema.RelationKind,
 ) (engine.Result[sema.Relation], error) {
 	out, err := e.relating(ctx, req, of, kind)
+	if errors.Is(err, errStopped) {
+		out, err = e.relating(ctx, req, of, kind)
+	}
 	return out, e.unanswered(ctx, err)
 }
 
@@ -112,8 +121,9 @@ func (e *Engine) relating(
 	// A relation towards the declaration is written in another file, which a scoped server
 	// reads only while it has the file open.
 	var short *trust.Caveat
+	var writers []source.Path
 	if incoming(kind) {
-		if short, err = e.preloaded(ctx, held, found, doc, pick.Position); err != nil {
+		if short, writers, err = e.preloaded(ctx, held, found, doc, pick.Position); err != nil {
 			return engine.Result[sema.Relation]{}, err
 		}
 	}
@@ -128,14 +138,34 @@ func (e *Engine) relating(
 	case sema.ReferencedBy, sema.References:
 		named, saw, err = e.referring(ctx, held, pick)
 	case sema.CalledBy, sema.Calls:
-		named, saw, err = e.calling(ctx, held, pick, kind)
+		named, saw, err = e.calling(ctx, held, found, pick, doc, subject, kind)
 	case sema.Implements, sema.ImplementedBy:
 		named, saw, err = e.implementing(ctx, held, pick)
+		if err == nil && kind == sema.ImplementedBy && e.server.Tsserver {
+			var elsewhere []site
+			if elsewhere, err = e.implementedIn(ctx, held, doc, subject, writers); err == nil {
+				named, saw = merged(named, elsewhere), saw || len(elsewhere) > 0
+			}
+		}
 	case sema.Embeds, sema.EmbeddedBy:
 		named, saw, err = e.incorporating(ctx, held, pick, kind)
 	}
 	if err != nil {
 		return engine.Result[sema.Relation]{}, err
+	}
+	if !saw && e.silent(ctx, held, found, doc.path) {
+		e.discard(ctx, held)
+		return engine.Result[sema.Relation]{}, e.stopped(doc.path)
+	}
+	if e.server.Related && (kind == sema.ReferencedBy || kind == sema.CalledBy) {
+		if named, err = e.denoting(ctx, held, named, doc, subject); err != nil {
+			return engine.Result[sema.Relation]{}, err
+		}
+	}
+	if e.server.Contextual && (kind == sema.Implements || kind == sema.ImplementedBy) {
+		if named, err = implementers(ctx, found, named); err != nil {
+			return engine.Result[sema.Relation]{}, err
+		}
 	}
 
 	kept, left := limited(named, req.Limit)
@@ -355,6 +385,46 @@ func (e *Engine) referring(
 	return out, true, nil
 }
 
+// denoting returns the sites of named whose definitions include subject, the declaration in
+// doc, and the sites without a definition, for a [Server.Related] server. It opens the file of
+// each site and requests the definition at the start of the site. It opens a file larger than
+// [lang.Largest] too, because the server named it and reads it whatever its size.
+func (e *Engine) denoting(
+	ctx context.Context,
+	held *session,
+	named []site,
+	doc document,
+	subject sema.Symbol,
+) ([]site, error) {
+	var out []site
+	for _, one := range named {
+		if _, err := e.load(ctx, held, one.path); err != nil {
+			return nil, err
+		}
+		answered, err := held.asks.Definition(ctx, &protocol.DefinitionParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(one.path))},
+			Position:     one.at.Start,
+		})
+		if err != nil {
+			return nil, replied(e.server.Name, "definition in "+string(one.path), err)
+		}
+		if found := definitions(answered); len(found) == 0 || e.denotes(found, doc, subject) {
+			out = append(out, one)
+		}
+	}
+	return out, nil
+}
+
+// denotes reports whether one of found lies within the span of subject, the declaration in doc.
+func (e *Engine) denotes(found []protocol.Location, doc document, subject sema.Symbol) bool {
+	declared := uri.File(e.fullPath(doc.path))
+	return slices.ContainsFunc(found, func(at protocol.Location) bool {
+		span := doc.span(at.Range)
+		return at.URI == declared &&
+			span.Start.Offset >= subject.Span.Start.Offset && span.End.Offset <= subject.Span.End.Offset
+	})
+}
+
 // pointsAt reports whether the range of one contains the position of pick in the same file.
 func pointsAt(one protocol.Location, pick protocol.TextDocumentPositionParams) bool {
 	if one.URI != pick.TextDocument.URI {
@@ -398,6 +468,209 @@ func (e *Engine) implementing(
 	return out, true, nil
 }
 
+// implementedIn returns the sites of the implementations of subject, the declaration in doc,
+// that a [Server.Tsserver] server finds in the projects of writers other than the project of
+// doc. tsserver searches for the implementations of a declaration in the project of the file of
+// the request only, and the classes that implement an interface of src/compiler of the
+// TypeScript repository are in the project of src/services. So the engine asks at a use of
+// subject in one file of each other project, as [Engine.useIn] finds it. The project of a file is
+// the file of [tsProjects] nearest above it, and a file of no project is left out.
+func (e *Engine) implementedIn(
+	ctx context.Context,
+	held *session,
+	doc document,
+	subject sema.Symbol,
+	writers []source.Path,
+) ([]site, error) {
+	nearest := map[string]string{}
+	own := e.projectOf(path.Dir(string(doc.path)), nearest)
+	projects := map[string][]source.Path{}
+	for _, p := range writers {
+		if config := e.projectOf(path.Dir(string(p)), nearest); config != "" && config != own {
+			projects[config] = append(projects[config], p)
+		}
+	}
+	var out []site
+	for _, config := range slices.Sorted(maps.Keys(projects)) {
+		file, at, used, err := e.useIn(ctx, held, projects[config], doc, subject)
+		if err != nil {
+			return nil, err
+		}
+		if !used {
+			continue
+		}
+		found, _, err := e.implementing(ctx, held, protocol.TextDocumentPositionParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(file))},
+			Position:     at,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, found...)
+	}
+	return out, nil
+}
+
+// probes is the number of occurrences of the name of a declaration in one project whose
+// definition [Engine.useIn] requests.
+const probes = 5
+
+// useIn returns the file and the protocol position of a use of subject, the declaration in doc,
+// in one of files. A use is an occurrence of the name of subject, by the rule of
+// [occurrences], whose definition is subject directly or through the declaration at that
+// definition, as [Engine.denotedAt] reports. The name of subject in its declaration is no use.
+// useIn requests the definition of at most [probes] occurrences, and reports false when none of
+// them is a use.
+func (e *Engine) useIn(
+	ctx context.Context,
+	held *session,
+	files []source.Path,
+	doc document,
+	subject sema.Symbol,
+) (source.Path, protocol.Position, bool, error) {
+	tried, declaration := 0, named(doc, subject)
+	for _, p := range files {
+		other, err := e.open(ctx, held, p)
+		if refused(err) {
+			continue
+		}
+		if err != nil {
+			return "", protocol.Position{}, false, err
+		}
+		for offset := range occurrences(other.content, subject.Name) {
+			if p == doc.path && offset == declaration {
+				continue
+			}
+			if tried == probes {
+				return "", protocol.Position{}, false, nil
+			}
+			tried++
+			line, column := other.lineAt(offset)
+			at := other.mark(source.Position{Offset: offset, Line: line, Column: column})
+			denoted, err := e.denotedAt(ctx, held, other, at, doc, subject)
+			if err != nil {
+				return "", protocol.Position{}, false, err
+			}
+			if denoted {
+				return p, at, true, nil
+			}
+		}
+	}
+	return "", protocol.Position{}, false, nil
+}
+
+// denotedAt reports whether a definition at the protocol position at of file is subject, the
+// declaration in doc, or whether a definition at one of those definitions is: the definition
+// of a use of an imported name is the binding of the import, and the definition of the binding
+// is the declaration.
+func (e *Engine) denotedAt(
+	ctx context.Context,
+	held *session,
+	file document,
+	at protocol.Position,
+	doc document,
+	subject sema.Symbol,
+) (bool, error) {
+	found, err := e.definedAt(ctx, held, file, at)
+	if err != nil {
+		return false, err
+	}
+	if e.denotes(found, doc, subject) {
+		return true, nil
+	}
+	for _, one := range found {
+		p := e.pathOf(one.URI)
+		if lang.Outside(p) {
+			continue
+		}
+		next, err := e.open(ctx, held, p)
+		if refused(err) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		bound, err := e.definedAt(ctx, held, next, one.Range.Start)
+		if err != nil {
+			return false, err
+		}
+		if e.denotes(bound, doc, subject) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// definedAt returns the definitions at the protocol position at of file.
+func (e *Engine) definedAt(
+	ctx context.Context,
+	held *session,
+	file document,
+	at protocol.Position,
+) ([]protocol.Location, error) {
+	answered, err := held.asks.Definition(ctx, &protocol.DefinitionParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(file.path))},
+		Position:     at,
+	})
+	if err != nil {
+		return nil, replied(e.server.Name, "definition in "+string(file.path), err)
+	}
+	return definitions(answered), nil
+}
+
+// merged returns sites and then each site of more whose file and start differ from those of every
+// site of sites.
+func merged(sites, more []site) []site {
+	type at struct {
+		path  source.Path
+		start protocol.Position
+	}
+	seen := map[at]bool{}
+	for _, one := range sites {
+		seen[at{one.path, one.at.Start}] = true
+	}
+	for _, one := range more {
+		if key := (at{one.path, one.at.Start}); !seen[key] {
+			seen[key] = true
+			sites = append(sites, one)
+		}
+	}
+	return sites
+}
+
+// implementers returns the sites of named that are at the name of the innermost declaration
+// that contains them, when that declaration has a kind of [implementationKinds], for a
+// [Server.Contextual] server. The name of a class is such a site, and an expression that the
+// server returns for its type is not. It keeps each site of a file without declarations, such
+// as a file larger than [lang.Largest], because nothing shows that the site is an expression.
+func implementers(ctx context.Context, found *finder, named []site) ([]site, error) {
+	var out []site
+	for _, one := range named {
+		kept, err := found.file(ctx, one.path)
+		if err != nil {
+			return nil, err
+		}
+		inside, known := innermost(kept.symbols, kept.doc.position(one.at.Start).Offset)
+		declares := known && naming(kept.doc, inside) == one.at.Start &&
+			slices.Contains(implementationKinds, inside.Kind)
+		if len(kept.symbols) == 0 || declares {
+			out = append(out, one)
+		}
+	}
+	return out, nil
+}
+
+// implementationKinds are the kinds of the declarations that tsserver counts as
+// implementations, by its isImplementation: a class, an enum, a module, a callable with a
+// body, and a variable or a property with an initializer. tsserver also returns each interface
+// that extends an interface, because the interface appears in its heritage clause, and an
+// arrow function at its first parameter. Neither kind is in the list.
+var implementationKinds = []sema.Kind{
+	sema.KindStruct, sema.KindEnum, sema.KindModule,
+	sema.KindFunction, sema.KindMethod, sema.KindConstructor,
+	sema.KindProperty, sema.KindField, sema.KindVariable, sema.KindConstant,
+}
+
 // siteOf returns the span of r in doc and the source line it starts on. For a file without a
 // document, such as a file larger than [lang.Largest], it returns a span with the lines that
 // the server reported, no offsets, and an empty line.
@@ -426,17 +699,39 @@ func (e *Engine) fileOf(doc document, p source.Path, at source.Span) sema.Symbol
 	}
 }
 
-// calling returns the sites of the incoming or the outgoing calls of the declaration at pick,
-// from the call hierarchy. A server that refuses to prepare the hierarchy, as servers do for a
-// declaration that cannot be called, returns [engine.ErrDecline]. A server that prepares no
-// item has no handle on the declaration, which the second result reports.
+// Calls reads the calls of a file without a server: the span of the name of each callee that a
+// call of the file names, in the order of the file. The tree-sitter engine of a language
+// implements it. [Engine.Relate] reads the calls through the outline engine of [New] when the
+// outline engine implements Calls and the server does not serve the call hierarchy.
+type Calls interface {
+	Calls(ctx context.Context, p source.Path) ([]source.Span, error)
+}
+
+// calling returns the sites of the incoming or the outgoing calls of subject, the declaration at
+// pick in doc, from the call hierarchy. A server that refuses to prepare the hierarchy, as
+// servers do for a declaration that cannot be called, returns [engine.ErrDecline]. A server that
+// prepares no item has no handle on the declaration, which the second result reports.
+//
+// For a server without the call hierarchy, as typescript-language-server, the calls come from
+// the outline engine when it implements [Calls]: [Engine.calledFrom] reads the incoming calls
+// and [Engine.callsIn] the outgoing ones.
 func (e *Engine) calling(
 	ctx context.Context,
 	held *session,
+	found *finder,
 	pick protocol.TextDocumentPositionParams,
+	doc document,
+	subject sema.Symbol,
 	kind sema.RelationKind,
 ) ([]site, bool, error) {
 	if !provides(held.capable.CallHierarchyProvider) {
+		calls, reads := e.outliner.(Calls)
+		switch {
+		case reads && kind == sema.CalledBy:
+			return e.calledFrom(ctx, held, found, pick, calls)
+		case reads:
+			return e.callsIn(ctx, held, doc, subject, calls)
+		}
 		return nil, false, e.unsupported("the call hierarchy")
 	}
 	items, err := held.asks.PrepareCallHierarchy(ctx, &protocol.CallHierarchyPrepareParams{
@@ -456,6 +751,89 @@ func (e *Engine) calling(
 			return nil, false, err
 		}
 		out = append(out, sites...)
+	}
+	return out, true, nil
+}
+
+// calledFrom returns the sites of the calls of the declaration at pick from a server without the
+// call hierarchy: the references of the declaration whose site is the name of a call that calls
+// reads in the file of the site. A site in a file that calls cannot read, such as a file larger
+// than [lang.Largest] or a file outside the workspace, is kept, because nothing shows that it is
+// not a call. The second result is the one of [Engine.referring].
+func (e *Engine) calledFrom(
+	ctx context.Context,
+	held *session,
+	found *finder,
+	pick protocol.TextDocumentPositionParams,
+	calls Calls,
+) ([]site, bool, error) {
+	named, saw, err := e.referring(ctx, held, pick)
+	if err != nil || !saw {
+		return named, saw, err
+	}
+	read := map[source.Path][]source.Span{}
+	unread := map[source.Path]bool{}
+	var out []site
+	for _, one := range named {
+		spans, known := read[one.path]
+		if !known && !unread[one.path] {
+			if spans, err = calls.Calls(ctx, one.path); err != nil {
+				unread[one.path] = true
+			}
+			read[one.path] = spans
+		}
+		kept, err := found.file(ctx, one.path)
+		if err != nil {
+			return nil, false, err
+		}
+		at := kept.doc.position(one.at.Start).Offset
+		called := slices.ContainsFunc(spans, func(s source.Span) bool {
+			return s.Start.Offset <= at && at < s.End.Offset
+		})
+		if called || unread[one.path] {
+			out = append(out, one)
+		}
+	}
+	return out, true, nil
+}
+
+// callsIn returns the sites of the calls in subject, the declaration in doc, from a server
+// without the call hierarchy: each call that calls reads inside the span of subject. The far
+// end of a call is the declaration at each definition of its callee, which the server returns
+// for the name of the callee. A callee without a definition, such as a function that the
+// program does not declare, has no site.
+func (e *Engine) callsIn(
+	ctx context.Context,
+	held *session,
+	doc document,
+	subject sema.Symbol,
+	calls Calls,
+) ([]site, bool, error) {
+	if !provides(held.capable.DefinitionProvider) {
+		return nil, false, e.unsupported("textDocument/definition")
+	}
+	spans, err := calls.Calls(ctx, doc.path)
+	if err != nil {
+		return nil, false, fmt.Errorf("%w: %s: the calls of %s: %w", engine.ErrDecline, e.server.Name, doc.path, err)
+	}
+	file := uri.File(e.fullPath(doc.path))
+	var out []site
+	for _, one := range spans {
+		if one.Start.Offset < subject.Span.Start.Offset || one.End.Offset > subject.Span.End.Offset {
+			continue
+		}
+		at := protocol.Range{Start: doc.mark(one.Start), End: doc.mark(one.End)}
+		answered, err := held.asks.Definition(ctx, &protocol.DefinitionParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: file},
+			Position:     at.Start,
+		})
+		if err != nil {
+			return nil, false, replied(e.server.Name, "definition in "+string(doc.path), err)
+		}
+		for _, callee := range definitions(answered) {
+			far := protocol.CallHierarchyItem{URI: callee.URI, Range: callee.Range, SelectionRange: callee.Range}
+			out = append(out, site{path: doc.path, at: at, placed: true, far: &far})
+		}
 	}
 	return out, true, nil
 }

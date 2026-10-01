@@ -5,6 +5,7 @@ package lsp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -35,13 +36,18 @@ import (
 // the position lowers the answer, and so does any error of the project when the answer is
 // empty. An empty answer is partial, because a server returns no definition inside a macro,
 // at a dynamic dispatch or for a name that nothing declares. A server that does not answer
-// within [Server.Answering] returns [engine.ErrDecline].
+// within [Server.Answering] returns [engine.ErrDecline]. A server that returns no definition
+// and has stopped answering, as [Engine.silent] finds, is stopped, and Resolve asks a new
+// server once. A new server that has stopped answering too returns [engine.ErrDecline].
 func (e *Engine) Resolve(
 	ctx context.Context,
 	req engine.Request,
 	at source.Position,
 ) (engine.Result[sema.Symbol], error) {
 	out, err := e.resolving(ctx, req, at)
+	if errors.Is(err, errStopped) {
+		out, err = e.resolving(ctx, req, at)
+	}
 	return out, e.unanswered(ctx, err)
 }
 
@@ -86,6 +92,10 @@ func (e *Engine) resolving(
 	}
 
 	found := newFinder(e, held)
+	if len(definitions(answered)) == 0 && e.silent(ctx, held, found, doc.path) {
+		e.discard(ctx, held)
+		return engine.Result[sema.Symbol]{}, e.stopped(doc.path)
+	}
 	var out []sema.Symbol
 	for _, one := range definitions(answered) {
 		declared, err := e.denoted(ctx, held, found, one)

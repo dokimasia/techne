@@ -78,6 +78,23 @@ func TestMove(t *testing.T) {
 			assert.True(t, cutShort(got.Caveats), "the plan has the caveat of a short preload")
 		})
 
+		t.Run("opens no file outside a project of tsserver that cannot import the moved file", func(t *testing.T) {
+			t.Parallel()
+			e := projectless(t, map[string]string{"swap/recipe.fake": moduleContent}, "// imports swap/recipe\n", nil)
+			got, err := moved(t, e, "swap/recipe.fake", "swap/motion.fake")
+			assert.NoError(t, err, "Plan of a move by a scoped server")
+			assert.False(t, cutShort(got.Caveats), "the plan has the caveat of a short preload")
+		})
+
+		t.Run("counts the files outside a project of tsserver that import the moved file", func(t *testing.T) {
+			t.Parallel()
+			e := projectless(t, map[string]string{"swap/recipe.fake": moduleContent},
+				`import "../swap/recipe.fake"`+"\n", nil)
+			got, err := moved(t, e, "swap/recipe.fake", "swap/motion.fake")
+			assert.NoError(t, err, "Plan of a move by a scoped server")
+			assert.True(t, cutShort(got.Caveats), "the plan has the caveat of a short preload")
+		})
+
 		t.Run("declines a server without willRenameFiles", func(t *testing.T) {
 			t.Parallel()
 			_, err := moved(t, serving(t, lsptest.Moveless, sample()), "a.fake", "b.fake")

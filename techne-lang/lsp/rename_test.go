@@ -55,6 +55,60 @@ func TestRename(t *testing.T) {
 			assert.False(t, hasCaveat(got.Caveats, trust.CaveatIndexWarming), "the plan has a warming caveat")
 		})
 
+		t.Run("returns a total plan that renames each use by an insertion at its end", func(t *testing.T) {
+			t.Parallel()
+			inserting := `{"changes":{"{file}":[` +
+				`{"range":{"start":{"line":2,"character":10},"end":{"line":2,"character":10}},"newText":"X"},` +
+				`{"range":{"start":{"line":6,"character":14},"end":{"line":6,"character":14}},"newText":"X"},` +
+				`{"range":{"start":{"line":8,"character":33},"end":{"line":8,"character":33}},"newText":"X"}]}}`
+			got, err := renameWith(t, serving(t, lsptest.Default, sample(), lsptest.Renames(inserting)))
+			assert.NoError(t, err, "Plan of a rename")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the plan")
+		})
+
+		t.Run("returns a total plan that renames each use by an insertion at its start", func(t *testing.T) {
+			t.Parallel()
+			inserting := `{"changes":{"{file}":[` +
+				`{"range":{"start":{"line":2,"character":5},"end":{"line":2,"character":5}},"newText":"X"},` +
+				`{"range":{"start":{"line":6,"character":9},"end":{"line":6,"character":9}},"newText":"X"},` +
+				`{"range":{"start":{"line":8,"character":28},"end":{"line":8,"character":28}},"newText":"X"}]}}`
+			got, err := renameWith(t, serving(t, lsptest.Default, sample(), lsptest.Renames(inserting)))
+			assert.NoError(t, err, "Plan of a rename")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the plan")
+		})
+
+		t.Run("returns a total plan that leaves a use without the name as it is", func(t *testing.T) {
+			t.Parallel()
+			// The server names the Other of line 8 as a use of Store, as csharp-ls names the new of
+			// a target-typed new().
+			files := map[string]string{"a.fake": strings.Replace(lsptest.Content, "(&Store{})", "(&Other{})", 1)}
+			renaming := `{"changes":{"{file}":[` +
+				`{"range":{"start":{"line":2,"character":5},"end":{"line":2,"character":10}},"newText":"Vault"},` +
+				`{"range":{"start":{"line":6,"character":9},"end":{"line":6,"character":14}},"newText":"Vault"}]}}`
+			got, err := renameWith(t, serving(t, lsptest.Default, files, lsptest.Renames(renaming)))
+			assert.NoError(t, err, "Plan of a rename")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the plan")
+		})
+
+		t.Run("returns a partial plan that inserts at no use", func(t *testing.T) {
+			t.Parallel()
+			inserting := `{"changes":{"{file}":[` +
+				`{"range":{"start":{"line":2,"character":10},"end":{"line":2,"character":10}},"newText":"X"},` +
+				`{"range":{"start":{"line":6,"character":14},"end":{"line":6,"character":14}},"newText":"X"}]}}`
+			got, err := renameWith(t, serving(t, lsptest.Default, sample(), lsptest.Renames(inserting)))
+			assert.NoError(t, err, "Plan of a rename")
+			assert.Equal(t, got.Completeness, trust.ScopePartial, "the completeness of the plan")
+		})
+
+		t.Run("returns a total plan that renames the name of a use over its qualifier", func(t *testing.T) {
+			t.Parallel()
+			files := map[string]string{"a.fake": lsptest.Content, "b.fake": "var _ a.Store\n"}
+			got, err := renameWith(t, serving(t, lsptest.Qualified, files))
+			assert.NoError(t, err, "Plan of a rename")
+			assert.Equal(t, paths(got.Items), []source.Path{"a.fake", "b.fake"}, "the files the rename changes")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the plan")
+		})
+
 		t.Run("returns a partial plan for a use in a file that .gitignore excludes", func(t *testing.T) {
 			t.Parallel()
 			files := both()
@@ -81,6 +135,23 @@ func TestRename(t *testing.T) {
 			got, err := renameWith(t, serving(t, lsptest.Default, sample(), lsptest.Renames(moving())))
 			assert.NoError(t, err, "Plan of a rename that moves a.fake")
 			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the plan")
+		})
+
+		t.Run("renames from a use when the server prepares no rename at the declaration", func(t *testing.T) {
+			t.Parallel()
+			got, err := renameWith(t, serving(t, lsptest.FromUse, sample()))
+			assert.NoError(t, err, "Plan of a rename")
+			assert.Equal(t, paths(got.Items), []source.Path{"a.fake"}, "the files the rename changes")
+		})
+
+		// The rename of the scripted server leaves the use on line 9, which only the references
+		// from the use on line 7 name.
+		t.Run("returns a partial plan of a rename from a use that leaves a use from there", func(t *testing.T) {
+			t.Parallel()
+			got, err := renameWith(t, serving(t, lsptest.FromUse, sample()))
+			assert.NoError(t, err, "Plan of a rename")
+			assert.True(t, unrewritten(got.Caveats, "a.fake:9 that the rename does not rewrite"),
+				"the plan has an unrewritten caveat that names a.fake:9")
 		})
 
 		t.Run("refuses a position the server cannot rename", func(t *testing.T) {
@@ -139,6 +210,22 @@ func TestRename(t *testing.T) {
 			assert.NoError(t, err, "Plan of the rename of the local t")
 			assert.False(t, cutShort(got.Caveats), "the plan has the caveat of a short preload")
 		})
+
+		t.Run("opens no file outside a project of tsserver that cannot refer to the declaration", func(t *testing.T) {
+			t.Parallel()
+			got, err := renameWith(t, projectless(t, map[string]string{"a.fake": moduleContent}, useOfStore, nil))
+			assert.NoError(t, err, "Plan of a rename")
+			assert.False(t, cutShort(got.Caveats), "the plan has the caveat of a short preload")
+		})
+
+		t.Run("opens every file outside a project of tsserver for a position that names no declaration",
+			func(t *testing.T) {
+				t.Parallel()
+				e := projectless(t, map[string]string{"a.fake": moduleContent + "Store\n"}, useOfStore, nil)
+				got, err := spanned(t, e, source.Position{Offset: len(moduleContent), Line: 10})
+				assert.NoError(t, err, "Plan of a rename at line 11")
+				assert.True(t, cutShort(got.Caveats), "the plan has the caveat of a short preload")
+			})
 
 		t.Run("refuses a declaration that no file declares", func(t *testing.T) {
 			t.Parallel()

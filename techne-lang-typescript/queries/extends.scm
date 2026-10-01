@@ -122,3 +122,15 @@
   pattern: (rest_pattern (identifier) @name)) @definition.parameter
 (catch_clause parameter: (identifier) @name) @definition.variable
 (for_in_statement left: (identifier) @name) @definition.variable
+
+;; Calls, as the JavaScript query of upstream captures them: a call names
+;; its callee, or the member that it calls.
+(
+  (call_expression
+    function: (identifier) @name) @reference.call
+  (#not-match? @name "^(require)$")
+)
+(call_expression
+  function: (member_expression
+    property: (property_identifier) @name)
+  arguments: (_) @reference.call)

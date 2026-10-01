@@ -58,6 +58,7 @@ export class Store implements Readable {
 }
 
 export function make<T>(value: T): Promise<T> {
+  new Store(1).get();
   return Promise.resolve(value);
 }
 

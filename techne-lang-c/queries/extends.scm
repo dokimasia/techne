@@ -47,3 +47,8 @@
 (preproc_function_def name: (identifier) @name) @definition.macro
 (preproc_include path: [(string_literal) @name (system_lib_string) @name]) @definition.import
 (labeled_statement label: (statement_identifier) @name) @definition.label
+
+;; A call names its callee as an identifier, or as a field of a struct
+;; whose value is a pointer to a function.
+(call_expression function: (identifier) @name) @reference.call
+(call_expression function: (field_expression field: (field_identifier) @name)) @reference.call

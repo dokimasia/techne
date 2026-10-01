@@ -21,7 +21,7 @@ import (
 // as a parser of the language reads it, and reports these declarations:
 //
 //   - a type for each line that starts with type, which is a struct when the line contains
-//     struct
+//     struct and an interface when it contains interface
 //   - a function for each func at the start of a line or after "; ", which is a method
 //     qualified by the type of its receiver when it has one
 //   - a variable for each line whose text starts with var
@@ -29,10 +29,54 @@ import (
 // A declaration whose line ends with an opening brace spans the lines through the next line
 // that is a closing brace. Any other declaration spans its text on its line. The parent of a
 // declaration is the smallest declaration whose span contains it.
+//
+// The engine also reads the calls of a file, as [parser.Calls] states.
 func Parser(root string) engine.Outliner { return parser{root: root} }
 
 // parser is the outline engine that [Parser] returns.
 type parser struct{ root string }
+
+// Calls returns the span of the name of each call of the file at p: an identifier that an
+// opening parenthesis follows, other than the name that a func declares. A path without the
+// [Extension] suffix has no call.
+func (p parser) Calls(_ context.Context, file source.Path) ([]source.Span, error) {
+	if path.Ext(string(file)) != Extension {
+		return nil, nil
+	}
+	content, err := os.ReadFile(filepath.Join(p.root, filepath.FromSlash(string(file))))
+	if err != nil {
+		return nil, fmt.Errorf("lsptest: read %s: %w", file, err)
+	}
+	text := string(content)
+	declares := map[int]bool{}
+	for _, d := range declarations(file, text) {
+		if at := strings.Index(text[d.Span.Start.Offset:d.Span.End.Offset], d.Name+"("); at >= 0 {
+			declares[d.Span.Start.Offset+at] = true
+		}
+	}
+	var out []source.Span
+	offset := 0
+	for n, line := range strings.Split(text, "\n") {
+		for i := 1; i < len(line); i++ {
+			if line[i] != '(' || !identifying(rune(line[i-1])) {
+				continue
+			}
+			start := i - 1
+			for start > 0 && identifying(rune(line[start-1])) {
+				start--
+			}
+			if !declares[offset+start] {
+				out = append(out, source.Span{
+					Path:  file,
+					Start: source.Position{Offset: offset + start, Line: n, Column: start},
+					End:   source.Position{Offset: offset + i, Line: n, Column: i},
+				})
+			}
+		}
+		offset += len(line) + 1
+	}
+	return out, nil
+}
 
 // Outline returns the declarations of the file that the scope of req names. A scope that names
 // no file with the [Extension] suffix returns a skipped result.
@@ -88,8 +132,11 @@ func declarations(p source.Path, text string) []sema.Symbol {
 	for n, line := range lines {
 		if rest, typed := strings.CutPrefix(line, "type "); typed {
 			kind := sema.KindType
-			if strings.Contains(line, " struct") {
+			switch {
+			case strings.Contains(line, " struct"):
 				kind = sema.KindStruct
+			case strings.Contains(line, " interface"):
+				kind = sema.KindInterface
 			}
 			read = append(read, found{kind: kind, name: word(rest), span: spanned(n, 0, len(line))})
 		}

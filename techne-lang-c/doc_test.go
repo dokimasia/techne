@@ -50,7 +50,7 @@ borrow(int *a) {
 
 /// Returns its argument.
 static int helper(int a) {
-    int local = a;
+    int local = *borrow(&a);
     return local;
 }
 

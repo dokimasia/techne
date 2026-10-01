@@ -12,6 +12,10 @@ import (
 	"go.dokimi.dev/techne/lang/treesitter"
 )
 
+// The tree-sitter engine is the outline engine of the server engine, which reads the calls of a
+// file through it for a server without the call hierarchy.
+var _ lsp.Calls = (*treesitter.Engine)(nil)
+
 // For returns the engines of one language over a workspace, in the order in which a catalogue
 // meets them: the tree-sitter engine, the server engine when [Serving] returns one, and then
 // the engines of also. A catalogue keeps that order for two engines of equal fidelity and

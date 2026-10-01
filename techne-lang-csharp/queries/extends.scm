@@ -44,3 +44,7 @@
   name: [(qualified_name) @name (identifier) @name]) @definition.module
 (using_directive
   [(qualified_name) @name (identifier) @name]) @definition.import
+
+;; Upstream captures the call of a member as a send. A call of a method of
+;; the same type, or of a local function, names the callee alone.
+(invocation_expression function: (identifier) @name) @reference.call

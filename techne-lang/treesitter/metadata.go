@@ -489,15 +489,17 @@ func enclosing(node *ts.Node, content []byte) *ts.Node {
 // node: parent writes no bracket before node, and nothing between node and
 // the body except node itself. C writes a function as a return type and a
 // declarator side by side, so the declarator alone is half the signature.
+//
+// The text before node is read last. A file declares each declaration at its top level under
+// one parent, whose text from its start to a declaration grows with the file, and the checks
+// before it rule that parent out.
 func declares(parent, node *ts.Node, content []byte) bool {
-	if bytes.ContainsAny(content[parent.StartByte():node.StartByte()], blockOpen) {
-		return false
-	}
+	before := func() bool { return bytes.ContainsAny(content[parent.StartByte():node.StartByte()], blockOpen) }
 	body := parent.ChildByFieldName(string(FieldNameBody))
 	if body == nil {
-		return parent.NamedChildCount() == 1
+		return parent.NamedChildCount() == 1 && !before()
 	}
-	if node.EndByte() > body.StartByte() {
+	if node.EndByte() > body.StartByte() || before() {
 		return false
 	}
 	for i := range parent.NamedChildCount() {

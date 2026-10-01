@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"iter"
 	"strings"
+	"unicode"
 
 	ts "github.com/tree-sitter/go-tree-sitter"
 	"go.dokimi.dev/techne/core/engine"
@@ -33,6 +35,9 @@ type Engine struct {
 	// one grammar, so a language with a dialect has one query per grammar.
 	tags  map[*ts.Language]*ts.Query
 	scans scans
+	// keywords are the words that a grammar of the engine parses as tokens
+	// without a name, such as func and type of Go.
+	keywords map[string]bool
 }
 
 // ErrUnknownCapture reports a query with a definition capture that no kind
@@ -64,12 +69,15 @@ func New(fsys fs.FS, d lang.Declaration, g Grammar) (*Engine, error) {
 
 	e := &Engine{
 		fsys: fsys, declared: d, grammar: g, tags: map[*ts.Language]*ts.Query{},
-		scans: scans{files: map[source.Path]scan{}},
+		scans: scans{files: map[source.Path]scan{}}, keywords: map[string]bool{},
 	}
 	for _, grammar := range g.each() {
 		if grammar == nil {
 			e.Close()
 			return nil, fmt.Errorf("treesitter: %q declares a dialect without a grammar", d.Language)
+		}
+		for word := range keywordsOf(grammar) {
+			e.keywords[word] = true
 		}
 		q, qerr := ts.NewQuery(grammar, g.Tags)
 		if qerr != nil {
@@ -89,6 +97,37 @@ func New(fsys fs.FS, d lang.Declaration, g Grammar) (*Engine, error) {
 		e.tags[grammar] = q
 	}
 	return e, nil
+}
+
+// keywordsOf returns the keywords of grammar: each kind of node that the
+// grammar shows in a tree, that has no name, and that is a word, such as the
+// func and the type of Go. A kind without a name is a literal token of the
+// grammar, and the kinds that are not words are its punctuation.
+func keywordsOf(grammar *ts.Language) iter.Seq[string] {
+	return func(yield func(string) bool) {
+		for id := range uint16(grammar.NodeKindCount()) {
+			kind := grammar.NodeKindForId(id)
+			if grammar.NodeKindIsVisible(id) && !grammar.NodeKindIsNamed(id) && isIdentifier(kind) && !yield(kind) {
+				return
+			}
+		}
+	}
+}
+
+// isIdentifier reports whether word is an identifier: a letter or an
+// underscore, then letters, digits and underscores.
+func isIdentifier(word string) bool {
+	for i, r := range word {
+		if !inIdentifier(r) || (i == 0 && unicode.IsDigit(r)) {
+			return false
+		}
+	}
+	return word != ""
+}
+
+// inIdentifier reports whether r can be part of an identifier.
+func inIdentifier(r rune) bool {
+	return r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
 // Close releases the compiled queries and the kept declarations. It is safe

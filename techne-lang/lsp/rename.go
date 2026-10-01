@@ -23,8 +23,10 @@ import (
 //  1. Open the file of the declaration, and wait for the server to settle.
 //  2. Open every file that textDocument/references names, because metals renames only in its
 //     open buffers.
-//  3. Ask textDocument/prepareRename where the server offers it.
-//  4. Ask textDocument/rename.
+//  3. Ask textDocument/prepareRename where the server offers it, at the declaration or else at
+//     a use in its file, by the rule of [Engine.prepared]. A rename from a use takes the uses
+//     that textDocument/references names from there when it named none from the declaration.
+//  4. Ask textDocument/rename where the server prepared it.
 //
 // renaming returns [engine.ErrRefuse] when the server refuses the position or the rename. A
 // plan that leaves a use unrewritten is partial, and so is a plan that moves a file of a server
@@ -59,31 +61,31 @@ func (e *Engine) renaming(
 	if err != nil {
 		return engine.Result[edit.Change]{}, err
 	}
-	short, err := e.preloaded(ctx, held, newFinder(e, held), doc, at)
+	short, _, err := e.preloaded(ctx, held, newFinder(e, held), doc, at)
 	if err != nil {
 		return engine.Result[edit.Change]{}, err
 	}
 	ready := e.settle(ctx, held)
 	uses := e.using(ctx, held, doc, at)
 
+	aim, found := at, true
 	if prepares(held.capable.RenameProvider) {
-		prepared, refused := held.asks.PrepareRename(ctx, &protocol.PrepareRenameParams{
-			TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(doc.path))},
-			Position:     at,
-		})
-		if refused != nil {
-			return engine.Result[edit.Change]{}, fmt.Errorf("%w: %s: %s",
-				engine.ErrRefuse, e.server.Name, reasoned(refused))
+		aim, found, err = e.prepared(ctx, held, doc, at)
+		if err != nil {
+			return engine.Result[edit.Change]{}, err
 		}
-		if prepared == nil {
-			return engine.Result[edit.Change]{}, fmt.Errorf("%w: %s: nothing at %s:%d:%d can be renamed",
-				engine.ErrRefuse, e.server.Name, doc.path, at.Line+1, at.Character+1)
-		}
+	}
+	switch {
+	case !found:
+		return engine.Result[edit.Change]{}, fmt.Errorf("%w: %s: nothing at %s:%d:%d can be renamed",
+			engine.ErrRefuse, e.server.Name, doc.path, at.Line+1, at.Character+1)
+	case aim != at && len(uses) == 0:
+		uses = e.using(ctx, held, doc, aim)
 	}
 
 	answered, err := held.asks.Rename(ctx, &protocol.RenameParams{
 		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(doc.path))},
-		Position:     at,
+		Position:     aim,
 		NewName:      fresh,
 	})
 	if err != nil {
@@ -114,6 +116,45 @@ func (e *Engine) renaming(
 		Lowered:      reaches,
 		Caveats:      caveats,
 	}, nil
+}
+
+// prepared returns the protocol position in doc from which the server prepares the rename of the
+// declaration whose name is at the position at, and reports whether there is one. That is at,
+// or else a use of the declaration in doc that [Engine.useIn] finds, for a server that prepares
+// no rename at the declaration: ruby-lsp prepares the rename of a constant that a value assigns
+// at each use of the constant and not at the assignment, and the rename from a use renames the
+// assignment too. prepared returns the refusal of the server at the declaration as an error that
+// wraps [engine.ErrRefuse].
+func (e *Engine) prepared(
+	ctx context.Context,
+	held *session,
+	doc document,
+	at protocol.Position,
+) (protocol.Position, bool, error) {
+	document := protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(doc.path))}
+	prepared, refused := held.asks.PrepareRename(ctx, &protocol.PrepareRenameParams{
+		TextDocument: document,
+		Position:     at,
+	})
+	switch {
+	case refused != nil:
+		return protocol.Position{}, false, fmt.Errorf("%w: %s: %s", engine.ErrRefuse, e.server.Name, reasoned(refused))
+	case prepared != nil:
+		return at, true, nil
+	}
+	subject, known, err := newFinder(e, held).at(ctx, doc.path, at)
+	if err != nil || !known {
+		return protocol.Position{}, false, err
+	}
+	_, use, used, err := e.useIn(ctx, held, []source.Path{doc.path}, doc, subject)
+	if err != nil || !used {
+		return protocol.Position{}, false, err
+	}
+	prepared, refused = held.asks.PrepareRename(ctx, &protocol.PrepareRenameParams{
+		TextDocument: document,
+		Position:     use,
+	})
+	return use, refused == nil && prepared != nil, nil
 }
 
 // targeted returns the files of the scope of req for a target that names a declaration, and
@@ -251,7 +292,7 @@ func (e *Engine) corroborated(
 	case covered != trust.ScopeTotal:
 		return covered, reaches, caveats
 	case len(uses) > 0:
-		if missed, short := e.uncovered(uses, changes); short {
+		if missed, short := e.uncovered(uses, changes, doc.word(at)); short {
 			return trust.ScopePartial, reaches, append(caveats, trust.Caveat{
 				Code: trust.CaveatUnrewritten,
 				Note: missed,
@@ -268,8 +309,11 @@ func (e *Engine) corroborated(
 // changes rewrites, and reports whether there is one. A plan edits no file that [lang.Readable]
 // refuses, so each use in such a file is one: a use in a source that the build generates under
 // a directory that .gitignore excludes, for example. A use in a file that cannot be read for
-// another reason, such as a file that no longer exists, is left out.
-func (e *Engine) uncovered(uses []protocol.Location, changes []edit.Change) (string, bool) {
+// another reason, such as a file that no longer exists, is left out, and so is a use whose text
+// does not write name, the old name, as a word: csharp-ls reports the new of a target-typed
+// new() as a use of its type, and a rename leaves the new as it is. An empty name leaves out no
+// use.
+func (e *Engine) uncovered(uses []protocol.Location, changes []edit.Change, name string) (string, bool) {
 	edits := map[source.Path][]edit.TextEdit{}
 	for _, c := range changes {
 		if c.Kind == edit.ChangeEdit {
@@ -294,7 +338,9 @@ func (e *Engine) uncovered(uses []protocol.Location, changes []edit.Change) (str
 			}
 			doc, docs[p] = loaded, loaded
 		}
-		if !rewrites(edits[p], doc.position(one.Range.Start).Offset) {
+		span := doc.span(one.Range)
+		named := name == "" || lang.Worded(doc.text(span), name) >= 0
+		if named && !rewrites(edits[p], span) {
 			return "the server names a use at " + at + " that the rename does not rewrite", true
 		}
 	}
@@ -351,10 +397,16 @@ func edited(changes []edit.Change) lang.Lines {
 	return lang.Spanned(spans...)
 }
 
-// rewrites reports whether an edit of edits replaces the byte at offset.
-func rewrites(edits []edit.TextEdit, offset int) bool {
+// rewrites reports whether an edit of edits changes the text of use, the span of a use: whether
+// the edit shares a byte with the span or inserts at one of its ends. A server can edit part of
+// a use, and a rename is complete when an edit changes each use:
+//
+//   - jdtls reports the org.springframework.asm.ClassReader of a Javadoc link from character 38
+//     to 73 of its line, and renames characters 62 to 73.
+//   - csharp-ls renames EncodingHelper to EncodingHelperX by inserting X at the end of each use.
+func rewrites(edits []edit.TextEdit, use source.Span) bool {
 	for _, one := range edits {
-		if one.Span.Start.Offset <= offset && offset < one.Span.End.Offset {
+		if one.Span.Start.Offset <= use.End.Offset && use.Start.Offset <= one.Span.End.Offset {
 			return true
 		}
 	}

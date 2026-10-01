@@ -25,6 +25,7 @@ const (
 	envRequests = "TECHNE_LSPTEST_REQUESTS"
 	envOutside  = "TECHNE_LSPTEST_OUTSIDE"
 	envRenames  = "TECHNE_LSPTEST_RENAMES"
+	envDelay    = "TECHNE_LSPTEST_DELAY"
 	// envOrphan marks the child of the Orphans mode.
 	envOrphan = "TECHNE_LSPTEST_ORPHAN"
 )
@@ -77,6 +78,12 @@ func Outside(path string) Option {
 // each {file} with the URI of the document that the request names.
 func Renames(edit string) Option {
 	return func(s *lsp.Server) { s.Env[envRenames] = edit }
+}
+
+// Delaying makes the Quiet and Loads modes publish the report of a document that the client
+// opens after delay, in place of [QuietDelay].
+func Delaying(delay time.Duration) Option {
+	return func(s *lsp.Server) { s.Env[envDelay] = delay.String() }
 }
 
 // Server returns a declaration that runs the current test binary as the scripted server in

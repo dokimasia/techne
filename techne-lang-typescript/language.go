@@ -104,6 +104,15 @@ func Server() lsp.Server {
 		// after which a kind of diagnostics is still empty. It publishes a
 		// report of each kind for a file that it opens.
 		Quiet: true,
+		// tsserver returns the uses of the members that a member of an
+		// interface redeclares among the uses of the member.
+		Related: true,
+		// tsserver returns the expressions of the type of an interface among
+		// its implementations.
+		Contextual: true,
+		// typescript-language-server forwards projectInfo to tsserver, which
+		// states the project of a file.
+		Tsserver: true,
 		// typescript-language-server requests the indentation of a file under
 		// formattingOptions before it configures tsserver for the file, and
 		// tsserver indents the code of a refactoring with it.

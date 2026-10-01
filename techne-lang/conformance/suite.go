@@ -17,6 +17,7 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+	"unicode"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/diag"
@@ -382,6 +383,49 @@ func Run(t *testing.T, s Suite) {
 		})
 	})
 
+	t.Run("Calls", func(t *testing.T) {
+		t.Parallel()
+		e := build(t, fsys, s)
+		everything := outline(t, e, ".")
+
+		t.Run("returns the name of a call of a function that the fixture declares", func(t *testing.T) {
+			t.Parallel()
+			path, at, name := calledIn(s.Files, everything.Items)
+			if name == "" {
+				t.Skip("the fixture calls no function or method that it declares")
+			}
+			got, err := e.Calls(t.Context(), source.Path(path))
+			assert.NoError(t, err, "Calls of "+path)
+			assert.True(t, slices.ContainsFunc(got, func(one source.Span) bool { return one.Start.Offset == at }),
+				fmt.Sprintf("the calls of %s contain the call of %s at byte %d", path, name, at))
+		})
+
+		t.Run("returns no call at the name of a declaration", func(t *testing.T) {
+			t.Parallel()
+			for _, declared := range everything.Items {
+				if declared.Kind != sema.KindFunction && declared.Kind != sema.KindMethod {
+					continue
+				}
+				named := lang.Worded(declared.Snippet, declared.Name)
+				if named < 0 {
+					continue
+				}
+				at := declared.Span.Start.Offset + named
+				got, err := e.Calls(t.Context(), declared.Span.Path)
+				assert.NoError(t, err, "Calls of "+string(declared.Span.Path))
+				assert.False(
+					t,
+					slices.ContainsFunc(got, func(one source.Span) bool { return one.Start.Offset == at }),
+					fmt.Sprintf(
+						"the calls of %s contain the name of the declaration %s",
+						declared.Span.Path,
+						declared.Name,
+					),
+				)
+			}
+		})
+	})
+
 	t.Run("Search", func(t *testing.T) {
 		t.Parallel()
 		e := build(t, fsys, s)
@@ -459,6 +503,90 @@ func Run(t *testing.T, s Suite) {
 				Code: trust.CaveatTruncated,
 				Note: fmt.Sprintf("1 of %d matches returned", len(offered)),
 			}, "caveats")
+		})
+
+		t.Run("returns a declaration whose documentation contains every word of a description", func(t *testing.T) {
+			t.Parallel()
+			var wanted sema.Symbol
+			var words []string
+			for _, one := range everything.Items {
+				words = words[:0]
+				for word := range strings.FieldsSeq(strings.ToLower(one.Doc)) {
+					if trimmed := strings.Trim(word, ".,:;()[]`'\"*#/-"); len(trimmed) >= 4 {
+						words = append(words, trimmed)
+					}
+				}
+				if len(words) >= 2 {
+					wanted = one
+					break
+				}
+			}
+			if len(words) < 2 {
+				t.Skip("the fixture documents no declaration with two words")
+			}
+			description := words[0] + " " + words[1]
+			got := search(t, e, engine.Query{Text: description, Private: true, Include: engine.BindAll})
+			assert.True(t, slices.ContainsFunc(got.Items, func(s sema.Symbol) bool { return s.Span == wanted.Span }),
+				"the matches of "+description+" contain "+wanted.Name)
+			missing := words[0] + " zyxwvut"
+			got = search(t, e, engine.Query{Text: missing, Private: true, Include: engine.BindAll})
+			assert.Empty(t, got.Items, "the matches of "+missing+", whose second word no documentation contains")
+		})
+
+		t.Run("returns the declaration that a text written as its declaration declares", func(t *testing.T) {
+			t.Parallel()
+			at := slices.IndexFunc(everything.Items, func(s sema.Symbol) bool {
+				return (s.Kind == sema.KindFunction || s.Kind == sema.KindMethod) &&
+					strings.Contains(s.Signature, s.Name+"(") && strings.ContainsFunc(s.Signature, unicode.IsSpace)
+			})
+			if at < 0 {
+				t.Skip("the fixture declares no function whose signature has a parameter list and white space")
+			}
+			wanted := everything.Items[at]
+			got := search(t, e, engine.Query{Text: wanted.Signature, Private: true, Include: engine.BindAll})
+			assert.True(t, slices.ContainsFunc(got.Items, func(s sema.Symbol) bool { return s.Span == wanted.Span }),
+				"the matches of "+wanted.Signature+" contain "+wanted.Name)
+		})
+
+		// An outline answer writes a declaration as its line number and its signature, which a
+		// caller copies into a search.
+		t.Run("returns the type that a line of an outline answer declares", func(t *testing.T) {
+			t.Parallel()
+			at := slices.IndexFunc(everything.Items, func(s sema.Symbol) bool {
+				return slices.Contains([]sema.Kind{sema.KindStruct, sema.KindInterface, sema.KindEnum}, s.Kind) &&
+					strings.Contains(s.Signature, s.Name) && !strings.Contains(s.Signature, "(") &&
+					strings.ContainsFunc(s.Signature, unicode.IsSpace)
+			})
+			if at < 0 {
+				t.Skip("the fixture declares no type whose signature has white space and no parenthesis")
+			}
+			wanted := everything.Items[at]
+			text := fmt.Sprintf("%5d  %s", wanted.Span.Start.Line+1, wanted.Signature)
+			got := search(t, e, engine.Query{Text: text, Private: true, Include: engine.BindAll})
+			assert.True(t, slices.ContainsFunc(got.Items, func(s sema.Symbol) bool { return s.Span == wanted.Span }),
+				"the matches of "+text+" contain "+wanted.Name)
+		})
+
+		t.Run("returns the declaration that a text with a bracket before its name declares", func(t *testing.T) {
+			t.Parallel()
+			at := slices.IndexFunc(everything.Items, func(s sema.Symbol) bool {
+				before, _, called := strings.Cut(s.Signature, s.Name+"(")
+				return (s.Kind == sema.KindFunction || s.Kind == sema.KindMethod) && called &&
+					strings.ContainsAny(before, "([<")
+			})
+			if at < 0 {
+				t.Skip("the fixture declares no function whose signature has a bracket before its name")
+			}
+			wanted := everything.Items[at]
+			got := search(t, e, engine.Query{Text: wanted.Signature, Private: true, Include: engine.BindAll})
+			assert.True(t, slices.ContainsFunc(got.Items, func(s sema.Symbol) bool { return s.Span == wanted.Span }),
+				"the matches of "+wanted.Signature+" contain "+wanted.Name)
+		})
+
+		t.Run("returns no items for a description that no documentation contains", func(t *testing.T) {
+			t.Parallel()
+			got := search(t, e, engine.Query{Text: "zyxwvut qponmlk", Private: true, Include: engine.BindAll})
+			assert.Empty(t, got.Items, "the matches of a description")
 		})
 
 		t.Run("returns no items for a name no declaration has", func(t *testing.T) {
@@ -841,6 +969,47 @@ func content(s Suite) map[source.Path][]byte {
 const garbage = "\n)]}%\n"
 
 // build returns the engine of s over fsys and closes it when the test ends.
+// calledIn returns a call of a function or a method of declared in files: the file, the byte
+// offset of the name of the callee, and the name. The call writes the name as a word that a
+// parenthesis follows, inside the body of a function, a method or a constructor of declared and
+// after the name of that declaration. It returns an empty name when files contain no such call.
+func calledIn(files map[string]string, declared []sema.Symbol) (string, int, string) {
+	callable := func(s sema.Symbol) bool { return s.Kind == sema.KindFunction || s.Kind == sema.KindMethod }
+	inBody := func(p source.Path, at int) bool {
+		return slices.ContainsFunc(declared, func(s sema.Symbol) bool {
+			named := lang.Worded(s.Snippet, s.Name)
+			return (callable(s) || s.Kind == sema.KindConstructor) && s.Span.Path == p && named >= 0 &&
+				at > s.Span.Start.Offset+named && at < s.Span.End.Offset
+		})
+	}
+	for _, callee := range declared {
+		if !callable(callee) {
+			continue
+		}
+		for _, path := range slices.Sorted(maps.Keys(files)) {
+			content := files[path]
+			for from := 0; ; {
+				at := strings.Index(content[from:], callee.Name+"(")
+				if at < 0 {
+					break
+				}
+				at += from
+				from = at + 1
+				if at > 0 && wordByte(content[at-1]) || !inBody(source.Path(path), at) {
+					continue
+				}
+				return path, at, callee.Name
+			}
+		}
+	}
+	return "", 0, ""
+}
+
+// wordByte reports whether b can be part of an identifier in ASCII.
+func wordByte(b byte) bool {
+	return b == '_' || '0' <= b && b <= '9' || 'a' <= b && b <= 'z' || 'A' <= b && b <= 'Z'
+}
+
 func build(t *testing.T, fsys fs.FS, s Suite) *treesitter.Engine {
 	t.Helper()
 	e, err := treesitter.New(fsys, s.Declaration, s.Grammar)

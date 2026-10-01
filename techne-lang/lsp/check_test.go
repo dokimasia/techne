@@ -134,8 +134,30 @@ func TestCheck(t *testing.T) {
 
 		t.Run("declines content the server reports nothing about", func(t *testing.T) {
 			t.Parallel()
-			_, err := serving(t, lsptest.Ungated, sample()).Check(t.Context(), faulty)
+			server := lsptest.Server(lsptest.Ungated)
+			server.Checking = asking
+			_, err := lsptest.Engine(t, lsptest.Workspace(t, sample()), server).Check(t.Context(), faulty)
 			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Check")
+		})
+
+		t.Run("declines content the server reports nothing about within Checking", func(t *testing.T) {
+			t.Parallel()
+			server := lsptest.Server(lsptest.Ungated)
+			server.Checking = asking
+			e := lsptest.Engine(t, lsptest.Workspace(t, sample()), server)
+			began := time.Now()
+			_, err := e.Check(t.Context(), faulty)
+			took := time.Since(began)
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Check")
+			assert.True(t, took < 10*time.Second, "Check took "+took.String())
+		})
+
+		t.Run("returns the report of a quiet server that publishes it after two seconds", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, lsptest.Quiet, sample(), lsptest.Delaying(2500*time.Millisecond))
+			got, err := e.Check(t.Context(), faulty)
+			assert.NoError(t, err, "Check of faulty content")
+			assert.Length(t, got.Items, 1, "the findings of faulty content")
 		})
 
 		t.Run("declines while the server loads the workspace", func(t *testing.T) {

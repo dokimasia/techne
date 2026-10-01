@@ -32,6 +32,36 @@
 // tier that its [Server] declares for each role. [Binding] returns the tiers of a server with
 // a type checker.
 //
+// # Relations
+//
+// A server without the call hierarchy, as typescript-language-server, relates the calls of a
+// declaration through the outline engine of the language when that engine implements [Calls]:
+//
+//   - The callers of a declaration are its references at the name of a call that the engine
+//     reads. A reference in a file that the engine cannot read is kept.
+//   - The calls of a declaration are the calls that the engine reads inside its span. The far
+//     end of each is the declaration at a definition of its callee.
+//
+// A [Server.Related] server returns, among the references of a declaration, the references of
+// the declarations that it redeclares. The engine requests the definition at each reference and
+// at each caller, and keeps a site whose definition is the declaration or that has no definition.
+//
+// tsserver searches for the implementations of a declaration in the project of the file of the
+// request only. For a [Server.Tsserver] server the engine also asks at a use of the declaration
+// in one file of each other project that writes its name, and merges the answers. A
+// [Server.Contextual] server returns expressions among the implementations, and the engine keeps
+// an implementation at the name of a declaration that can implement, such as a class.
+//
+// # Scoped servers
+//
+// A [Server.Scoped] server finds a use only in a file that it has open. Before a rename, a move
+// and a relation of the uses of a declaration that other files can use, the engine opens up to
+// 200 files of the workspace that write the name. A plan or an answer past them is partial. A
+// file writes the name of a declaration on a line that does not start with //. For a
+// [Server.Tsserver] server, the engine opens one file of each project, so that tsserver loads
+// the project whole. It then opens only the files of no project whose imports lead to the file
+// of the declaration or to a loaded project.
+//
 // # Identities
 //
 // [sema.Qualify] builds the qualified name in the ID of a symbol from the container that the
@@ -73,6 +103,17 @@
 // analysed the file is partial. A check on disk changes the diagnostics of the files alone, so
 // only [Engine.Verify] waits for it.
 //
+// A question waits 2 seconds for a server without pull diagnostics to publish the diagnostics
+// of its files. [Engine.Check] checks a change before the write and waits up to
+// [Server.Checking], 30 seconds by default, because a check that ends before the reports arrive
+// declines, and a weaker engine then checks the change.
+//
+// A server whose process has exited is replaced by a new server at the next question. A server
+// that returns no symbol of a file whose outline declares symbols has stopped answering, as
+// typescript-language-server does after its tsserver exits. The engine stops that server, and
+// [Engine.Resolve] and [Engine.Relate] ask a new one once. A new server that has stopped
+// answering too declines.
+//
 // The session records the diagnostics that a server publishes and its progress jobs when it
 // reads each message, before a handler of the connection runs. A report is recorded before the
 // message after it, such as the end of the job that produced the report or the reply to a later
@@ -82,10 +123,13 @@
 // of [lang.Lowered]. Only an error on a line that can hide a use of the name that the answer is
 // about lowers it to [trust.Indexed]. An extraction rewrites no reference and is never lowered.
 //
-// A rename is partial when the server reports a use that no edit of the plan rewrites. A use in a
-// file that [lang.Readable] refuses is always such a use, because a plan edits no file that
-// techne does not read. A source that a build generates under a directory that .gitignore
-// excludes is one such file.
+// A rename is partial when the server reports a use that no edit of the plan rewrites. An edit
+// rewrites a use when it shares a byte with the use or inserts at one of its ends, because a
+// server can report a qualified name as the use and rename its last part, and can rename by the
+// least edit. A use whose text does not write the old name, such as the new of a target-typed
+// new() in C#, needs no edit. A use in a file that [lang.Readable] refuses is always
+// unrewritten, because a plan edits no file that techne does not read. A source that a build
+// generates under a directory that .gitignore excludes is one such file.
 //
 // A rename that moves a file is partial when the server does not serve
 // workspace/willRenameFiles, because only that request returns the edits of the paths that name

@@ -57,9 +57,9 @@ func (e *Engine) relocating(
 	dir := path.Dir(string(from))
 	stem := strings.TrimSuffix(path.Base(string(from)), path.Ext(string(from)))
 	specifier := path.Base(dir) + "/" + stem
-	short, err := e.preload(ctx, held, specifier, func(p source.Path, content []byte) bool {
+	short, _, err := e.preload(ctx, held, specifier, func(p source.Path, content []byte) bool {
 		return bytes.Contains(content, []byte(specifier)) || path.Dir(string(p)) == dir && wording(stem)(p, content)
-	}, from)
+	}, from, from)
 	if err != nil {
 		return engine.Result[edit.Change]{}, err
 	}

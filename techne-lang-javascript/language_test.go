@@ -6,8 +6,10 @@ package javascript_test
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
@@ -106,6 +108,21 @@ func TestLanguage(t *testing.T) {
 			assert.True(t, javascript.Server().Quiet, "Quiet of typescript-language-server")
 		})
 
+		t.Run("declares that tsserver returns the uses of redeclared members", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, javascript.Server().Related, "Related of typescript-language-server")
+		})
+
+		t.Run("declares that tsserver returns expressions among implementations", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, javascript.Server().Contextual, "Contextual of typescript-language-server")
+		})
+
+		t.Run("declares that the server forwards the requests of tsserver", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, javascript.Server().Tsserver, "Tsserver of typescript-language-server")
+		})
+
 		t.Run("names the section under which the server requests the indentation of a file", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, javascript.Server().Indentation, lsp.Indentation{Options: formatting},
@@ -148,6 +165,25 @@ func TestLanguage(t *testing.T) {
 		})
 	})
 
+	t.Run("Grammar", func(t *testing.T) {
+		t.Parallel()
+
+		// A file of declarations at its top level without a bracket before them makes each
+		// declaration read the text of the file before it, when the reading is not bounded. The
+		// time of the outline then grows with the square of the declarations: 16 times the time
+		// for 4 times the declarations, against 4 times when the reading is bounded.
+		t.Run("outlines four times the declarations without brackets in less than eight times the time",
+			func(t *testing.T) {
+				t.Parallel()
+				small, large := flat(t, 15_000), flat(t, 60_000)
+				assert.True(
+					t,
+					large < 8*small,
+					fmt.Sprintf("15,000 declarations took %s and 60,000 took %s", small, large),
+				)
+			})
+	})
+
 	t.Run("For", func(t *testing.T) {
 		t.Parallel()
 
@@ -163,6 +199,29 @@ func TestLanguage(t *testing.T) {
 			assert.Equal(t, javascript.For(files).Name, "typescript-language-server", "the server of the workspace")
 		})
 	})
+}
+
+// flat returns the fastest of three outlines of a file of n declarations at its top level
+// without a bracket before them, each by a new engine, which keeps no declaration of the file.
+func flat(t *testing.T, n int) time.Duration {
+	t.Helper()
+	var body bytes.Buffer
+	for i := range n {
+		fmt.Fprintf(&body, "var a%d = 1;\n", i)
+	}
+	fastest := time.Duration(math.MaxInt64)
+	for range 3 {
+		e, err := treesitter.New(fstest.MapFS{"flat.js": {Data: body.Bytes()}},
+			javascript.Declaration(), javascript.Grammar())
+		assert.NoError(t, err, "New over the file")
+		start := time.Now()
+		got, err := e.Outline(t.Context(), engine.Request{Scope: "flat.js"})
+		fastest = min(fastest, time.Since(start))
+		e.Close()
+		assert.NoError(t, err, "Outline of the file")
+		assert.Length(t, got.Items, n, "the declarations of the file")
+	}
+	return fastest
 }
 
 // BenchmarkGrammar measures the tree-sitter engine of JavaScript over one

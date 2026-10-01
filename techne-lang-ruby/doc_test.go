@@ -35,7 +35,7 @@ module Shop
     attr_reader :name
 
     def initialize(start)
-      @size = start
+      @size = get(start)
     end
 
 =begin

@@ -106,3 +106,13 @@
 
 (type_alias_statement
   (type) @name) @definition.type
+
+;; Calls, as upstream captures them: a call names its callee, or the
+;; attribute that it calls.
+
+(call
+  function: [
+      (identifier) @name
+      (attribute
+        attribute: (identifier) @name)
+  ]) @reference.call

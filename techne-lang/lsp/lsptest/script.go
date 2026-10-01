@@ -5,6 +5,7 @@ package lsptest
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -85,6 +86,8 @@ const (
 	stoereName   = `{"start":{"line":2,"character":17},"end":{"line":2,"character":22}}`
 	fileRange    = `{"start":{"line":0,"character":0},"end":{"line":8,"character":44}}`
 	shopRange    = `{"start":{"line":2,"character":0},"end":{"line":6,"character":43}}`
+	// getterName is the name of the interface of [Getter], which follows [Content].
+	getterName = `{"start":{"line":9,"character":5},"end":{"line":9,"character":11}}`
 )
 
 // The symbol kinds that the responses of the script use, as the protocol numbers them.
@@ -153,30 +156,49 @@ type script struct {
 	outside string
 	// renames is the template of the answer to textDocument/rename, or empty.
 	renames string
+
+	// restarted reports that [RecordStarts] recorded a start before the start of this process.
+	// muted reports that the Mutes mode responds with empty results.
+	restarted, muted bool
+
+	// delay is how long the Quiet and Loads modes take to publish the report of an open.
+	delay time.Duration
 }
 
 // serve runs the script over stdin and stdout until the client sends exit or closes stdin,
 // and returns the exit status of the process.
 func serve(mode Mode) int {
+	restarted := false
 	if log := os.Getenv(envStarts); log != "" {
 		if err := record(log, "started"); err != nil {
 			return 4
 		}
+		recorded, err := os.ReadFile(log)
+		if err != nil {
+			return 4
+		}
+		restarted = bytes.Count(recorded, []byte("\n")) > 1
 	}
 	requests := os.Getenv(envRequests)
+	delay := QuietDelay
+	if given, err := time.ParseDuration(os.Getenv(envDelay)); err == nil {
+		delay = given
+	}
 	s := &script{
-		mode:     mode,
-		in:       bufio.NewReader(os.Stdin),
-		out:      os.Stdout,
-		replies:  map[string]string{},
-		holding:  map[string]string{},
-		versions: map[string]int{},
-		reported: map[string]string{},
-		opens:    map[string]int{},
-		analysed: map[string]bool{},
-		synced:   true,
-		outside:  os.Getenv(envOutside),
-		renames:  os.Getenv(envRenames),
+		delay:     delay,
+		restarted: restarted,
+		mode:      mode,
+		in:        bufio.NewReader(os.Stdin),
+		out:       os.Stdout,
+		replies:   map[string]string{},
+		holding:   map[string]string{},
+		versions:  map[string]int{},
+		reported:  map[string]string{},
+		opens:     map[string]int{},
+		analysed:  map[string]bool{},
+		synced:    true,
+		outside:   os.Getenv(envOutside),
+		renames:   os.Getenv(envRenames),
 	}
 	for {
 		raw, err := frame(s.in)
@@ -248,12 +270,81 @@ func (s *script) handle(m message) (int, bool) {
 		if s.mode == DiskChecks {
 			go s.diskCheck()
 		}
+	case "textDocument/references":
+		if s.mode == Exits && !s.restarted {
+			return 0, true
+		}
+		s.request(m)
 	default:
 		if m.ID != nil {
 			s.request(m)
 		}
 	}
 	return 0, false
+}
+
+// scoped reports whether the mode reports and renames uses as the Scoped mode does.
+func (s *script) scoped() bool { return s.mode == Scoped || s.mode == Projects }
+
+// projectInfo responds to the command typescript.tsserverRequest with the request projectInfo
+// of a file, as tsserver responds through typescript-language-server: the configuration file
+// of the project when a tsconfig.json is in the directory of the file or above it and the
+// client has a buffer of a file under the directory of that tsconfig.json, and the error No
+// Project otherwise.
+func (s *script) projectInfo(id *int64, params json.RawMessage) {
+	var held struct {
+		Command   string            `json:"command"`
+		Arguments []json.RawMessage `json:"arguments"`
+	}
+	var args struct {
+		File string `json:"file"`
+	}
+	if json.Unmarshal(params, &held) != nil || held.Command != tsserverCommand || len(held.Arguments) < 2 ||
+		json.Unmarshal(held.Arguments[1], &args) != nil {
+		s.refuse(id, "No Project.")
+		return
+	}
+	root := uri.URI(s.root).FsPath()
+	for dir := filepath.Dir(args.File); strings.HasPrefix(dir, root); dir = filepath.Dir(dir) {
+		config := filepath.Join(dir, "tsconfig.json")
+		if _, err := os.Stat(config); err != nil {
+			continue
+		}
+		for open := range s.holding {
+			if strings.HasPrefix(uri.URI(open).FsPath(), dir+string(filepath.Separator)) {
+				s.answer(id, fmt.Sprintf(`{"type":"response","success":true,"body":{"configFileName":%q}}`, config))
+				return
+			}
+		}
+		break
+	}
+	s.refuse(id, "No Project.")
+}
+
+// tsserverCommand is the command of typescript-language-server to which the Projects mode
+// responds.
+const tsserverCommand = "typescript.tsserverRequest"
+
+// lists are the requests whose result is a list, to which the Mutes mode responds with an empty
+// list.
+var lists = []string{
+	"textDocument/documentSymbol", "textDocument/definition", "textDocument/references",
+	"textDocument/implementation", "textDocument/prepareCallHierarchy", "callHierarchy/incomingCalls",
+	"callHierarchy/outgoingCalls", "textDocument/prepareTypeHierarchy", "typeHierarchy/supertypes",
+	"typeHierarchy/subtypes", "textDocument/codeAction", "textDocument/formatting",
+}
+
+// emptied is the result with which the Mutes mode responds to a request of method: a full
+// report without items for textDocument/diagnostic, an empty list for a request whose result
+// is a list, and null for any other.
+func emptied(method string) string {
+	switch {
+	case method == "textDocument/diagnostic":
+		return `{"kind":"full","items":[]}`
+	case slices.Contains(lists, method):
+		return "[]"
+	}
+	return "null"
 }
 
 // initialize responds to the handshake. Before the response it sends a log message and a
@@ -425,11 +516,11 @@ func (s *script) opened(params json.RawMessage) {
 // occurrence of [Broken].
 func reportOf(text string) string { return "[" + strings.Join(broken(text), ",") + "]" }
 
-// delayed publishes the report of the document doc in the Quiet and Loads modes after
-// [QuietDelay], unless the client closed or opened doc again after the open that opens counted
-// as opened, and marks doc as analysed.
+// delayed publishes the report of the document doc in the Quiet and Loads modes after the delay
+// of [Delaying] or [QuietDelay], unless the client closed or opened doc again after the open
+// that opens counted as opened, and marks doc as analysed.
 func (s *script) delayed(doc string, opened int) {
-	time.Sleep(QuietDelay)
+	time.Sleep(s.delay)
 	s.sending.Lock()
 	defer s.sending.Unlock()
 	if s.opens[doc] != opened {
@@ -498,6 +589,14 @@ func (s *script) changed(params json.RawMessage) {
 // request responds to one request.
 func (s *script) request(m message) {
 	id := m.ID
+	if s.mode == Mutes && !s.restarted &&
+		(m.Method == "textDocument/references" || m.Method == "textDocument/definition") {
+		s.muted = true
+	}
+	if s.muted {
+		s.answer(id, emptied(m.Method))
+		return
+	}
 	if s.mode == Cancels && (m.Method == "textDocument/definition" || m.Method == "textDocument/references") {
 		code, why := requestCancelled, "The request has been cancelled"
 		if m.Method == "textDocument/references" {
@@ -515,6 +614,10 @@ func (s *script) request(m message) {
 		if s.mode == Hangs {
 			return
 		}
+		if line, character := position(m.Params); s.mode == FromUse && line == 2 && character == 5 {
+			s.answer(id, "[]")
+			return
+		}
 		s.answer(id, s.references())
 	case "textDocument/implementation":
 		switch s.mode {
@@ -523,6 +626,13 @@ func (s *script) request(m message) {
 			return
 		case Untyped:
 			s.refuse(id, NotAType)
+			return
+		case Contextual:
+			s.answer(id, "["+location(s.seen, storeName)+","+location(s.seen, storeInAfter)+","+
+				location(s.seen, getterName)+"]")
+			return
+		case Projected:
+			s.answer(id, s.types(s.seen))
 			return
 		}
 		s.answer(id, "["+location(s.seen, storeName)+"]")
@@ -547,6 +657,10 @@ func (s *script) request(m message) {
 	case "codeAction/resolve":
 		s.answer(id, s.resolve(m.Params))
 	case "workspace/executeCommand":
+		if s.mode == Projects {
+			s.projectInfo(id, m.Params)
+			return
+		}
 		s.ask(idPerform, fmt.Sprintf(`"workspace/applyEdit","params":{"edit":%s}`, s.lift("function")))
 		s.answer(id, "null")
 	case "workspace/willRenameFiles":
@@ -573,9 +687,12 @@ func (s *script) capabilities() string {
 	}
 	fields := []string{
 		`"documentSymbolProvider":true`, `"definitionProvider":true`, `"referencesProvider":true`,
-		`"implementationProvider":true`, `"callHierarchyProvider":true`,
+		`"implementationProvider":true`,
 		`"typeHierarchyProvider":true`, `"documentFormattingProvider":true`,
 		`"renameProvider":{"prepareProvider":true}`,
+	}
+	if s.mode != Uncalled {
+		fields = append(fields, `"callHierarchyProvider":true`)
 	}
 	switch s.mode {
 	case Pushes, Ungated, SilentMove, Opened, Short, Quiet, Loads:
@@ -614,7 +731,7 @@ func (s *script) symbols() string {
 			kindFunction, location(s.seen, afterRange))
 	case Extracts, Commands:
 		return functions(s.holding[s.seen])
-	case Minified, Aims:
+	case Minified, Aims, Uncalled:
 		return bundled(s.holding[s.seen])
 	case Nested:
 		return nested(s.holding[s.seen])
@@ -692,7 +809,14 @@ func (s *script) definition(params json.RawMessage) string {
 			return "[" + location(s.seen, storeName) + "]"
 		}
 		return "[" + location(s.seen, unenclosed) + "]"
-	case Minified, Nested:
+	case Redeclares:
+		if line, _ := position(params); line == 8 {
+			return "[" + location(s.seen, afterName) + "]"
+		}
+		return "[" + location(s.seen, storeName) + "]"
+	case Projected:
+		return s.imported(params)
+	case Minified, Nested, Uncalled:
 		found := called(s.holding[s.seen], bundleCallee)
 		if len(found) == 0 {
 			return "null"
@@ -707,14 +831,17 @@ func (s *script) references() string {
 	switch {
 	case s.mode == Unenclosed:
 		return "[" + location(s.seen, unenclosed) + "]"
-	case s.mode == Opened || s.mode == Short:
+	case s.mode == Opened || s.mode == Short || s.mode == Qualified:
 		other := sibling(s.seen)
 		at, used := use(s.view(other))
 		if !used {
 			return "[]"
 		}
+		if s.mode == Qualified {
+			at = qualified(s.view(other))
+		}
 		return "[" + location(other, at) + "]"
-	case s.mode == Scoped:
+	case s.scoped():
 		other := sibling(s.seen)
 		at, used := use(s.holding[other])
 		if !used {
@@ -729,6 +856,14 @@ func (s *script) references() string {
 		var out []string
 		for _, doc := range s.files() {
 			for _, at := range called(s.view(doc), bundleCallee) {
+				out = append(out, location(doc, at))
+			}
+		}
+		return "[" + strings.Join(out, ",") + "]"
+	case s.mode == Uncalled:
+		var out []string
+		for _, doc := range s.files() {
+			for _, at := range worded(s.view(doc), bundleCallee) {
 				out = append(out, location(doc, at))
 			}
 		}
@@ -862,7 +997,7 @@ func (s *script) move(params json.RawMessage) string {
 	}
 	moved := held.Files[0].OldURI
 	edits := fmt.Sprintf(`%q:[{"range":%s,"newText":"Vault"}]`, moved, storeName)
-	if other := sibling(moved); s.mode == Scoped {
+	if other := sibling(moved); s.scoped() {
 		if at, used := use(s.holding[other]); used {
 			edits += fmt.Sprintf(`,%q:[{"range":%s,"newText":"Vault"}]`, other, at)
 		}
@@ -880,6 +1015,10 @@ func (s *script) prepare(params json.RawMessage) string {
 			return "null"
 		}
 		return stoereName
+	case FromUse:
+		if line, character := position(params); line == 2 && character == 5 {
+			return "null"
+		}
 	}
 	return storeName
 }
@@ -887,10 +1026,13 @@ func (s *script) prepare(params json.RawMessage) string {
 // rename responds to textDocument/rename for the mode, and in the [Default] mode with a map of
 // two edits of one file, the later edit first.
 func (s *script) rename(id *int64, params json.RawMessage) {
+	line, character := position(params)
 	switch {
+	case s.mode == FromUse && line == 2 && character == 5:
+		s.answer(id, "null")
 	case s.mode == Conflicts:
 		s.refuse(id, "renaming this type conflicts with func in same block")
-	case s.mode == Opened || s.mode == Short || s.mode == Scoped:
+	case s.mode == Opened || s.mode == Short || s.mode == Qualified || s.scoped():
 		s.answer(id, s.rewrite())
 	case s.mode == Watches && !s.synced:
 		s.refuse(id, "Resource is out of sync with file system.")
@@ -1001,7 +1143,7 @@ func (s *script) diagnose(doc string) string {
 			}
 		}
 		return "[" + strings.Join(out, ",") + "]"
-	case Minified, Nested:
+	case Minified, Nested, Uncalled:
 		return "[]"
 	}
 	return problems
@@ -1119,6 +1261,57 @@ func published(doc, diagnostics string) string {
 		`"params":{"uri":%q,"diagnostics":%s}}`, doc, diagnostics)
 }
 
+// types is the answer of the Projected mode to textDocument/implementation in the document doc:
+// the name of each type of a line that starts with type.
+func (s *script) types(doc string) string {
+	var found []string
+	for n, line := range strings.Split(s.view(doc), "\n") {
+		if rest, typed := strings.CutPrefix(line, "type "); typed {
+			name := word(rest)
+			found = append(found, location(doc, ranged(n, len("type "), len("type ")+len(name))))
+		}
+	}
+	return "[" + strings.Join(found, ",") + "]"
+}
+
+// imports starts the line of the Projected mode that binds Store, as an import binds a name.
+const imports = "// imports "
+
+// imported is the answer of the Projected mode to textDocument/definition, by the rule of
+// [Projected].
+func (s *script) imported(params json.RawMessage) string {
+	line, character := position(params)
+	lines := strings.Split(s.view(s.seen), "\n")
+	if line < 0 || line >= len(lines) || wordAt(lines[line], character) != "Store" {
+		return "[]"
+	}
+	if strings.HasPrefix(lines[line], imports) {
+		return "[" + location(s.root+"/a"+Extension, storeName) + "]"
+	}
+	for n, one := range lines {
+		if rest, binds := strings.CutPrefix(one, imports); binds && strings.HasPrefix(rest, "Store") {
+			return "[" + location(s.seen, ranged(n, len(imports), len(imports)+len("Store"))) + "]"
+		}
+	}
+	return "[]"
+}
+
+// wordAt is the identifier of line that contains the character at column, or the empty
+// string when none does.
+func wordAt(line string, column int) string {
+	if column < 0 || column >= len(line) || !identifying(rune(line[column])) {
+		return ""
+	}
+	start, end := column, column
+	for start > 0 && identifying(rune(line[start-1])) {
+		start--
+	}
+	for end < len(line) && identifying(rune(line[end])) {
+		end++
+	}
+	return line[start:end]
+}
+
 // view is the text the server analyses for the document doc: the buffer the client gave it,
 // or the file on disk when the client gave none.
 func (s *script) view(doc string) string {
@@ -1228,6 +1421,26 @@ func ranged(line, from, to int) string {
 		line, from, line, to)
 }
 
+// qualified is the range of the first occurrence of Store in text together with the qualifier
+// before it, such as a. in a.Store, or the empty string when text has no occurrence.
+func qualified(text string) string {
+	for i, line := range strings.Split(text, "\n") {
+		at := strings.Index(line, "Store")
+		if at < 0 {
+			continue
+		}
+		start := at
+		for start > 1 && line[start-1] == '.' && identifying(rune(line[start-2])) {
+			start--
+			for start > 0 && identifying(rune(line[start-1])) {
+				start--
+			}
+		}
+		return ranged(i, start, at+len("Store"))
+	}
+	return ""
+}
+
 // use is the range of the first occurrence of Store in text, and whether there is one.
 func use(text string) (string, bool) {
 	for i, line := range strings.Split(text, "\n") {
@@ -1315,6 +1528,28 @@ func called(text, name string) []string {
 			at += from
 			out = append(out, ranged(i, at, at+len(name)))
 			from = at + len(name)
+		}
+	}
+	return out
+}
+
+// worded returns the range of each occurrence of name as a word in text, which the Uncalled
+// mode reports as a reference.
+func worded(text, name string) []string {
+	var out []string
+	for i, line := range strings.Split(text, "\n") {
+		for from := 0; ; {
+			at := strings.Index(line[from:], name)
+			if at < 0 {
+				break
+			}
+			at += from
+			from = at + len(name)
+			before := at == 0 || !identifying(rune(line[at-1]))
+			after := from == len(line) || !identifying(rune(line[from]))
+			if before && after {
+				out = append(out, ranged(i, at, from))
+			}
 		}
 	}
 	return out

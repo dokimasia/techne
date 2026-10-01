@@ -53,6 +53,29 @@ func TestOutline(t *testing.T) {
 			}, "the declarations of Content")
 		})
 
+		kinds := []struct {
+			name string
+			give string
+			want sema.Kind
+		}{
+			{
+				name: "returns an interface for a line that starts with type and contains interface",
+				give: "package a\n\ntype Getter interface {\n}\n",
+				want: sema.KindInterface,
+			},
+			{
+				name: "returns a type for a line that starts with type and contains no struct or interface",
+				give: "package a\n\ntype Getter int\n",
+				want: sema.KindType,
+			},
+		}
+		for _, tt := range kinds {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, named(t, outlined(t, tt.give), "Getter").Kind, tt.want, "the kind of Getter")
+			})
+		}
+
 		t.Run("qualifies a method by the type of its receiver", func(t *testing.T) {
 			t.Parallel()
 			got := named(t, outlined(t, lsptest.Content), "Get")

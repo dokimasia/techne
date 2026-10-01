@@ -5,6 +5,8 @@ package lsp_test
 
 import (
 	"errors"
+	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -87,6 +89,34 @@ func cutShort(caveats []trust.Caveat) bool {
 	return slices.ContainsFunc(caveats, func(one trust.Caveat) bool {
 		return one.Code == trust.CaveatIndexWarming && strings.Contains(one.Note, preloadNote)
 	})
+}
+
+// moduleContent is [lsptest.Content] followed by an export, which makes a file of TypeScript a
+// module.
+const moduleContent = lsptest.Content + "export {}\n"
+
+// useOfStore is the content of a file that uses Store.
+const useOfStore = "var _ Store\n"
+
+// projectless returns an engine of a scoped server that reports the projects of tsserver, over
+// files and one file more than a preload opens, other/f0.fake to other/f200.fake, each with the
+// content give. No tsconfig.json contains the files in other. links maps the path of each
+// symbolic link that projectless makes in the workspace to the path that the link points to.
+func projectless(t *testing.T, files map[string]string, give string, links map[string]string) *lsp.Engine {
+	t.Helper()
+	workspace := maps.Clone(files)
+	for i := range 201 {
+		workspace[fmt.Sprintf("other/f%d.fake", i)] = give
+	}
+	root := lsptest.Workspace(t, workspace)
+	for link, target := range links {
+		full := filepath.Join(root, filepath.FromSlash(link))
+		assert.NoError(t, os.MkdirAll(filepath.Dir(full), 0o750), "the directory of the link "+link)
+		assert.NoError(t, os.Symlink(filepath.Join(root, filepath.FromSlash(target)), full), "the link "+link)
+	}
+	server := lsptest.Server(lsptest.Projects)
+	server.Scoped, server.Tsserver = true, true
+	return lsptest.Engine(t, root, server)
 }
 
 // messages returns the diagnostic messages of findings, in order.

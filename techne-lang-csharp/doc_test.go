@@ -51,7 +51,7 @@ namespace Shop
 
         public Store(int start)
         {
-            size = start;
+            size = start + Get();
         }
 
         /**

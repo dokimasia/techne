@@ -46,3 +46,16 @@
 (use_list [(identifier) @name
            (scoped_identifier name: (identifier) @name)]) @definition.import
 (use_as_clause alias: (identifier) @name) @definition.import
+
+;; Calls. Upstream captures a call of a name, of a field and of a macro. A
+;; call through a path, as `Store::new(1)`, names the last segment, and a
+;; call with type arguments, as `parse::<i32>(text)`, wraps the callee.
+(call_expression function: (identifier) @name) @reference.call
+(call_expression function: (field_expression field: (field_identifier) @name)) @reference.call
+(macro_invocation macro: (identifier) @name) @reference.call
+(call_expression function: (scoped_identifier name: (identifier) @name)) @reference.call
+(call_expression
+  function: (generic_function
+    function: [(identifier) @name
+               (scoped_identifier name: (identifier) @name)
+               (field_expression field: (field_identifier) @name)])) @reference.call

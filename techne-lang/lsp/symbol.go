@@ -409,8 +409,9 @@ func newFinder(e *Engine, held *session) *finder {
 
 // file returns the outline of the file at p, from the outline engine of the language when the
 // engine has one and p is in the workspace, and from the server otherwise. A file of another
-// language, a file that [lang.Readable] refuses and a file outside the workspace larger than
-// [lang.Largest] have an empty outline. Any other failure to read p is returned: the server
+// language has an empty outline. A file that [lang.Readable] refuses and a file outside the
+// workspace larger than [lang.Largest] have no declarations and the document of their content,
+// which places a site and states its line. Any other failure to read p is returned: the server
 // named p, so the file must be readable.
 func (f *finder) file(ctx context.Context, p source.Path) (outline, error) {
 	if f.engine.outliner == nil || lang.Outside(p) {
@@ -425,8 +426,9 @@ func (f *finder) file(ctx context.Context, p source.Path) (outline, error) {
 	}
 	doc, err := f.engine.read(p)
 	if refused(err) {
-		f.parsed[p] = outline{}
-		return outline{}, nil
+		kept := outline{doc: f.engine.unparsed(p)}
+		f.parsed[p] = kept
+		return kept, nil
 	}
 	if err != nil {
 		return outline{}, err
@@ -468,8 +470,9 @@ func (f *finder) symbolised(
 	}
 	doc, err := read(ctx, f.session, p)
 	if refused(err) {
-		f.served[p] = outline{}
-		return outline{}, nil
+		kept := outline{doc: f.engine.unparsed(p)}
+		f.served[p] = kept
+		return kept, nil
 	}
 	if err != nil {
 		return outline{}, err
@@ -484,19 +487,24 @@ func (f *finder) symbolised(
 }
 
 // offers reports whether the file at p offers the declaration whose name is at the protocol
-// position at to the rest of a program. A parameter, a label and a local are not offered, and a
-// declaration that the outline of the file does not contain is.
-func (f *finder) offers(ctx context.Context, p source.Path, at protocol.Position) (bool, error) {
+// position at to the rest of a program, and whether the outline of the file declares the name
+// there. A parameter, a label and a local are not offered, and a declaration that the outline of
+// the file does not contain is. A field, a property and a method are offered wherever they are
+// declared, because another file uses a member through its type: the method of a TypeScript
+// object literal inside a function implements an interface that another file calls it through.
+func (f *finder) offers(ctx context.Context, p source.Path, at protocol.Position) (offered, named bool, err error) {
 	kept, err := f.file(ctx, p)
 	if err != nil {
-		return true, err
+		return true, false, err
 	}
 	for _, one := range kept.symbols {
 		if naming(kept.doc, one) == at {
-			return slices.ContainsFunc(kept.offered, func(o sema.Symbol) bool { return o.Span == one.Span }), nil
+			member := one.Kind == sema.KindField || one.Kind == sema.KindProperty || one.Kind == sema.KindMethod
+			return member || slices.ContainsFunc(kept.offered, func(o sema.Symbol) bool { return o.Span == one.Span }),
+				true, nil
 		}
 	}
-	return true, nil
+	return true, false, nil
 }
 
 // at returns the innermost declaration of the file at p that contains the protocol position

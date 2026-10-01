@@ -184,6 +184,18 @@ const (
 	// Short reports the use of Store in b.fake as the Opened mode does, and never renames it.
 	Short Mode = "short"
 
+	// FromUse responds as the Default mode does, and at the name of Store on line 2 of [Content]
+	// to textDocument/prepareRename and textDocument/rename with null and to
+	// textDocument/references with no location. ruby-lsp responds this way at a constant that a
+	// value assigns, and prepares a rename, renames and finds the references at each use of the
+	// constant.
+	FromUse Mode = "from-use"
+
+	// Qualified reports and renames the use of Store in b.fake as the Opened mode does, and
+	// reports the use over the qualifier before it and its name, such as a.Store. jdtls reports
+	// the qualified name of a Javadoc link this way, and renames the name alone.
+	Qualified Mode = "qualified"
+
 	// Scoped reports and renames the first use of Store in b.fake only while it has a buffer of
 	// b.fake, and its answer to workspace/willRenameFiles renames that use as well.
 	// typescript-language-server behaves this way for a file that no tsconfig.json includes.
@@ -262,6 +274,50 @@ const (
 	// word at the position of the request. It responds to textDocument/references with no
 	// location. A test reads the edit of a rename to learn where the client aimed it.
 	Aims Mode = "aims"
+
+	// Mutes responds as the Default mode does until it receives textDocument/references or
+	// textDocument/definition. From that request on it responds to every request with an empty
+	// result: no symbols, no locations and no diagnostics. typescript-language-server responds this way after its
+	// tsserver exits. A process that is not the first that [RecordStarts] records responds as
+	// the Default mode does.
+	Mutes Mode = "mutes"
+
+	// Exits exits with status 0 when it receives textDocument/references, before it responds. A
+	// process that is not the first that [RecordStarts] records responds as the Default mode
+	// does.
+	Exits Mode = "exits"
+
+	// Uncalled describes a [Bundle] as the Minified mode does and advertises no call hierarchy,
+	// as typescript-language-server advertises none. It reports each occurrence of the word F0
+	// in the files with the [Extension] suffix as a reference, a call or not.
+	Uncalled Mode = "uncalled"
+
+	// Projects reports and renames uses as the Scoped mode does, and responds to the command
+	// typescript.tsserverRequest of workspace/executeCommand with the request projectInfo as
+	// tsserver does: with the tsconfig.json in the directory of the file or above it when the
+	// client has a buffer of a file under the directory of that tsconfig.json, and with the
+	// error No Project otherwise.
+	Projects Mode = "projects"
+
+	// Redeclares responds as the Default mode does, and to textDocument/definition on line 8 of
+	// [Content] with the name After. tsserver responds this way at a use of a member of an
+	// interface that another member redeclares.
+	Redeclares Mode = "redeclares"
+
+	// Contextual responds as the Default mode does, and to textDocument/implementation with the
+	// name of Store, the use of Store inside After on line 8 of [Content], and the name of the
+	// interface of [Getter] on line 9. tsserver responds this way with an expression whose type
+	// implements an interface, and with an interface that extends it.
+	Contextual Mode = "contextual"
+
+	// Projected responds as the Default mode does, and to textDocument/implementation with the
+	// name of each type that the document of the request declares, as tsserver responds with
+	// the implementations in the project of the file of the request only. It responds to
+	// textDocument/definition at a word Store on a line that starts with // imports with the
+	// name of Store in a.fake. At a word Store on any other line it responds with the Store of
+	// the first such line of the document, as tsserver responds at a use of an imported name
+	// with the binding of the import, and with no location when the document has no such line.
+	Projected Mode = "projected"
 )
 
 // LoadTime is how long the Loading mode takes to end its progress job.
@@ -274,8 +330,9 @@ const LoadTime = 2 * time.Second
 const CreateTime = 1500 * time.Millisecond
 
 // QuietDelay is how long the Quiet mode takes to publish the report of a document that the
-// client opens. It is longer than the 300 ms for which a question waits for the server to go
-// quiet, so a question that kept the report of the close reads that report.
+// client opens, unless [Delaying] sets another delay. It is longer than the 300 ms for which a
+// question waits for the server to go quiet, so a question that kept the report of the close
+// reads that report.
 const QuietDelay = 500 * time.Millisecond
 
 // QuietClose is how long the Quiet mode takes to publish the empty report of a document that

@@ -60,7 +60,7 @@ type Cache struct{ n int }
 func (c *Cache) Get() int { return c.n }
 
 func helper() int {
-	local := 1
+	local := Identity(1)
 	return local
 }
 

@@ -50,6 +50,25 @@ func TestResolve(t *testing.T) {
 			assert.Equal(t, requested(t, log, "textDocument/documentSymbol"), 0, "the requests for symbols")
 		})
 
+		t.Run("returns the declarations of a new server when the server has stopped answering", func(t *testing.T) {
+			t.Parallel()
+			log := filepath.Join(t.TempDir(), "starts")
+			e := lsptest.Parsing(t, lsptest.Workspace(t, sample()),
+				lsptest.Server(lsptest.Mutes, lsptest.RecordStarts(log)))
+			got, err := e.Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
+			assert.NoError(t, err, "Resolve of Store")
+			assert.Equal(t, names(got.Items), []string{"Store"}, "the declarations that Store denotes")
+			assert.Equal(t, starts(t, log), 2, "the starts of the server")
+		})
+
+		t.Run("returns ErrDecline when a new server has stopped answering too", func(t *testing.T) {
+			t.Parallel()
+			e := lsptest.Parsing(t, lsptest.Workspace(t, sample()), lsptest.Server(lsptest.Mutes))
+			_, err := e.Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Resolve")
+			assert.Contains(t, err.Error(), "fake returned no symbol of a.fake", "the error of Resolve")
+		})
+
 		t.Run("follows a definition that no declaration contains to its own definition", func(t *testing.T) {
 			t.Parallel()
 			got, err := serving(t, lsptest.Exports, sample()).

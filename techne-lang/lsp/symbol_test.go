@@ -273,20 +273,26 @@ func TestSymbol(t *testing.T) {
 				"the requests for the symbols of a.fake")
 		})
 
-		t.Run("keeps the line of a use in a file larger than lang.Largest", func(t *testing.T) {
+		t.Run("places a use in a file larger than lang.Largest with its source line", func(t *testing.T) {
 			t.Parallel()
-			root := lsptest.Workspace(t, map[string]string{
-				"a.fake": lsptest.Content, "big.fake": strings.Repeat("x", lang.Largest+1),
-			})
+			padding := "// padding\n"
+			big := lsptest.Content + strings.Repeat(padding, lang.Largest/len(padding)+1)
+			root := lsptest.Workspace(t, map[string]string{"a.fake": lsptest.Content, "big.fake": big})
 			e := lsptest.Engine(t, root,
 				lsptest.Server(lsptest.Default, lsptest.Outside(filepath.Join(root, "big.fake"))))
 
 			got, err := e.Relate(t.Context(), engine.Request{Scope: "a.fake"},
 				declared("Store", sema.KindStruct), sema.ReferencedBy)
 			assert.NoError(t, err, "Relate with uses in big.fake")
-			assert.Equal(t, got.Items[0].At, source.Span{
-				Path: "big.fake", Start: source.Position{Line: 6}, End: source.Position{Line: 6},
-			}, "the site of the first use, on the line that the server reported")
+			at := strings.Index(big, "*Store") + 1
+			assert.Equal(t, got.Items[0].At.Start, source.Position{Offset: at, Line: 6, Column: 9},
+				"the start of the first use, on line 6 at column 9")
+			assert.Equal(
+				t,
+				got.Items[0].Via,
+				"func (s *Store) Get() int { return s.size }",
+				"the source line of the use",
+			)
 		})
 	})
 }

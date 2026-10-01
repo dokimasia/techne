@@ -172,8 +172,8 @@ func TestRead(t *testing.T) {
 
 		t.Run("names the file with its size", func(t *testing.T) {
 			t.Parallel()
-			got := lang.LargeError{Path: "dist/app.js", Size: 3_400_000}.Error()
-			assert.Equal(t, got, "lang: dist/app.js is 3400000 bytes, larger than the 2097152 bytes an engine reads",
+			got := lang.LargeError{Path: "dist/app.js", Size: 5_300_000}.Error()
+			assert.Equal(t, got, "lang: dist/app.js is 5300000 bytes, larger than the 4194304 bytes an engine reads",
 				"message")
 		})
 	})

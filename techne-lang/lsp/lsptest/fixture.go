@@ -38,6 +38,10 @@ func (s *Store) Get() int { return s.size }
 func After() int { return (&Store{}).Get() }
 `
 
+// Getter is [Content] followed by the interface Getter on line 9, whose name starts at character
+// 5 of its line.
+const Getter = Content + "type Getter interface {\n}\n"
+
 // Emoji is a file with an emoji outside the Basic Multilingual Plane on line 2, before the
 // declaration of Störe. The name starts at byte 19 and at UTF-16 code unit 17 of the line,
 // which is byte 30 of the file.

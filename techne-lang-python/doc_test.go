@@ -51,7 +51,7 @@ class Store:
 
 def helper(a, b=1, *rest, **named):
     '''Return the first argument.'''
-    return a
+    return Store(a).get(b)
 `,
 		},
 		Declares: []conformance.Declared{

@@ -16,11 +16,12 @@ import (
 )
 
 // Largest is the size in bytes above which an engine does not read a file.
-// An outline call through the outline tool of a JavaScript file of 69,000
-// declarations per MiB takes 0.75s at 1 MiB, 1.50s at 2 MiB and 2.21s at
-// 3 MiB, so 2 MiB is the largest of the three sizes whose outline returns
-// within 2 seconds.
-const Largest = 2 << 20
+// An outline call through the outline tool of a JavaScript file of 65,000
+// declarations per MiB, one per line, takes 3.2s at 3 MiB and 4.7s at 4 MiB,
+// so 4 MiB is the largest of the two sizes whose outline returns within the
+// 5 seconds of a read call. checker.ts of the TypeScript compiler, 3.1 MB,
+// takes 0.54s.
+const Largest = 4 << 20
 
 // LargeError reports a file larger than [Largest].
 type LargeError struct {

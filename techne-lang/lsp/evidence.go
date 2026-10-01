@@ -5,9 +5,12 @@ package lsp
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"time"
 
+	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/lang"
@@ -112,6 +115,34 @@ func (e *Engine) reached(
 		return trust.ScopePartial, reaches, append(caveats, unresolved)
 	}
 	return covered, reaches, caveats
+}
+
+// errStopped marks the decline of a question to a server that has stopped answering, which the
+// question asks a new server again.
+var errStopped = errors.New("lsp: the server has stopped answering")
+
+// stopped returns the decline of a question whose server returned nothing about the file at p,
+// which [Engine.silent] found to have stopped answering.
+func (e *Engine) stopped(p source.Path) error {
+	return fmt.Errorf("%w: %s returned no symbol of %s, which declares symbols: %w",
+		engine.ErrDecline, e.server.Name, p, errStopped)
+}
+
+// silent reports whether the server has stopped answering: it returns no document symbol of
+// the file at p, while the outline engine of the language finds declarations in the file. The
+// process of such a server runs while the program that responds to its requests has ended, as
+// typescript-language-server runs after its tsserver exits. silent reports false for an
+// engine without an outline engine, because the declarations of that engine are the evidence.
+func (e *Engine) silent(ctx context.Context, held *session, found *finder, p source.Path) bool {
+	if e.outliner == nil {
+		return false
+	}
+	parsed, err := found.file(ctx, p)
+	if err != nil || len(parsed.symbols) == 0 {
+		return false
+	}
+	served, err := e.symbols(ctx, held, parsed.doc)
+	return err == nil && len(served) == 0
 }
 
 // analysed reports whether the server has shown a view of the file at p.

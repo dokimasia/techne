@@ -130,6 +130,20 @@ func (e *Engine) Close(ctx context.Context) error {
 	return held.stop(ctx)
 }
 
+// discard stops held when it is the running server, so the next question starts a new one. A
+// question discards a server that has stopped answering, as [Engine.silent] finds.
+func (e *Engine) discard(ctx context.Context, held *session) {
+	e.starting.Lock()
+	current := e.held == held
+	if current {
+		e.held = nil
+	}
+	e.starting.Unlock()
+	if current {
+		_ = held.stop(ctx)
+	}
+}
+
 // kill stops a server that has not finished initialize, so it has nothing to write out. It kills
 // the process first: the close of the connection of go.lsp.dev/jsonrpc2 v1.0.1 waits for the
 // calls in flight, such as a handshake that still runs, and the end of the stream ends them.
@@ -152,10 +166,16 @@ func kill(ctx context.Context, held *session) {
 // The failure of a start or a handshake is kept and returned to every later question until
 // [Engine.Close], so a missing server costs one attempt. The context of a question does not end
 // the handshake. The error of a handshake that fails includes the end of the server's stderr.
+//
+// A running server whose process has exited is stopped, and the question starts a new one.
 func (e *Engine) running(ctx context.Context) (*session, error) {
 	e.starting.Lock()
 	defer e.starting.Unlock()
 
+	if e.held != nil && e.held.gone() {
+		_ = e.held.stop(ctx)
+		e.held = nil
+	}
 	switch {
 	case e.held != nil:
 		e.current(ctx, e.held)
@@ -620,6 +640,18 @@ func (e *Engine) restore(ctx context.Context, held *session, paths []source.Path
 			e.release(back, held, e.fullPath(p))
 		}
 	}
+}
+
+// unparsed returns the document of the file at p, which [lang.Readable] refuses, without
+// sending it to the server: the document places a site that a server named in the file and
+// states its line, and no engine reads its declarations. It returns the empty document for a
+// file that does not read.
+func (e *Engine) unparsed(p source.Path) document {
+	content, err := os.ReadFile(e.fullPath(p))
+	if err != nil {
+		return document{}
+	}
+	return texted(p, content)
 }
 
 // walk returns the files of the language in the scope of req, from [lang.Walk].

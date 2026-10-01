@@ -49,7 +49,7 @@ final class Store(val name: String) extends Readable {
   * Store builds a store.
   */
 object Store {
-  def make(n: String): Store = new Store(n)
+  def make(n: String): Store = if (n.isEmpty) make("store") else new Store(n)
 }
 `,
 		},

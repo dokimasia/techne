@@ -40,8 +40,8 @@ func (i ID) Name() string {
 	if !found {
 		return ""
 	}
-	if at := strings.LastIndex(after, ":"); at >= 0 {
-		return after[:at]
+	if name, _, kinded := strings.CutLast(after, ":"); kinded {
+		return name
 	}
 	return after
 }

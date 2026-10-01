@@ -114,6 +114,21 @@ func TestLanguage(t *testing.T) {
 			assert.True(t, typescript.Server().Quiet, "Quiet of typescript-language-server")
 		})
 
+		t.Run("declares that tsserver returns the uses of redeclared members", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, typescript.Server().Related, "Related of typescript-language-server")
+		})
+
+		t.Run("declares that tsserver returns expressions among implementations", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, typescript.Server().Contextual, "Contextual of typescript-language-server")
+		})
+
+		t.Run("declares that the server forwards the requests of tsserver", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, typescript.Server().Tsserver, "Tsserver of typescript-language-server")
+		})
+
 		t.Run("names the section under which the server requests the indentation of a file", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, typescript.Server().Indentation, lsp.Indentation{Options: formatting},

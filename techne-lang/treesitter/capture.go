@@ -20,6 +20,14 @@ const (
 	// method. The type is the container in the qualified name of the
 	// definition. It defines nothing on its own.
 	Receiver Capture = "receiver"
+
+	// ReferenceCall captures a call, whose [Name] capture is the name of the
+	// callee. [Engine.Calls] reads it.
+	ReferenceCall Capture = "reference.call"
+	// ReferenceSend captures the call of a method in the tags queries of Ruby
+	// and C#, whose [Name] capture is the name of the method. [Engine.Calls]
+	// reads it.
+	ReferenceSend Capture = "reference.send"
 )
 
 // Each definition capture starts with [DefinitionPrefix] and captures a declaration of the kind

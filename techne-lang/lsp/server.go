@@ -96,12 +96,19 @@ type Server struct {
 	// $/cancelRequest for the request without a reply.
 	Answering time.Duration
 
+	// Checking is how long a check waits for a server without pull diagnostics to publish the
+	// diagnostics of the changed files, from the moment the server settles. Zero waits 30
+	// seconds. A check that waits the whole time declines, so a weaker engine checks the write.
+	Checking time.Duration
+
 	// Scoped reports that the server reads only the files that it has open and what they load,
 	// as typescript-language-server does for a file that no tsconfig.json or jsconfig.json
 	// includes, and tsc --lsp does for a project of a tsconfig.json none of whose files is open.
 	// Before it plans a rename or a move, and before it relates the uses of a declaration that
 	// other files can use, the engine opens the files of the workspace that write the name, so
-	// the server finds the uses in them.
+	// the server finds the uses in them. For a rename and a relation, a file writes the name on a
+	// line that does not start with //, which starts a line comment of JavaScript and TypeScript,
+	// the languages of a scoped server.
 	Scoped bool
 
 	// Quiet reports that the server publishes no report for a change after which a kind of the
@@ -110,6 +117,35 @@ type Server struct {
 	// with textDocument/didClose and textDocument/didOpen, and the server publishes a report of
 	// each kind for the file that it opens.
 	Quiet bool
+
+	// Tsserver reports that the server forwards the requests of tsserver in the command
+	// typescript.tsserverRequest of workspace/executeCommand, as typescript-language-server
+	// does. For a [Server.Scoped] server, [Engine.preload] takes these steps:
+	//
+	//  1. Open one file of each project of a tsconfig.json or a jsconfig.json, so that tsserver
+	//     loads the project.
+	//  2. Request the project of every other file from tsserver with projectInfo.
+	//  3. Open the files that no loaded project contains and that can refer to the declaration.
+	//
+	// A file of no project can refer to a declaration of a module only when its imports lead to
+	// the module or to a loaded project.
+	Tsserver bool
+
+	// Related reports that the server returns, among the references of a declaration, the
+	// references of the declarations that it redeclares. typescript-language-server returns the
+	// uses of getCurrentDirectory of every interface that an interface extends among the uses
+	// of the getCurrentDirectory that the interface declares. The engine requests the
+	// definition at each site of a use and of a call, and keeps a site whose definitions include
+	// the declaration, and a site without a definition.
+	Related bool
+
+	// Contextual reports that the server returns, among the implementations of a declaration,
+	// the expressions whose contextual type is the declaration or a subtype of it, and the
+	// interfaces that extend it. tsserver returns the array literal of `const nodes:
+	// Statement[] = []` among the implementations of Node, and it returns 479 sites for Node in
+	// the TypeScript repository. The engine keeps an implementation at the name of a
+	// declaration that can implement, such as a class, and leaves out the others.
+	Contextual bool
 }
 
 // Refactor names the code action of a server that performs one refactoring.

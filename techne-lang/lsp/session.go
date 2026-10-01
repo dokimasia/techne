@@ -61,6 +61,9 @@ type session struct {
 	// started is the time before the process started. The first check on disk of a server
 	// covers a file that did not change after it.
 	started time.Time
+	// exited is closed when the process has exited. One goroutine waits for the process, from
+	// [start] on.
+	exited chan struct{}
 
 	// opening guards opened, the buffer of the server for each absolute path.
 	opening sync.Mutex
@@ -113,6 +116,11 @@ func start(ctx context.Context, declared Server, root string) (*session, error) 
 		return nil, fmt.Errorf("lsp: %s: start: %w", declared.Name, err)
 	}
 	held.cmd = cmd
+	held.exited = make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(held.exited)
+	}()
 
 	client := answers{
 		root: root, settings: declared.Settings, indentation: declared.Indentation, offering: held.offering,
@@ -225,13 +233,11 @@ func (s *session) stop(ctx context.Context) error {
 		_ = s.asks.Exit(saying)
 		_ = s.conn.Close()
 
-		gone := make(chan error, 1)
-		go func() { gone <- s.cmd.Wait() }()
 		select {
-		case <-gone:
+		case <-s.exited:
 		case <-saying.Done():
 			_ = s.cmd.Process.Kill()
-			<-gone
+			<-s.exited
 		}
 	})
 
@@ -241,6 +247,19 @@ func (s *session) stop(ctx context.Context) error {
 		return fmt.Errorf("lsp: shutdown: %w", refused)
 	}
 	return nil
+}
+
+// gone reports whether the connection to the server has ended. The connection ends when the
+// stream reads the end of stdout, which the exit of the server closes. A process that the
+// server started and that keeps stdout open delays the end until [exec.Cmd.Wait] closes stdout,
+// at most [draining] after the exit.
+func (s *session) gone() bool {
+	select {
+	case <-s.conn.Done():
+		return true
+	default:
+		return false
+	}
 }
 
 // buffers returns a copy of the buffers of the server, by absolute path.

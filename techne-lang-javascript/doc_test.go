@@ -54,6 +54,7 @@ class Cache {
  * Returns the first argument.
  */
 export function helper(a, b) {
+  new Store(a).get(b);
   return a;
 }
 
