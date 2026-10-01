@@ -2,7 +2,9 @@
 
 techne is a server of the Model Context Protocol that gives an AI agent the code navigation and
 the refactorings of an IDE in ten languages: C, C#, Go, Java, JavaScript, Python, Ruby, Rust,
-Scala and TypeScript. One techne process serves one workspace over standard input and output.
+Scala and TypeScript. One techne process serves a workspace over standard input and output. With
+`--trust`, it also serves each directory under a trusted folder that a call sets in its `wd`
+field.
 
 ## Tools
 
@@ -25,7 +27,10 @@ A write tool previews its change unless the call sets `dry_run` to false. The pr
 the rewritten lines, the check that judged the result, and a handle that `apply.change` takes.
 techne writes a change in full or not at all.
 
-Every answer states its evidence:
+Every answer states its evidence. The last line of the text states the fidelity and the
+completeness, such as `resolved, total coverage`. An empty answer adds `an empty answer here
+means there are none` when it proves that there are none. With `--structured`, the JSON of a
+result contains the same evidence:
 
 - `fidelity` is how the engine bound the names: `syntactic`, `indexed` or `resolved`.
 - `completeness` is how much of the scope the engine examined.
@@ -34,8 +39,8 @@ Every answer states its evidence:
 
 ## Language servers
 
-The grammar of each language serves `outline`, `search`, `relations` and `document.symbol`
-without anything installed. The other tools need the language server of the language on
+The grammar of each language serves `workspace`, `outline`, `search`, `relations` and
+`document.symbol` without anything installed. The other tools need the language server of the language on
 `PATH`:
 
 | Language | Program |
@@ -78,8 +83,9 @@ serves, it writes only protocol messages to standard output, and its errors to s
 Every tool then takes the field `wd`, a directory under a trusted folder, absolute or relative
 to the workspace. A call with `wd` runs in the workspace of that directory, and the paths of the
 call and of its answer are relative to it. A call without `wd` runs in the workspace that techne
-serves. techne keeps the language servers of three such directories running. A call in a fourth
-directory stops the servers of the directory that served a call least recently.
+serves. techne keeps three such directories open with their language servers. A call in a
+fourth directory closes the directory that served a call least recently and has no call in
+flight. The previews of a closed directory are gone. `apply.change` refuses their handles.
 
 By default a result contains its answer as text written for a model, and techne declares no
 output schema. Claude Code passes the JSON of a result to the model when the result contains
