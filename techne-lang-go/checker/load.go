@@ -55,6 +55,9 @@ type view struct {
 	unloaded map[source.Path]string
 	// stamp is the stamp of the walk before the load, and empty for a load with an overlay.
 	stamp string
+	// whole reports that the view loaded every package of the workspace, and not the packages
+	// that one question needs.
+	whole bool
 	// goroot is the root of the Go toolchain, as go env GOROOT reports it.
 	goroot string
 
@@ -67,6 +70,25 @@ type view struct {
 	// list builds compiled on the first call of [view.compiles].
 	list     sync.Once
 	compiled map[string]bool
+	// name builds paths on the first call of [view.contains].
+	name  sync.Once
+	paths map[string]bool
+}
+
+// contains reports whether v loaded every package whose import path is in paths.
+func (v *view) contains(paths []string) bool {
+	v.name.Do(func() {
+		v.paths = map[string]bool{}
+		for _, pkg := range v.all() {
+			v.paths[pkg.PkgPath] = true
+		}
+	})
+	for _, one := range paths {
+		if !v.paths[one] {
+			return false
+		}
+	}
+	return true
 }
 
 // program is the packages of one load, with the directory of the go.mod file of the load as
@@ -241,23 +263,40 @@ func skipped(name string) bool {
 	return strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || name == "testdata" || name == "vendor"
 }
 
-// current returns the view of the workspace that w describes: the cached view when its stamp
-// is the stamp of w, and a view loaded now otherwise. One lock guards the cached view, so two
-// questions that arrive together load the workspace once.
+// current returns the view of the whole workspace that w describes: the cached view when its
+// stamp is the stamp of w and it is whole, and a view loaded now otherwise. One lock guards the
+// cached view, so two questions that arrive together load the workspace once.
 func (e *Engine) current(ctx context.Context, w walked) (*view, error) {
 	e.loading.Lock()
 	defer e.loading.Unlock()
 
-	if e.view != nil && e.view.stamp == w.stamp {
+	if e.view != nil && e.view.stamp == w.stamp && e.view.whole {
 		return e.view, nil
 	}
 	v, err := e.load(ctx, w.modules, nil)
 	if err != nil {
 		return nil, err
 	}
-	v.stamp = w.stamp
+	v.stamp, v.whole = w.stamp, true
 	e.view = v
 	return v, nil
+}
+
+// cached returns the cached view when its stamp is the stamp of w, and nil otherwise.
+func (e *Engine) cached(w walked) *view {
+	e.loading.Lock()
+	defer e.loading.Unlock()
+	if e.view != nil && e.view.stamp == w.stamp {
+		return e.view
+	}
+	return nil
+}
+
+// keep makes v the cached view.
+func (e *Engine) keep(v *view) {
+	e.loading.Lock()
+	defer e.loading.Unlock()
+	e.view = v
 }
 
 // load type-checks the modules of the workspace, with the content of overlay in place of the
@@ -265,26 +304,43 @@ func (e *Engine) current(ctx context.Context, w walked) (*view, error) {
 // is not on disk. A module that fails to load is in the unloaded modules of the view, and load
 // returns an error when no module loads.
 func (e *Engine) load(ctx context.Context, modules []source.Path, overlay map[string][]byte) (*view, error) {
-	env, err := e.goCommand(ctx, "env", "GOWORK", "GOROOT")
+	plans, goroot, err := e.planning(ctx, modules)
 	if err != nil {
 		return nil, err
+	}
+	return e.loaded(ctx, plans, goroot, overlay)
+}
+
+// planning returns the loads of modules, by the rule of [Engine.plans], and the root of the Go
+// toolchain.
+func (e *Engine) planning(ctx context.Context, modules []source.Path) ([]plan, string, error) {
+	env, err := e.goCommand(ctx, "env", "GOWORK", "GOROOT")
+	if err != nil {
+		return nil, "", err
 	}
 	values := append(strings.Split(env, "\n"), "", "")
 	plans, err := e.plans(ctx, strings.TrimSpace(values[0]), modules)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
+	return plans, strings.TrimSpace(values[1]), nil
+}
 
-	v := &view{fset: token.NewFileSet(), unloaded: map[source.Path]string{}, goroot: strings.TrimSpace(values[1])}
+// loaded type-checks the packages of plans, with the content of overlay in place of the files
+// that it names, under the Go toolchain at goroot. A module that fails to load is in the
+// unloaded modules of the view, and loaded returns an error when no module loads.
+func (e *Engine) loaded(
+	ctx context.Context,
+	plans []plan,
+	goroot string,
+	overlay map[string][]byte,
+) (*view, error) {
+	v := &view{fset: token.NewFileSet(), unloaded: map[source.Path]string{}, goroot: goroot}
 	loaded := make([][]*packages.Package, len(plans))
 	failed := make([]error, len(plans))
 	slots := make(chan struct{}, concurrent)
 	var wg sync.WaitGroup
 	for i, one := range plans {
-		var env []string
-		if one.alone {
-			env = append(os.Environ(), "GOWORK=off")
-		}
 		wg.Go(func() {
 			slots <- struct{}{}
 			defer func() { <-slots }()
@@ -292,7 +348,7 @@ func (e *Engine) load(ctx context.Context, modules []source.Path, overlay map[st
 				Context: ctx,
 				Mode:    loading,
 				Dir:     one.dir,
-				Env:     env,
+				Env:     environ(one.alone),
 				Fset:    v.fset,
 				Overlay: overlay,
 				Tests:   true,
@@ -402,11 +458,48 @@ func below(p, dir string) bool {
 	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
+// scratchDir is the directory under the cache directory of the user, as [os.UserCacheDir]
+// returns it, that [Engine.environ] names as GOTMPDIR.
+const scratchDir = "techne/go"
+
+// environ returns the environment of the go command of a load: the environment of the process,
+// GOWORK=off for a module that the go.work file does not list, and GOTMPDIR under the cache
+// directory of the user when the environment names none. The go command writes the export data
+// of a load with an overlay and the files that cgo generates under GOTMPDIR, and for a
+// workspace of thousands of packages they take gigabytes. The temporary directory of many
+// systems is a file system in memory.
+func environ(alone bool) []string {
+	env := os.Environ()
+	if alone {
+		env = append(env, "GOWORK=off")
+	}
+	if os.Getenv("GOTMPDIR") == "" {
+		if cache, err := os.UserCacheDir(); err == nil {
+			dir := filepath.Join(cache, filepath.FromSlash(scratchDir))
+			if os.MkdirAll(dir, 0o700) == nil {
+				env = append(env, "GOTMPDIR="+dir)
+			}
+		}
+	}
+	return env
+}
+
 // goCommand runs the go command with args in the root, and returns its output. The error of a
 // failed command contains the first line that the command wrote to stderr.
 func (e *Engine) goCommand(ctx context.Context, args ...string) (string, error) {
+	return goIn(ctx, e.root, nil, args...)
+}
+
+// goIn runs the go command with args in dir with the environment env, or the environment of the
+// process for nil, and returns its output as [Engine.goCommand] does. The go command reports a
+// path under dir in the form of PWD, which os/exec sets to dir only for a nil environment, so
+// goIn sets it for env.
+func goIn(ctx context.Context, dir string, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "go", args...)
-	cmd.Dir = e.root
+	cmd.Dir = dir
+	if env != nil {
+		cmd.Env = append(slices.Clip(env), "PWD="+dir)
+	}
 	out, err := cmd.Output()
 	var failed *exec.ExitError
 	switch {
@@ -428,11 +521,14 @@ func absolute(pkg *packages.Package, dir string) {
 	}
 }
 
-// forget drops the cached view.
+// forget drops the cached view and the cached graph.
 func (e *Engine) forget() {
 	e.loading.Lock()
-	defer e.loading.Unlock()
 	e.view = nil
+	e.loading.Unlock()
+	e.listing.Lock()
+	e.graph = nil
+	e.listing.Unlock()
 }
 
 // fullPath returns the absolute path of the workspace path p.

@@ -34,6 +34,9 @@ type Engine struct {
 	// loading guards view, so two questions that arrive together load the workspace once.
 	loading sync.Mutex
 	view    *view
+	// listing guards graph, the import graph of the last walk.
+	listing sync.Mutex
+	graph   *graph
 }
 
 // New returns an engine over the workspace at root, a directory on disk, for the language that

@@ -45,7 +45,9 @@ func (e *Engine) Verify(
 	if unrun := engine.Unrun(e.Name(), nil, suites); unrun != nil {
 		return engine.Result[edit.Finding]{}, unrun
 	}
-	v, err := e.current(ctx, w)
+	v, err := e.viewing(ctx, w, nil, func(g *graph) []string {
+		return g.under(e.root, scope, lang.Claims(string(scope), e.declared.Extensions))
+	})
 	if err != nil {
 		return engine.Result[edit.Finding]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
@@ -68,12 +70,15 @@ func (e *Engine) Verify(
 // files in place of the content on disk. A file with nil content is one that the change
 // deletes.
 //
-// Check type-checks every package of the workspace, so the errors include those that a change
-// causes in the packages that import a changed package. When every file of files equals its
-// content on disk, the cached view is the answer. Check declines when files contain no Go file,
-// and when a package of the workspace does not compile a Go file of files, so that the next
-// engine checks the change. A module that fails to load adds a caveat, because the packages in
-// it that import a changed package are not checked.
+// Check type-checks the packages that the change can break, by the rule of [graph.affected]:
+// the packages of the changed files and every package of the workspace that imports one of
+// them, so the errors include those that a change causes in an importer. A package that
+// imports none of them has the same errors before and after the change. When every file of
+// files equals its content on disk, the view has no overlay, and the cached view of the whole
+// workspace is the answer when there is one. Check declines when files contain no Go file, and
+// when a package of the workspace does not compile a Go file of files, so that the next engine
+// checks the change. A module that fails to load adds a caveat, because the packages in it that
+// import a changed package are not checked.
 func (e *Engine) Check(
 	ctx context.Context,
 	files map[source.Path][]byte,
@@ -106,12 +111,13 @@ func (e *Engine) Check(
 	if err != nil {
 		return engine.Result[edit.Finding]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
-	var v *view
+	shown := overlay
 	if unchanged {
-		v, err = e.current(ctx, w)
-	} else {
-		v, err = e.load(ctx, w.modules, overlay)
+		shown = nil
 	}
+	v, err := e.viewing(ctx, w, shown, func(g *graph) []string {
+		return g.affected(slices.Collect(maps.Keys(overlay)))
+	})
 	if err != nil {
 		return engine.Result[edit.Finding]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
