@@ -33,6 +33,13 @@
 //   - a directory as the scope of a position
 //   - a word outside the vocabulary of its field, as the next section states
 //
+// # Working directory
+//
+// [Directed] adds the optional input field [WorkingDirectory] to a tool. A call that sets it to a
+// directory runs in the workspace of that directory through the [Elsewhere] of the composition
+// root, and the paths of the call and of its answer are relative to that directory.
+// [Registry.Tool] returns the tool of a name, which that workspace runs.
+//
 // # Words
 //
 // The fields kind, detail, include, relation and preferred_fidelity take a word of a closed

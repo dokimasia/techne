@@ -47,6 +47,27 @@ func TestRegistry(t *testing.T) {
 		})
 	})
 
+	t.Run("Tool", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the tool of a name", func(t *testing.T) {
+			t.Parallel()
+			r := tool.NewRegistry()
+			for _, name := range []string{"a.tool", "b.tool"} {
+				assert.NoError(t, r.Add(namedTool(t, name)), "the error of Add for "+name)
+			}
+			got, found := r.Tool("b.tool")
+			assert.True(t, found, "found of b.tool")
+			assert.Equal(t, got.Name(), "b.tool", "the name of the tool")
+		})
+
+		t.Run("reports false for a name without a tool", func(t *testing.T) {
+			t.Parallel()
+			_, found := tool.NewRegistry().Tool("a.tool")
+			assert.False(t, found, "found of a.tool")
+		})
+	})
+
 	t.Run("Tools", func(t *testing.T) {
 		t.Parallel()
 

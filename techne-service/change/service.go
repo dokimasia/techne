@@ -117,7 +117,7 @@ func (s *Service) apply(ctx context.Context, req edit.Request) (edit.Outcome, er
 func (s *Service) Commit(ctx context.Context, handle string) (edit.Outcome, error) {
 	preview, found := s.held.take(handle)
 	if !found {
-		return refused("", "no preview is held under that handle: preview again to get one"), nil
+		return refused("", "no preview is kept under that handle: preview again to get one"), nil
 	}
 	req := preview.request
 	req.DryRun = false

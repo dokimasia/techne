@@ -15,12 +15,12 @@ const maxNameLength = 128
 // the server serves a request, so the registry is safe for concurrent reads after that.
 type Registry struct {
 	tools []Tool
-	named map[string]bool
+	named map[string]Tool
 }
 
 // NewRegistry returns a registry without tools.
 func NewRegistry() *Registry {
-	return &Registry{named: map[string]bool{}}
+	return &Registry{named: map[string]Tool{}}
 }
 
 // Add adds t to the registry. It returns an error for a name that another tool of the
@@ -30,12 +30,18 @@ func (r *Registry) Add(t Tool) error {
 	if err := validName(name); err != nil {
 		return err
 	}
-	if r.named[name] {
+	if _, taken := r.named[name]; taken {
 		return fmt.Errorf("tool: %q is already registered", name)
 	}
-	r.named[name] = true
+	r.named[name] = t
 	r.tools = append(r.tools, t)
 	return nil
+}
+
+// Tool returns the tool of the registry named name, and reports whether the registry has one.
+func (r *Registry) Tool(name string) (Tool, bool) {
+	t, found := r.named[name]
+	return t, found
 }
 
 // Tools returns every tool of the registry, in the order in which they were added.
