@@ -13,10 +13,10 @@ import (
 
 // MoveInput is the input of the move.file tool.
 type MoveInput struct {
-	Path     string `json:"path"               jsonschema:"the file to move, relative to the workspace root"`
-	To       string `json:"to"                 jsonschema:"the destination, relative to the workspace root"`
-	Language string `json:"language,omitempty" jsonschema:"the language to ask, in place of the language of the file"`
-	DryRun   *bool  `json:"dry_run,omitempty"  jsonschema:"preview the change without writing it, true when omitted"`
+	Path     string `json:"path"               jsonschema:"the file to move, relative to the root"`
+	To       string `json:"to"                 jsonschema:"its destination, relative to the root"`
+	Language string `json:"language,omitempty" jsonschema:"a language to ask instead of the file's"`
+	DryRun   *bool  `json:"dry_run,omitempty"  jsonschema:"preview only, true by default"`
 }
 
 // Move returns the tool that moves a file and rewrites the references to it. A file is its
@@ -56,6 +56,5 @@ func Move(writes Writer) (Tool, error) {
 }
 
 const moveDescription = "PREFER OVER moving a file and fixing the imports by hand. " +
-	"It moves the file and rewrites the references to it, and refuses the move when the " +
-	"evidence does not show that it found every reference. It previews the change unless " +
-	"dry_run is false."
+	"It moves the file and rewrites its references, and refuses the move unless it found " +
+	"every one. It previews the change unless dry_run is false."

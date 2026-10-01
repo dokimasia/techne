@@ -13,13 +13,13 @@ import (
 
 // RenameInput is the input of the rename.symbol tool.
 type RenameInput struct {
-	Scope    string   `json:"scope"              jsonschema:"file or directory of the declaration, relative to the workspace root"`
-	Name     string   `json:"name"               jsonschema:"the declaration, qualified as the language writes it when the name is ambiguous"`
-	NewName  string   `json:"new_name"           jsonschema:"the new name of the declaration"`
-	Kind     KindWord `json:"kind,omitempty"     jsonschema:"the kind of the declaration, for a name of several kinds"`
-	Line     int      `json:"line,omitempty"     jsonschema:"a line of the declaration, counted from one, for a name of several declarations such as the overloads of a method"`
-	Language string   `json:"language,omitempty" jsonschema:"the language to ask, in place of the languages of the scope"`
-	DryRun   *bool    `json:"dry_run,omitempty"  jsonschema:"preview the change without writing it, true when omitted"`
+	Scope    string   `json:"scope"              jsonschema:"file or directory of the declaration, relative to the root"`
+	Name     string   `json:"name"               jsonschema:"the declaration, qualified as Type.Method when ambiguous"                alias:"symbol"`
+	NewName  string   `json:"new_name"           jsonschema:"the new name"`
+	Kind     KindWord `json:"kind,omitempty"     jsonschema:"its kind, such as function, method or struct, when the name has several"`
+	Line     int      `json:"line,omitempty"     jsonschema:"a line of it, counted from one, when the name has several declarations"`
+	Language string   `json:"language,omitempty" jsonschema:"a language to ask instead of the scope's"`
+	DryRun   *bool    `json:"dry_run,omitempty"  jsonschema:"preview only, true by default"`
 }
 
 // Rename returns the tool that renames one declaration and every reference to it. It refuses
@@ -61,7 +61,5 @@ func Rename(reads Outliner, writes Writer) (Tool, error) {
 }
 
 const renameDescription = "PREFER OVER find-and-replace for renaming a declaration. " +
-	"It rewrites every reference with the declaration, and refuses the rename unless the " +
-	"evidence behind it shows that there are no other references: a rename that updates nine " +
-	"of ten references leaves code that compiles and fails at run time. It previews the change " +
-	"unless dry_run is false."
+	"It rewrites the declaration and every reference, and refuses the rename unless it found " +
+	"every one. It previews the change unless dry_run is false."

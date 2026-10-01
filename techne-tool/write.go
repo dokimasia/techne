@@ -177,13 +177,9 @@ func (w Written) Render() string {
 	return b.String()
 }
 
-// plan returns the line of the evidence of the plan. It leaves out the negative claim, which is
-// about an empty answer, and a plan is not one.
-func (w Written) plan() string {
-	plan := w.Provenance
-	plan.SupportsNegativeClaim = false
-	return "plan: " + evidence(plan)
-}
+// plan returns the line of the evidence of the plan, as [evidence] writes it for an answer that
+// is not empty, because a plan is no answer about absence.
+func (w Written) plan() string { return "plan: " + evidence(w.Provenance, false) }
 
 // line returns the gate as text: the kind that passed with its engine, or the kind with the
 // result that it found, its engine and each fix on a line of its own. The caveats of the gate

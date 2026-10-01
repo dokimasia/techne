@@ -14,14 +14,14 @@ import (
 // ResolveInput is the input of the resolve tool. Line and Column count from one, as an editor
 // and a compiler report a position.
 type ResolveInput struct {
-	Scope     string       `json:"scope"                        jsonschema:"the file of the position, relative to the workspace root"`
+	Scope     string       `json:"scope"                        jsonschema:"the file of the position, relative to the root"`
 	Line      int          `json:"line"                         jsonschema:"line, counted from one"`
 	Column    int          `json:"column"                       jsonschema:"column in bytes, counted from one"`
-	Language  string       `json:"language,omitempty"           jsonschema:"the language to ask, in place of the language of the file"`
-	Detail    Detail       `json:"detail,omitempty"             jsonschema:"the fields of each declaration: signatures when omitted"`
-	Include   []Include    `json:"include,omitempty"            jsonschema:"bindings to add beside the declarations that the files offer"`
-	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"ceiling of the answer in tokens, 6000 when omitted or 0"`
-	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence the caller wants: a weaker answer is degraded, not refused"`
+	Language  string       `json:"language,omitempty"           jsonschema:"a language to ask instead of the file's"`
+	Detail    Detail       `json:"detail,omitempty"             jsonschema:"signatures by default"`
+	Include   []Include    `json:"include,omitempty"            jsonschema:"bindings to add"`
+	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"answer ceiling in tokens, 6000 by default"`
+	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence wanted; a weaker answer is marked degraded"`
 }
 
 // Resolve returns the tool that reports the declarations that the name at a position
@@ -54,8 +54,6 @@ func Resolve(reads Resolver) (Tool, error) {
 		})
 }
 
-const resolveDescription = "PREFER OVER guessing what a name refers to from the text around it. " +
-	"It returns the declaration that the name at one position denotes, with the evidence " +
-	"behind it: a type checker that binds the name gives a different answer from a parser that " +
-	"matches it, and the answer states which it was. Two declarations mean that the name is " +
-	"ambiguous, and the caller chooses."
+const resolveDescription = "PREFER OVER guessing what a name refers to. " +
+	"It returns the declaration that the name at a line and a column denotes. Two " +
+	"declarations mean that the name is ambiguous."

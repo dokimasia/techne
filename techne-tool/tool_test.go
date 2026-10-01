@@ -27,6 +27,22 @@ type greetOut struct {
 	Greeting string `json:"greeting"`
 }
 
+// aliasedIn is an input that takes its name under the aliases who and whom too.
+type aliasedIn struct {
+	Name string `json:"name" alias:"who,whom"`
+}
+
+// aliasing returns a tool named greet that returns a greeting of the name of an aliasedIn.
+func aliasing(t *testing.T) tool.Tool {
+	t.Helper()
+	built, err := tool.New("greet", "PREFER OVER saying hello by hand.",
+		func(_ context.Context, in aliasedIn) (greetOut, error) {
+			return greetOut{Greeting: "hello " + in.Name}, nil
+		})
+	assert.NoError(t, err, "the error of New")
+	return built
+}
+
 // placedIn is an input with a required and an optional integer.
 type placedIn struct {
 	Line  int `json:"line"`
@@ -88,6 +104,30 @@ func TestTool(t *testing.T) {
 			assert.Equal(t, built.Name(), "greet", "the name")
 			assert.Equal(t, built.Description(), "PREFER OVER saying hello by hand.", "the description")
 		})
+
+		t.Run("returns an error for an alias that is the name of a field", func(t *testing.T) {
+			t.Parallel()
+			type clashing struct {
+				Name  string `json:"name"            alias:"times"`
+				Times int    `json:"times,omitempty"`
+			}
+			_, err := tool.New("t", "d", func(context.Context, clashing) (greetOut, error) { return greetOut{}, nil })
+			assert.HasError(t, err, "the error of New")
+			assert.Equal(t, err.Error(), `tool: "t" input: the alias "times" of "name" is the name of a field`,
+				"the error of New")
+		})
+
+		t.Run("returns an error for an alias of two fields", func(t *testing.T) {
+			t.Parallel()
+			type doubled struct {
+				First  string `json:"first"  alias:"x"`
+				Second string `json:"second" alias:"x"`
+			}
+			_, err := tool.New("t", "d", func(context.Context, doubled) (greetOut, error) { return greetOut{}, nil })
+			assert.HasError(t, err, "the error of New")
+			assert.Equal(t, err.Error(), `tool: "t" input: "x" is the alias of "first" and of "second"`,
+				"the error of New")
+		})
 	})
 
 	t.Run("InputSchema", func(t *testing.T) {
@@ -100,19 +140,26 @@ func TestTool(t *testing.T) {
 			assert.Equal(t, got.Required, []string{"name"}, "the required fields")
 		})
 
-		t.Run("lists the words of each word field", func(t *testing.T) {
+		t.Run("lists the words of each word field but kind", func(t *testing.T) {
 			t.Parallel()
 			outline, err := tool.Outline(serving())
 			assert.NoError(t, err, "the error of Outline")
 			relations, err := tool.Relations(serving(), serving())
 			assert.NoError(t, err, "the error of Relations")
 			in := outline.InputSchema().Properties
-			assert.Equal(t, enum(in["kind"]), words(sema.Kinds()), "the enum of kind")
+			assert.Empty(t, enum(in["kind"]), "the enum of kind")
+			assert.Equal(t, in["kind"].Type, "string", "the type of kind")
 			assert.Equal(t, enum(in["detail"]), words(tool.Levels()), "the enum of detail")
 			assert.Equal(t, enum(in["include"].Items), words(tool.Includes()), "the enum of include")
 			assert.Equal(t, enum(in["preferred_fidelity"]), words(trust.Fidelities()), "the enum of preferred_fidelity")
 			assert.Equal(t, enum(relations.InputSchema().Properties["relation"]), words(sema.RelationKinds()),
 				"the enum of relation")
+		})
+
+		t.Run("lists no alias of a field", func(t *testing.T) {
+			t.Parallel()
+			got := aliasing(t).InputSchema()
+			assert.Equal(t, got.PropertyOrder, []string{"name"}, "the properties of the input schema")
 		})
 
 		t.Run("gives a required integer the minimum 1", func(t *testing.T) {
@@ -129,8 +176,8 @@ func TestTool(t *testing.T) {
 			t.Parallel()
 			outline, err := tool.Outline(serving())
 			assert.NoError(t, err, "the error of Outline")
-			assert.Equal(t, outline.InputSchema().Properties["kind"].Description, "keep the declarations of one kind",
-				"the description of kind")
+			assert.Equal(t, outline.InputSchema().Properties["detail"].Description,
+				"signatures for a file and names for a directory by default", "the description of detail")
 		})
 	})
 
@@ -206,6 +253,32 @@ func TestTool(t *testing.T) {
 			assert.Equal(t, err.Error(), `tool: greet does not take "Times", "query". It takes name, times`,
 				"the error of Execute")
 		})
+
+		aliases := []struct {
+			name string
+			give string
+			want string
+		}{
+			{name: "takes a field under its alias", give: `{"who":"world"}`, want: `{"greeting":"hello world"}`},
+			{
+				name: "takes a field under its second alias",
+				give: `{"whom":"world"}`,
+				want: `{"greeting":"hello world"}`,
+			},
+			{
+				name: "takes a field over its alias when the input names both",
+				give: `{"name":"world","who":"moon"}`,
+				want: `{"greeting":"hello world"}`,
+			},
+		}
+		for _, tt := range aliases {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				got, err := aliasing(t).Execute(t.Context(), json.RawMessage(tt.give))
+				assert.NoError(t, err, "the error of Execute")
+				assert.Equal(t, string(got.Payload), tt.want, "the payload")
+			})
+		}
 
 		t.Run("returns an error for an input without a required field", func(t *testing.T) {
 			t.Parallel()

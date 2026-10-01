@@ -4,6 +4,7 @@
 package tool_test
 
 import (
+	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -150,6 +151,72 @@ func TestDeclaration(t *testing.T) {
 			assert.Equal(t, got.Line, 1, "the line counted from one")
 			assert.Empty(t, got.Signature, "the signature")
 			assert.Nil(t, got.Span, "the span")
+		})
+
+		t.Run("adds the first sentence of the documentation at Summaries", func(t *testing.T) {
+			t.Parallel()
+			store := covering("Store", sema.KindStruct, 0, 100)
+			store.Doc = "Store keeps items\nby name. It is safe to share."
+			got := tool.Declared([]sema.Symbol{store}, tool.Summaries, 0)[0]
+			assert.Equal(t, got.Summary, "Store keeps items by name.", "the summary")
+			assert.Empty(t, got.Signature, "the signature")
+			assert.Empty(t, got.Doc, "the documentation")
+		})
+
+		t.Run("cuts a first sentence longer than 160 bytes at a space", func(t *testing.T) {
+			t.Parallel()
+			store := covering("Store", sema.KindStruct, 0, 100)
+			store.Doc = strings.Repeat("word ", 40) + "end."
+			got := tool.Declared([]sema.Symbol{store}, tool.Summaries, 0)[0].Summary
+			assert.HasSuffix(t, got, "word…", "the end of the summary")
+			assert.True(t, len(got) <= 160+len("…"), "the length of the summary: "+got)
+		})
+
+		t.Run("ends the summary before a list item", func(t *testing.T) {
+			t.Parallel()
+			pkg := covering("c", sema.KindPackage, 0, 100)
+			pkg.Doc = "Package c declares the C language:\n  - its extensions\n  - its grammar"
+			got := tool.Declared([]sema.Symbol{pkg}, tool.Summaries, 0)[0]
+			assert.Equal(t, got.Summary, "Package c declares the C language:", "the summary")
+		})
+
+		t.Run("ends the summary at the end of the first paragraph", func(t *testing.T) {
+			t.Parallel()
+			pkg := covering("c", sema.KindPackage, 0, 100)
+			pkg.Doc = "Package c reads C\n\nIt parses."
+			got := tool.Declared([]sema.Symbol{pkg}, tool.Summaries, 0)[0]
+			assert.Equal(t, got.Summary, "Package c reads C", "the summary")
+		})
+
+		t.Run("returns the type of a field at Names", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Declared([]sema.Symbol{
+				covering("Store", sema.KindStruct, 0, 100), covering("size", sema.KindField, 10, 20),
+			}, tool.Names, 0)
+			assert.Equal(t, got[0].Members[0].Signature, "signature of size", "the signature of size")
+			assert.Empty(t, got[0].Signature, "the signature of Store")
+		})
+
+		t.Run("leaves out a member without a summary or a type at Summaries", func(t *testing.T) {
+			t.Parallel()
+			method := covering("Get", sema.KindMethod, 10, 20)
+			method.Doc = ""
+			got := tool.Declared([]sema.Symbol{covering("Store", sema.KindInterface, 0, 100), method},
+				tool.Summaries, 0)
+			assert.Empty(t, got[0].Members, "the members of Store")
+		})
+
+		t.Run("keeps a member with a summary at Summaries", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Declared([]sema.Symbol{
+				covering("Store", sema.KindInterface, 0, 100), covering("Get", sema.KindMethod, 10, 20),
+			}, tool.Summaries, 0)
+			assert.Equal(t, names(got[0].Members), []string{"Get"}, "the members of Store")
+		})
+
+		t.Run("adds no summary at Signatures", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, tool.Declared(one, tool.Signatures, 0)[0].Summary, "the summary")
 		})
 
 		t.Run("adds the signature at Signatures", func(t *testing.T) {

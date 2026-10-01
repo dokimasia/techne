@@ -64,6 +64,8 @@ func (r *reads) Outline(_ context.Context, req engine.Request) (engine.Answer[se
 		r.engine, engine.RoleOutline, req.Preferred), nil
 }
 
+// Search returns the declarations of r, without the unexported ones unless q is private, as
+// an engine filters them.
 func (r *reads) Search(
 	_ context.Context,
 	req engine.Request,
@@ -73,8 +75,14 @@ func (r *reads) Search(
 	if !r.claims[req.Scope] {
 		return unsupported[sema.Symbol](req.Scope), nil
 	}
+	var found []sema.Symbol
+	for _, s := range r.engine.found {
+		if q.Private || s.Visibility != sema.Unexported {
+			found = append(found, s)
+		}
+	}
 	return engine.Publish(
-		engine.Result[sema.Symbol]{Items: r.engine.found, Completeness: trust.ScopeTotal},
+		engine.Result[sema.Symbol]{Items: found, Completeness: trust.ScopeTotal},
 		r.engine, engine.RoleSearch, req.Preferred), nil
 }
 
@@ -284,6 +292,39 @@ func TestOutline(t *testing.T) {
 			var got tool.Answer
 			assert.NoError(t, json.Unmarshal(result.Payload, &got), "the decoding of the answer")
 			assert.Equal(t, got.Scope.Unit, "pkg", "the unit of the scope")
+		})
+
+		t.Run("writes the declarations of a directory under the path of their file", func(t *testing.T) {
+			t.Parallel()
+			over := serving(function("F", ""), function("G", ""))
+			over.claims = map[source.Path]bool{"pkg": true}
+			built, err := tool.Outline(over)
+			assert.NoError(t, err, "the error of Outline")
+			result, err := built.Execute(t.Context(), json.RawMessage(`{"scope":"pkg"}`))
+			assert.NoError(t, err, "the error of Execute")
+			assert.Contains(t, result.Rendered, "\na.fx\n    1  function F\n    1  function G\n", "the render")
+		})
+
+		t.Run("states the summary of the unit of a directory under the heading", func(t *testing.T) {
+			t.Parallel()
+			clause := function("a", "Package a keeps stores. More text.")
+			clause.Kind, clause.Visibility = sema.KindPackage, sema.Unexported
+			over := serving(clause, function("F", ""))
+			over.claims = map[source.Path]bool{"pkg": true}
+			built, err := tool.Outline(over)
+			assert.NoError(t, err, "the error of Outline")
+			result, err := built.Execute(t.Context(), json.RawMessage(`{"scope":"pkg"}`))
+			assert.NoError(t, err, "the error of Execute")
+			assert.HasPrefix(t, result.Rendered, "pkg — fixture, 1 declaration\nPackage a keeps stores.\n",
+				"the heading")
+		})
+
+		t.Run("states no summary of the unit for a file", func(t *testing.T) {
+			t.Parallel()
+			clause := function("a", "Package a keeps stores.")
+			clause.Kind = sema.KindPackage
+			got := outlined(t, `{"scope":"a.fx","private":true}`, clause)
+			assert.Empty(t, got.Scope.Summary, "the summary of the scope")
 		})
 
 		t.Run("names no unit for an answer about a directory of two units", func(t *testing.T) {

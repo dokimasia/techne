@@ -113,6 +113,104 @@ func TestSearch(t *testing.T) {
 			assert.Equal(t, over.searched[0].Limit, 20, "the limit of the query")
 		})
 
+		t.Run("searches for query without text", func(t *testing.T) {
+			t.Parallel()
+			over := serving(function("Digest", ""))
+			got := searched(t, over, `{"query":"Digest","scope":"a.fx"}`)
+			assert.Equal(t, names(got.Items), []string{"Digest"}, "the matches")
+			assert.Equal(t, over.searched[0].Text, "Digest", "the text of the query")
+		})
+
+		t.Run("searches for text over query", func(t *testing.T) {
+			t.Parallel()
+			over := serving(function("Digest", ""))
+			searched(t, over, `{"text":"Digest","query":"Other","scope":"a.fx"}`)
+			assert.Equal(t, over.searched[0].Text, "Digest", "the text of the query")
+		})
+
+		t.Run("searches the unexported declarations when no exported one matches", func(t *testing.T) {
+			t.Parallel()
+			hidden := function("digest", "")
+			hidden.Visibility = sema.Unexported
+			over := serving(hidden)
+			got := searched(t, over, `{"text":"digest","scope":"a.fx"}`)
+			assert.Equal(t, names(got.Items), []string{"digest"}, "the matches")
+			assert.Length(t, over.searched, 2, "the queries of the engine")
+			assert.True(t, over.searched[1].Private, "Private of the second query")
+		})
+
+		t.Run("searches once when an exported declaration matches", func(t *testing.T) {
+			t.Parallel()
+			over := serving(function("Digest", ""))
+			searched(t, over, `{"text":"Digest","scope":"a.fx"}`)
+			assert.Length(t, over.searched, 1, "the queries of the engine")
+		})
+
+		t.Run("searches once for a private input that matches nothing", func(t *testing.T) {
+			t.Parallel()
+			over := serving()
+			searched(t, over, `{"text":"digest","scope":"a.fx","private":true}`)
+			assert.Length(t, over.searched, 1, "the queries of the engine")
+		})
+
+		t.Run("searches once when no engine serves the scope", func(t *testing.T) {
+			t.Parallel()
+			over := serving()
+			got := searched(t, over, `{"text":"digest","scope":"b.fx"}`)
+			assert.Equal(t, got.Error.Code, "unsupported", "the code of the failure")
+			assert.Length(t, over.searched, 1, "the queries of the engine")
+		})
+
+		tests := []struct {
+			name string
+			kind sema.Kind
+			docs []string
+			want string
+		}{
+			{
+				name: "returns one package for the clauses of its files",
+				kind: sema.KindPackage,
+				docs: []string{"", "Package a keeps stores.", ""},
+				want: "Package a keeps stores.",
+			},
+			{
+				name: "returns one module for the declarations of its files",
+				kind: sema.KindModule,
+				docs: []string{"", "Module a keeps stores."},
+				want: "Module a keeps stores.",
+			},
+			{
+				name: "returns the first documented clause of a package",
+				kind: sema.KindPackage,
+				docs: []string{"Package a keeps stores.", "Package a is documented twice."},
+				want: "Package a keeps stores.",
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				var clauses []sema.Symbol
+				for i, doc := range tt.docs {
+					clause := function("a", doc)
+					clause.Kind = tt.kind
+					clause.ID = sema.NewID(fixture, "a", "a", tt.kind)
+					clause.Span.Start.Offset, clause.Span.End.Offset = 10*i, 10*i+5
+					clauses = append(clauses, clause)
+				}
+				got := searched(t, serving(clauses...), `{"text":"a","scope":"a.fx"}`)
+				assert.Length(t, got.Items, 1, "the matches")
+				assert.Equal(t, got.Items[0].Doc, tt.want, "the documentation of the match")
+			})
+		}
+
+		t.Run("returns every function of one ID", func(t *testing.T) {
+			t.Parallel()
+			first, second := function("Get", "one"), function("Get", "two")
+			second.Span.Start.Offset, second.Span.End.Offset = 10, 15
+			got := searched(t, serving(first, second), `{"text":"Get","scope":"a.fx"}`)
+			assert.Length(t, got.Items, 2, "the matches")
+		})
+
 		t.Run("refuses a path that leaves the workspace", func(t *testing.T) {
 			t.Parallel()
 			over := serving()

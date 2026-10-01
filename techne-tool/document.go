@@ -15,13 +15,13 @@ import (
 // without comment markers. The tool writes the markers of the language, at the indentation and
 // the place that the language uses.
 type DocumentInput struct {
-	Scope    string   `json:"scope"              jsonschema:"file or directory of the declaration, relative to the workspace root"`
-	Name     string   `json:"name"               jsonschema:"the declaration, qualified as the language writes it when the name is ambiguous"`
-	Doc      string   `json:"doc"                jsonschema:"the text of the documentation, without comment markers"`
-	Kind     KindWord `json:"kind,omitempty"     jsonschema:"the kind of the declaration, for a name of several kinds"`
-	Line     int      `json:"line,omitempty"     jsonschema:"a line of the declaration, counted from one, for a name of several declarations such as the overloads of a method"`
-	Language string   `json:"language,omitempty" jsonschema:"the language to ask, in place of the languages of the scope"`
-	DryRun   *bool    `json:"dry_run,omitempty"  jsonschema:"preview the change without writing it, true when omitted"`
+	Scope    string   `json:"scope"              jsonschema:"file or directory of the declaration, relative to the root"`
+	Name     string   `json:"name"               jsonschema:"the declaration, qualified as Type.Method when ambiguous"                alias:"symbol"`
+	Doc      string   `json:"doc"                jsonschema:"the documentation, without comment markers"`
+	Kind     KindWord `json:"kind,omitempty"     jsonschema:"its kind, such as function, method or struct, when the name has several"`
+	Line     int      `json:"line,omitempty"     jsonschema:"a line of it, counted from one, when the name has several declarations"`
+	Language string   `json:"language,omitempty" jsonschema:"a language to ask instead of the scope's"`
+	DryRun   *bool    `json:"dry_run,omitempty"  jsonschema:"preview only, true by default"`
 }
 
 // Document returns the tool that writes documentation onto one declaration. It refuses an
@@ -58,8 +58,6 @@ func Document(reads Outliner, writes Writer) (Tool, error) {
 }
 
 const documentDescription = "PREFER OVER editing a file to add a doc comment. " +
-	"It writes documentation onto one declaration in the form that the documentation tool of " +
-	"the language reads: /// for Rust, /** */ for Java, a docstring inside the body for " +
-	"Python, and at the indentation of the declaration. Send the text alone, without comment " +
-	"markers. It replaces documentation that is already there. It previews the change unless " +
-	"dry_run is false, and refuses a change after which the file does not parse."
+	"It writes the text, without comment markers, onto one declaration in the form that the " +
+	"language documents it, in place of any documentation there. It previews the change " +
+	"unless dry_run is false."

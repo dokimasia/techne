@@ -20,15 +20,15 @@ const DefaultRelations = 50
 
 // RelationsInput is the input of the relations tool.
 type RelationsInput struct {
-	Scope     string       `json:"scope"                        jsonschema:"file or directory of the declaration, relative to the workspace root"`
-	Name      string       `json:"name"                         jsonschema:"the declaration, qualified as the language writes it when the name is ambiguous"`
+	Scope     string       `json:"scope"                        jsonschema:"file or directory of the declaration, relative to the root"`
+	Name      string       `json:"name"                         jsonschema:"the declaration, qualified as Type.Method when ambiguous"                alias:"symbol"`
 	Relation  RelationWord `json:"relation"                     jsonschema:"the direction of the relations"`
-	Kind      KindWord     `json:"kind,omitempty"               jsonschema:"the kind of the declaration, for a name of several kinds"`
-	Line      int          `json:"line,omitempty"               jsonschema:"a line of the declaration, counted from one, for a name of several declarations such as the overloads of a method"`
-	Language  string       `json:"language,omitempty"           jsonschema:"the language to ask, in place of the languages of the scope"`
-	Limit     int          `json:"limit,omitempty"              jsonschema:"the number of relations to return, 50 when omitted or 0"`
-	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"ceiling of the answer in tokens, 6000 when omitted or 0"`
-	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence the caller wants: a weaker answer is degraded, not refused"`
+	Kind      KindWord     `json:"kind,omitempty"               jsonschema:"its kind, such as function, method or struct, when the name has several"`
+	Line      int          `json:"line,omitempty"               jsonschema:"a line of it, counted from one, when the name has several declarations"`
+	Language  string       `json:"language,omitempty"           jsonschema:"a language to ask instead of the scope's"`
+	Limit     int          `json:"limit,omitempty"              jsonschema:"most relations to return, 50 by default"`
+	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"answer ceiling in tokens, 6000 by default"`
+	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence wanted; a weaker answer is marked degraded"`
 }
 
 // RelationsOutput is the output of the relations tool. It states the declaration and the
@@ -75,7 +75,7 @@ func (o RelationsOutput) Render() string {
 		b.WriteString(one.render())
 	}
 	b.WriteString("\n")
-	b.WriteString(evidence(o.Provenance))
+	b.WriteString(evidence(o.Provenance, len(o.Items) == 0))
 	return b.String()
 }
 
@@ -216,7 +216,7 @@ func (o RelationsOutput) fitted(b Budget) RelationsOutput {
 	for i, one := range o.Items {
 		sums[i+1] = sums[i] + len(one.render())
 	}
-	tail := len("\n") + len(evidence(o.Provenance))
+	tail := len("\n") + len(evidence(o.Provenance, false))
 	fits := func(k int) bool { return len(o.heading(k))+sums[k]+tail <= limit }
 	if fits(len(o.Items)) {
 		return o
@@ -245,7 +245,5 @@ func relationsRefused(scope source.Path, in RelationsInput, f *Failure) Relation
 }
 
 const relationsDescription = "PREFER OVER grep for finding what calls, implements or " +
-	"references a declaration. It returns each relation with the line of its site, so a " +
-	"caller reads the call without fetching the file, and states whether an empty answer " +
-	"means that there are none or that none were found. It returns 50 relations when limit " +
-	"is omitted, and a caveat counts the relations it leaves out."
+	"references a declaration. It returns each site with its line of code, and states whether " +
+	"an empty answer proves that there are none."

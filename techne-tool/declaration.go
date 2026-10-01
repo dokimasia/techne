@@ -6,6 +6,7 @@ package tool
 import (
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
@@ -73,6 +74,8 @@ type Declaration struct {
 	// Path is the file of the declaration when it is not the file of the scope, as in an answer
 	// about more than one file.
 	Path string `json:"path,omitempty"`
+	// Summary is the first sentence of the documentation comment, at [Summaries].
+	Summary string `json:"summary,omitempty"`
 	// Signature is the declaration without its body, from [Signatures] on.
 	Signature string `json:"signature,omitempty"`
 	// Doc is the documentation comment, from [Docs] on.
@@ -100,8 +103,10 @@ type Declaration struct {
 // declaration whose container it leaves out goes under the nearest container that it keeps.
 // The order is the order of items.
 //
-// A declaration with source text has no members, because its source text contains them.
-// Declared returns an empty list, not nil, for no declarations.
+// A declaration with source text has no members, because its source text contains them. At
+// [Summaries] a member without a summary, a type and members of its own is left out, because
+// its line would state only its name. Declared returns an empty list, not nil, for no
+// declarations.
 func Declared(items []sema.Symbol, d Detail, include engine.Bindings) []Declaration {
 	return declared(items, d, include, false)
 }
@@ -147,7 +152,11 @@ func declared(items []sema.Symbol, d Detail, include engine.Bindings, rooted boo
 			return out
 		}
 		for _, child := range children[i] {
-			out.Members = append(out.Members, build(child))
+			member := build(child)
+			if d == Summaries && member.Summary == "" && member.Signature == "" && len(member.Members) == 0 {
+				continue
+			}
+			out.Members = append(out.Members, member)
 		}
 		return out
 	}
@@ -171,8 +180,14 @@ func project(s sema.Symbol, d Detail) Declaration {
 	if s.Visibility != sema.Exported {
 		out.Visibility = s.Visibility
 	}
-	if d == Names {
+	switch d {
+	case Names:
+		out.Signature = fieldType(s)
 		return out
+	case Summaries:
+		out.Signature, out.Summary = fieldType(s), summary(s.Doc)
+		return out
+	case Signatures, Docs, Source, DetailUnset:
 	}
 
 	out.Signature = s.Signature
@@ -192,6 +207,78 @@ func project(s sema.Symbol, d Detail) Declaration {
 	out.Snippet = s.Snippet
 	out.Span = &Extent{Start: placeOf(s.Span.Start), End: placeOf(s.Span.End)}
 	return out
+}
+
+// fieldType returns the signature of a field or a property, which is its name and its type,
+// and the empty string for any other kind. [Names] and [Summaries] state the type of a field
+// with it, because a field without its type tells a caller only that it exists.
+func fieldType(s sema.Symbol) string {
+	if s.Kind == sema.KindField || s.Kind == sema.KindProperty {
+		return s.Signature
+	}
+	return ""
+}
+
+// summaryLimit is the most bytes of a summary. [summary] cuts a longer first sentence.
+const summaryLimit = 160
+
+// summary returns the first sentence of doc on one line: the text of the first paragraph up
+// to its first full stop before a space or at its end, with its white space collapsed to
+// single spaces. The paragraph ends at a blank line and before a line that starts a list
+// item. A sentence longer than [summaryLimit] bytes is cut at the last space before the
+// limit, or at the limit without one, and ends with an ellipsis. No documentation has no
+// summary.
+func summary(doc string) string {
+	var paragraph []string
+	for line := range strings.Lines(doc) {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" && len(paragraph) > 0 || listed(trimmed) {
+			break
+		}
+		paragraph = append(paragraph, trimmed)
+	}
+	text := strings.Join(strings.Fields(strings.Join(paragraph, " ")), " ")
+	if at := strings.Index(text+" ", ". "); at >= 0 {
+		text = text[:at+1]
+	}
+	if len(text) <= summaryLimit {
+		return text
+	}
+	cut := strings.LastIndexByte(text[:summaryLimit], ' ')
+	if cut <= 0 {
+		cut = summaryLimit
+		for !utf8.RuneStart(text[cut]) {
+			cut--
+		}
+	}
+	return text[:cut] + "…"
+}
+
+// unitSummary returns the [summary] of the first documentation of a package or a module in
+// items, which is what the unit of the declarations is for, or the empty string for none.
+func unitSummary(items []sema.Symbol) string {
+	for _, s := range items {
+		if (s.Kind == sema.KindPackage || s.Kind == sema.KindModule) && s.Doc != "" {
+			return summary(s.Doc)
+		}
+	}
+	return ""
+}
+
+// bullets are the markers that start an item of a list without numbers in documentation, as
+// godoc, Markdown and reStructuredText write it.
+var bullets = []string{"- ", "* ", "+ "}
+
+// listed reports whether a trimmed line of documentation starts a list item: one of
+// [bullets], or a number and a full stop and a space.
+func listed(line string) bool {
+	for _, marker := range bullets {
+		if strings.HasPrefix(line, marker) {
+			return true
+		}
+	}
+	digits := strings.TrimLeft(line, "0123456789")
+	return len(digits) < len(line) && strings.HasPrefix(digits, ". ")
 }
 
 // Extent is the half-open range of source text that a declaration covers, in the file of its

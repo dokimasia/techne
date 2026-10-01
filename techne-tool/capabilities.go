@@ -107,7 +107,6 @@ func Capabilities(catalogue Catalogue) (Tool, error) {
 		})
 }
 
-const capabilitiesDescription = "PREFER OVER guessing from the tool list what this server can do. " +
-	"It reports, per language and role, the engine that serves it, the strength of its " +
-	"evidence, its cost, and whether it can run. An operation missing here is one that no " +
-	"engine serves, which differs from one whose language server is not installed."
+const capabilitiesDescription = "PREFER OVER guessing what this server can do. " +
+	"It lists, per language and role, the engine, the strength of its evidence, its cost and " +
+	"whether it can run."

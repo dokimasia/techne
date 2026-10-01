@@ -67,6 +67,19 @@ func nested(n int) tool.Answer {
 	}
 }
 
+// spread returns an answer about the directory pkg of n documented structs in n/3 files,
+// three to a file, each with a field in its file.
+func spread(n int) tool.Answer {
+	out := many(n)
+	out.Scope, out.ByFile = tool.Scope{Language: "fixture", Unit: "pkg"}, true
+	for i := range out.Items {
+		path := fmt.Sprintf("pkg/file%d.fx", i/3)
+		out.Items[i].Path = path
+		out.Items[i].Members = tool.Members{{Name: "size", Kind: sema.KindField, Line: i + 2, Path: path}}
+	}
+	return out
+}
+
 // truncation returns the note of the truncation caveat of a, or the empty string.
 func truncation(a tool.Answer) string {
 	for _, c := range a.Provenance.Caveats {
@@ -117,7 +130,7 @@ func TestBudget(t *testing.T) {
 		t.Run("returns an answer within the budget at every ceiling", func(t *testing.T) {
 			t.Parallel()
 			for ceiling := 20; ceiling <= 3000; ceiling += 20 {
-				for _, full := range []tool.Answer{many(12), nested(30)} {
+				for _, full := range []tool.Answer{many(12), nested(30), spread(12)} {
 					got := tool.Fit(full, tool.Budget{MaxTokens: ceiling})
 					if len(got.Items) == 1 && len(got.Items[0].Members) == 0 {
 						continue
@@ -257,8 +270,8 @@ func TestBudget(t *testing.T) {
 
 		t.Run("returns the levels from the smallest", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tool.Levels(), []tool.Detail{tool.Names, tool.Signatures, tool.Docs, tool.Source},
-				"the levels")
+			assert.Equal(t, tool.Levels(),
+				[]tool.Detail{tool.Names, tool.Summaries, tool.Signatures, tool.Docs, tool.Source}, "the levels")
 		})
 	})
 }

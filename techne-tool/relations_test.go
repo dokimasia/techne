@@ -110,6 +110,20 @@ func TestRelations(t *testing.T) {
 			assert.Equal(t, got.Relation, "calls", "the relation of the output")
 		})
 
+		t.Run("returns implemented-by for the relation implementations", func(t *testing.T) {
+			t.Parallel()
+			got := relatedOver(t, calling(), `{"scope":"a.fx","name":"Store","relation":"implementations"}`)
+			assert.False(t, got.Failed(), "the failure of the output")
+			assert.Equal(t, got.Relation, "implemented-by", "the relation of the output")
+		})
+
+		t.Run("returns the relations of the declaration that symbol names", func(t *testing.T) {
+			t.Parallel()
+			got := relatedOver(t, calling(), `{"scope":"a.fx","symbol":"Store","relation":"called-by"}`)
+			assert.Equal(t, got.Of, "Store", "Of of the output")
+			assert.Length(t, got.Items, 1, "the relations of Store")
+		})
+
 		t.Run("asks the language of the declaration", func(t *testing.T) {
 			t.Parallel()
 			over := calling()

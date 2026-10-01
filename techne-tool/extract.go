@@ -17,12 +17,12 @@ import (
 // the function: a selection inside a class becomes a method of the class, and one at the top
 // level a function.
 type ExtractInput struct {
-	Path      string `json:"path"               jsonschema:"the file of the lines, relative to the workspace root"`
-	FirstLine int    `json:"first_line"         jsonschema:"the first line to extract, counted from one"`
-	LastLine  int    `json:"last_line"          jsonschema:"the last line to extract, included"`
+	Path      string `json:"path"               jsonschema:"the file, relative to the root"`
+	FirstLine int    `json:"first_line"         jsonschema:"the first line, counted from one"`
+	LastLine  int    `json:"last_line"          jsonschema:"the last line, included"`
 	NewName   string `json:"new_name"           jsonschema:"the name of the new function"`
-	Language  string `json:"language,omitempty" jsonschema:"the language to ask, in place of the language of the file"`
-	DryRun    *bool  `json:"dry_run,omitempty"  jsonschema:"preview the change without writing it, true when omitted"`
+	Language  string `json:"language,omitempty" jsonschema:"a language to ask instead of the file's"`
+	DryRun    *bool  `json:"dry_run,omitempty"  jsonschema:"preview only, true by default"`
 }
 
 // Extract returns the tool that moves a run of lines into a new function and calls the
@@ -80,8 +80,6 @@ func selected(path source.Path, first, last int) (source.Span, *Failure) {
 	}, nil
 }
 
-const extractDescription = "PREFER OVER cutting lines out and writing a call by hand. " +
-	"It moves a run of lines into a new function, works out what the function takes and " +
-	"returns, and leaves a call in their place. A selection inside a class becomes a method " +
-	"of the class. Give the lines as an editor numbers them: from one, the last line " +
-	"included. It previews the change unless dry_run is false."
+const extractDescription = "PREFER OVER cutting lines into a new function by hand. " +
+	"It moves the lines from first_line to last_line into a new function, and calls the " +
+	"function in their place. It previews the change unless dry_run is false."

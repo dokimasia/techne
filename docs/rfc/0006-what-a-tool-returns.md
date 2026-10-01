@@ -135,6 +135,12 @@ file. An item repeats none of them.
 `scope` is not provenance. Provenance is how the answer was reached;
 scope is what it is about.
 
+The text ends with one line of evidence: the fidelity, the completeness,
+and the note of each caveat that is not `dynamic`. The note of a dynamic
+caveat restates the limit of the fidelity, so the text writes it only for
+an empty answer, beside the negative claim, where it states why the answer
+can be empty. The structured answer keeps every caveat.
+
 ### An answer that ran carries no status
 
 RFC-0003 gives every answer a status of `ok`, `degraded`, `partial`,
@@ -216,9 +222,21 @@ caller addresses the method by that name.
 | `detail` | Adds | Answers |
 |---|---|---|
 | `names` | name, kind, line | is X here, and where |
+| `summaries` | summary, the first sentence of doc | what is each thing here for |
 | `signatures` | signature, visibility, modifiers, annotations | how do I call or implement it |
 | `docs` | doc | what is it for |
 | `source` | snippet, span | what does it do |
+
+- The summary is the first sentence of the first paragraph of the doc,
+  before any list, cut at 160 bytes.
+- It is on the line of the name, so a package costs one line per
+  declaration.
+- `summaries` adds it to `names` alone. From `signatures` on a
+  declaration has no summary, and from `docs` on its doc contains it.
+- At `names` and `summaries` a field or a property shows its
+  signature, which is its name and its type.
+- At `summaries` a member without a summary, a type or members of its
+  own is left out, because its line would state only its name.
 
 The default follows the scope. A file is asked about because someone
 means to work in it, and `signatures` is where the answer replaces
@@ -318,10 +336,34 @@ one that a tool requires. A count of 0 selects its default, as an
 omitted count does, and the schema states the minimum 0. A number below
 its minimum is an input error, as a missing required field is.
 
+### Kinds in an input
+
+The input schema states `kind` as a string without an enum. Five tools
+take a kind, and the enum of every kind in each of them was an eighth of
+the tool list. A word outside the kinds is refused, and the reason lists
+every kind.
+
+### Aliases in an input
+
+A field can have a second name that the input schema does not list. A
+tool reads the value of the second name when the field is absent, and
+ignores it when both are given. Agents wrote `query` for the `text` of
+`search` in 7 of 12 searches over kubernetes on 2026-09-30.
+
+| Tool | Field | Second name |
+|---|---|---|
+| `search` | `text` | `query` |
+| `relations`, `rename.symbol`, `document.symbol` | `name` | `symbol` |
+
+`relation` takes `implementations` and `implementation` as
+`implemented-by`. textDocument/implementation is the request of LSP for
+that relation.
+
 ## The tools
 
-Every read tool but `capabilities` takes `scope`, `language` and
-`preferred_fidelity`. Only what a tool adds is listed.
+Every read tool but `capabilities` and `workspace` takes `scope`,
+`language` and `preferred_fidelity`. `workspace` takes `scope` and
+`language`. Only what a tool adds is listed.
 
 ### `outline` — what does this declare
 
@@ -346,8 +388,7 @@ core/sema/kind.go — go, core/sema
   136  func Kinds() []Kind
   151  func (Kind) Declares() bool
 
-syntactic, whole file. a parser matched text: a name resolved across
-files is coincidence.
+syntactic, total coverage.
 ```
 
 Structured:
@@ -371,16 +412,63 @@ Structured:
 }
 ```
 
-A directory answers at `names`, grouped by file:
+The answer for a directory is at `names`, grouped by file. The summary
+of the doc of its unit follows the heading when the directory is one
+unit. Each file is named on a line of its own, and each declaration and
+member under it states its line alone:
 
 ```text
-core/sema — go, 6 files, 88 declarations
+core/sema — go, 88 declarations
+Package sema describes declarations, the edges between them, and the IDs that identify them across processes.
 
-id.go          15 type ID · 24 func NewID
-kind.go        17 type Kind · 21 const KindUnknown · 26 more
-symbol.go      18 struct Annotation · 33 struct Symbol · 88 struct Unit
-visibility.go  20 type Visibility · 24 const VisibilityUnknown · 5 more
+core/sema/id.go
+   15  type ID
+   24  function NewID
+core/sema/kind.go
+   17  type Kind
+   21  constant KindUnknown
 ```
+
+At `summaries` each line also has the first sentence of the doc:
+
+```text
+core/sema/id.go
+   15  type ID  ID identifies a declaration across processes and runs.
+```
+
+A declaration with members in the answer states their count by kind on
+its line, such as `2 methods, 1 field`, unless the answer shows its
+source.
+
+### `workspace` — what units does this contain
+
+Adds `private`, `tests`, `max_tokens`. `scope` is a directory, and the
+workspace root when omitted.
+
+```json
+{ "name": "workspace", "arguments": {} }
+```
+
+Text:
+
+```text
+. — 36 units
+
+techne-core/engine  go  11 files  76 declarations  Package engine defines the ports an engine implements and the catalogue that selects engines for a request.
+techne-core/sema    go   6 files  69 declarations  Package sema describes declarations, the edges between them, and the IDs that identify them across processes.
+
+syntactic, total coverage.
+```
+
+A unit is the unit of the IDs of its declarations, such as a Go package.
+Each unit states its language, its files, the declarations at the top
+level that other units can use, or every one with `private`, and the
+summary of the doc of the package or the module that it declares. A
+map that does not fit the budget keeps the units with the most
+declarations, in the order of their paths, and a caveat counts the units
+it leaves out. The first units by path of a large repository are often
+its build files. It is the first call in a workspace, and `outline` at
+`summaries` is the second.
 
 ### `search` — where is the thing called X
 
@@ -401,7 +489,7 @@ lang/treesitter/capture.go:145  matched name, doc
   Outranks reports whether one kind says more about a declaration than
   another, and so should replace it.
 
-syntactic, whole workspace.
+syntactic, total coverage.
 ```
 
 Structured:
@@ -424,6 +512,27 @@ Structured:
 One exact match answers at `docs` rather than `names`, so the common
 case needs no second call. An empty `text` matches every name, so
 `search` refuses it and names `outline`, which lists every declaration.
+
+- A search without `private` that matches no exported declaration runs
+  again over the unexported ones. A caller who names a declaration wants
+  it wherever it is declared.
+- A package or a module is one match, however many files state its
+  clause. The match is the declaration with a doc, or the first one when
+  none has a doc.
+
+A `text` with white space is a description, because no name contains a
+space. It matches the declarations whose doc or name contains each of its
+words of three letters or more, case folded, and the declarations with
+the most occurrences of the words come first. The parser reads the doc
+of every declaration in scope for it, which took 2.6 s over the 13,392
+Go files of kubernetes for the same read by `workspace`.
+
+A description that matches nothing and that is written as a declaration
+runs again with the name that it declares. The name is the first name
+outside brackets that a parenthesis follows without a space, as `Get` in
+`func (s *Store) Get() int`. A text without such a name declares its first
+name outside brackets that is no keyword, when it contains a keyword of
+the language, as `Store` in `type Store struct`.
 
 `score` and `matched` are not carried. Both belong to the engine that
 ranked, and `Searcher` returns a declaration with no room for either, so
@@ -449,8 +558,7 @@ tool/outline.go:123:14 — "Fit" denotes 1 declaration
 tool/budget.go:66
   func Fit(a engine.Answer[sema.Symbol], b Budget) engine.Answer[sema.Symbol]
 
-resolved, whole workspace. reflection, string-keyed dispatch and struct
-tags are not visible to any engine here.
+resolved, total coverage.
 ```
 
 Two items mean the name is ambiguous and the caller chooses.
@@ -477,7 +585,7 @@ called-by Outranks — 1 site
 lang/treesitter/outline.go:123:6  in Engine.declarations
   if Outranks(kind, out[seen].Kind) {
 
-resolved, whole workspace. an empty answer here means there are none.
+resolved, total coverage.
 ```
 
 Structured:

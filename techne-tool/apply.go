@@ -14,7 +14,7 @@ import (
 // write path keeps the changes of the preview, so a caller sends the handle and not the
 // changes.
 type ApplyInput struct {
-	Handle string `json:"handle" jsonschema:"the handle that a preview returned"`
+	Handle string `json:"handle" jsonschema:"the handle of a preview"`
 }
 
 // Apply returns the tool that writes the change of a preview without planning it again. The
@@ -49,7 +49,6 @@ func Apply(writes Committer) (Tool, error) {
 // planned, so it has no planner and no row in the catalogue of operations.
 const applyChange edit.Operation = "apply.change"
 
-const applyDescription = "PREFER OVER previewing a change and then asking for it again. " +
-	"It writes the change of the preview that returned the handle, without planning it again. " +
-	"It refuses the change when a file changed after the preview, because byte ranges over " +
-	"other bytes describe other code and usually still compile."
+const applyDescription = "PREFER OVER asking for a previewed change again. " +
+	"It writes the change of the preview that returned the handle, and refuses it when a file " +
+	"changed after the preview."

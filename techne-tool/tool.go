@@ -84,8 +84,11 @@ type Renderer interface {
 // column counted from one, and has the minimum 1. An optional integer has the minimum 0, and
 // 0 selects its default as an omitted field does.
 //
-// It returns an error for a type that has no schema, which is a fault of the code that calls
-// New.
+// A field of In with an [AliasTag] takes the input fields that the tag names as itself. The
+// schema lists none of them, so an alias costs nothing in the list of tools.
+//
+// It returns an error for a type that has no schema and for an alias that is the name of a
+// field, which are faults of the code that calls New.
 func New[In, Out any](
 	name, description string,
 	run func(context.Context, In) (Out, error),
@@ -99,22 +102,60 @@ func New[In, Out any](
 			property.Minimum = new(float64(minimumOf(in, field)))
 		}
 	}
+	aliases, err := aliasesOf(reflect.TypeFor[In](), in)
+	if err != nil {
+		return nil, fmt.Errorf("tool: %q input: %w", name, err)
+	}
 	out, err := jsonschema.For[Out](&jsonschema.ForOptions{TypeSchemas: marshalled})
 	if err != nil {
 		return nil, fmt.Errorf("tool: %q output schema: %w", name, err)
 	}
-	return &typed[In, Out]{name: name, description: description, in: in, out: out, run: run}, nil
+	return &typed[In, Out]{
+		name: name, description: description, in: in, out: out, aliases: aliases, run: run,
+	}, nil
+}
+
+// AliasTag is the struct tag of an input field that lists, separated by commas, the names under
+// which the field is also taken. Agents send a field under the name of another tool they know,
+// such as query for the text of a search, and symbol for the name of a declaration.
+const AliasTag = "alias"
+
+// aliasesOf returns the input field of each alias that an [AliasTag] of a field of t declares.
+// It returns an error for an alias that is a property of schema or the alias of two fields.
+func aliasesOf(t reflect.Type, schema *jsonschema.Schema) (map[string]string, error) {
+	out := map[string]string{}
+	if t.Kind() != reflect.Struct {
+		return out, nil
+	}
+	for field := range t.Fields() {
+		listed, tagged := field.Tag.Lookup(AliasTag)
+		if !tagged {
+			continue
+		}
+		canonical, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		for alias := range strings.SplitSeq(listed, ",") {
+			if _, declared := schema.Properties[alias]; declared {
+				return nil, fmt.Errorf("the alias %q of %q is the name of a field", alias, canonical)
+			}
+			if other, taken := out[alias]; taken {
+				return nil, fmt.Errorf("%q is the alias of %q and of %q", alias, other, canonical)
+			}
+			out[alias] = canonical
+		}
+	}
+	return out, nil
 }
 
 // marshalled are the schemas of the types that encode as one word of a vocabulary, which
 // their Go types do not state: [sema.Kind] is a uint8 that encodes as a word. Each enum comes
-// from the list of its vocabulary, so every schema lists a word added to the list. [Members]
-// refers to the schema of a declaration.
+// from the list of its vocabulary, so every schema lists a word added to the list. The schema
+// of [KindWord] is a string without an enum, as its docblock states. [Members] refers to the
+// schema of a declaration.
 var marshalled = map[reflect.Type]*jsonschema.Schema{
 	reflect.TypeFor[sema.Kind]():       enumOf(sema.Kinds()),
 	reflect.TypeFor[sema.Visibility](): enumOf(sema.Visibilities()),
 	reflect.TypeFor[diag.Severity]():   enumOf(diag.Severities()),
-	reflect.TypeFor[KindWord]():        enumOf(sema.Kinds()),
+	reflect.TypeFor[KindWord]():        {Type: "string"},
 	reflect.TypeFor[RelationWord]():    enumOf(sema.RelationKinds()),
 	reflect.TypeFor[FidelityWord]():    enumOf(trust.Fidelities()),
 	reflect.TypeFor[Detail]():          enumOf(Levels()),
@@ -160,7 +201,9 @@ type typed[In, Out any] struct {
 	description string
 	in          *jsonschema.Schema
 	out         *jsonschema.Schema
-	run         func(context.Context, In) (Out, error)
+	// aliases maps each alias to the input field that [AliasTag] names it for.
+	aliases map[string]string
+	run     func(context.Context, In) (Out, error)
 }
 
 func (t *typed[In, Out]) Name() string                     { return t.name }
@@ -202,6 +245,9 @@ func (t *typed[In, Out]) Execute(ctx context.Context, input json.RawMessage) (Re
 // and for a required field that input omits. encoding/json ignores an undeclared field and
 // leaves an omitted field at its zero value, so decode compares the fields with the schema
 // before it decodes them.
+//
+// An alias is read as its field first, and a field that input names under both takes the value
+// of its own name.
 func (t *typed[In, Out]) decode(input json.RawMessage) (In, error) {
 	var decoded In
 	if len(input) == 0 {
@@ -211,13 +257,34 @@ func (t *typed[In, Out]) decode(input json.RawMessage) (In, error) {
 	if err := json.Unmarshal(input, &fields); err != nil {
 		return decoded, fmt.Errorf("tool: %q input: %w", t.name, err)
 	}
+	fields = t.unaliased(fields)
 	if err := t.fits(fields); err != nil {
 		return decoded, err
 	}
-	if err := json.Unmarshal(input, &decoded); err != nil {
+	canonical, err := json.Marshal(fields)
+	if err != nil {
+		return decoded, fmt.Errorf("tool: %q input: %w", t.name, err)
+	}
+	if err := json.Unmarshal(canonical, &decoded); err != nil {
 		return decoded, fmt.Errorf("tool: %q input: %w", t.name, err)
 	}
 	return decoded, nil
+}
+
+// unaliased returns fields with each alias replaced by its field. It keeps the value of the field
+// when fields names it under its own name too.
+func (t *typed[In, Out]) unaliased(fields map[string]json.RawMessage) map[string]json.RawMessage {
+	for alias, canonical := range t.aliases {
+		value, given := fields[alias]
+		if !given {
+			continue
+		}
+		delete(fields, alias)
+		if _, named := fields[canonical]; !named {
+			fields[canonical] = value
+		}
+	}
+	return fields
 }
 
 // fits returns an error that lists each field of fields that the input schema does not

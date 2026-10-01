@@ -4,6 +4,7 @@
 package tool
 
 import (
+	"cmp"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,8 +15,9 @@ import (
 )
 
 // Detail is the level of detail of each declaration of an answer. Each level contains the
-// levels before it in [Levels]. The zero value is [DetailUnset], which selects
-// [DefaultDetail].
+// levels before it in [Levels], except [Summaries]: from [Signatures] on a declaration has no
+// summary, and from [Docs] on its documentation contains the summary. The zero value is
+// [DetailUnset], which selects [DefaultDetail].
 type Detail string
 
 const (
@@ -23,8 +25,10 @@ const (
 	DetailUnset Detail = ""
 	// Names is the name, the kind and the line of a declaration.
 	Names Detail = "names"
-	// Signatures adds the declaration without its body, its modifiers and the names of its
-	// annotations.
+	// Summaries adds the first sentence of the documentation, on the line of the name.
+	Summaries Detail = "summaries"
+	// Signatures adds to [Names] the declaration without its body, its modifiers and the names
+	// of its annotations.
 	Signatures Detail = "signatures"
 	// Docs adds the documentation comment.
 	Docs Detail = "docs"
@@ -33,7 +37,7 @@ const (
 )
 
 // Levels returns every level, the smallest first.
-func Levels() []Detail { return []Detail{Names, Signatures, Docs, Source} }
+func Levels() []Detail { return []Detail{Names, Summaries, Signatures, Docs, Source} }
 
 // String returns the word of d.
 func (d Detail) String() string { return string(d) }
@@ -138,38 +142,45 @@ type node struct {
 	dropped, undocumented, unsnipped bool
 }
 
-// fitting returns the fit of a under a ceiling in tokens.
+// fitting returns the fit of a under a ceiling in tokens. In an answer by file, the line of its
+// file states the path of a declaration at the top level, and the line of the declaration does
+// not. The line of a declaration counts its members as a states them, so a fit that drops a
+// member renders a shorter line than its cost.
 func fitting(a Answer, ceiling int) *fit {
 	f := &fit{a: a, limit: (ceiling+1)*bytesPerToken - 1}
-	f.fixed = len("\n\n") + len("\n") + len(evidence(a.Provenance))
-	var flatten func(items []Declaration, depth int)
-	flatten = func(items []Declaration, depth int) {
+	f.fixed = len("\n\n") + len("\n") + len(evidence(a.Provenance, false))
+	var flatten func(items []Declaration, depth int, within string)
+	flatten = func(items []Declaration, depth int, within string) {
 		for _, item := range items {
 			at := len(f.nodes)
-			own := item
-			own.Members = nil
-			f.nodes = append(f.nodes, costed(own, depth))
-			flatten(item.Members, depth+1)
+			if depth == 0 && a.ByFile {
+				within = item.Path
+			}
+			own := costed(item, depth, within)
+			own.d.Members = nil
+			f.nodes = append(f.nodes, own)
+			flatten(item.Members, depth+1, cmp.Or(item.Path, within))
 			f.nodes[at].end = len(f.nodes)
 		}
 	}
-	flatten(a.Items, 0)
+	flatten(a.Items, 0, "")
 	return f
 }
 
-// costed returns the node of d at depth, with the bytes of each part of its render.
-func costed(d Declaration, depth int) node {
+// costed returns the node of d at depth inside a declaration of the file within, with the
+// bytes of each part of its render.
+func costed(d Declaration, depth int, within string) node {
 	out := node{d: d, depth: depth}
 	indent := strings.Repeat("  ", depth)
 	head, rest := parts(d)
-	out.head = len(headLine(indent, d, head))
+	out.head = len(headLine(indent, d, head, within))
 	for _, line := range rest {
 		out.rest += len(bodyLine(indent, line))
 	}
 	thin := d
 	thin.Snippet = ""
 	thinHead, _ := parts(thin)
-	out.thin = len(headLine(indent, d, thinHead))
+	out.thin = len(headLine(indent, d, thinHead, within))
 	if d.Doc != "" {
 		for line := range strings.SplitSeq(d.Doc, "\n") {
 			out.doc += len(bodyLine(indent, line))
@@ -190,13 +201,18 @@ func (n node) own() int {
 	return out
 }
 
-// cost returns the bytes of the render of the declarations that f keeps.
+// cost returns the bytes of the render of the declarations that f keeps, and for an answer by
+// file the line of the file before each run of declarations at the top level of one path.
 func (f *fit) cost() int {
-	total, held := f.fixed, 0
+	total, held, file := f.fixed, 0, ""
 	for i := 0; i < len(f.nodes); {
 		if f.nodes[i].dropped {
 			i = f.nodes[i].end
 			continue
+		}
+		if n := f.nodes[i]; f.a.ByFile && n.depth == 0 && n.d.Path != "" && n.d.Path != file {
+			file = n.d.Path
+			total += len(fileLine(file))
 		}
 		total += f.nodes[i].own()
 		held++

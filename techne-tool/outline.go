@@ -18,22 +18,22 @@ import (
 
 // OutlineInput is the input of the outline tool.
 type OutlineInput struct {
-	Scope     string       `json:"scope"                        jsonschema:"file or directory, relative to the workspace root"`
-	Language  string       `json:"language,omitempty"           jsonschema:"the language to ask, in place of the languages of the scope"`
-	Detail    Detail       `json:"detail,omitempty"             jsonschema:"the fields of each declaration: signatures for a file and names for a directory when omitted"`
-	Names     []string     `json:"names,omitempty"              jsonschema:"keep the declarations of these names"`
-	Kind      KindWord     `json:"kind,omitempty"               jsonschema:"keep the declarations of one kind"`
-	Prefix    string       `json:"prefix,omitempty"             jsonschema:"keep the declarations whose names start with this"`
-	Private   bool         `json:"private,omitempty"            jsonschema:"keep the declarations that are not visible outside their unit"`
-	Include   []Include    `json:"include,omitempty"            jsonschema:"bindings to add beside the declarations that the files offer"`
-	Tests     bool         `json:"tests,omitempty"              jsonschema:"read the files that the language treats as tests"`
-	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"ceiling of the answer in tokens, 6000 when omitted or 0"`
-	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence the caller wants: a weaker answer is degraded, not refused"`
+	Scope     string       `json:"scope"                        jsonschema:"file or directory, relative to the root"`
+	Language  string       `json:"language,omitempty"           jsonschema:"a language to ask instead of the scope's"`
+	Detail    Detail       `json:"detail,omitempty"             jsonschema:"signatures for a file and names for a directory by default"`
+	Names     []string     `json:"names,omitempty"              jsonschema:"keep these names"`
+	Kind      KindWord     `json:"kind,omitempty"               jsonschema:"keep one kind, such as function, method, struct or interface"`
+	Prefix    string       `json:"prefix,omitempty"             jsonschema:"keep the names that start with this"`
+	Private   bool         `json:"private,omitempty"            jsonschema:"include unexported declarations"`
+	Include   []Include    `json:"include,omitempty"            jsonschema:"bindings to add"`
+	Tests     bool         `json:"tests,omitempty"              jsonschema:"include test files"`
+	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"answer ceiling in tokens, 6000 by default"`
+	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence wanted; a weaker answer is marked degraded"`
 }
 
-// Outline returns the tool that lists the declarations of a scope. It narrows the answer by
-// the names, the kind, the prefix and the visibility of the input, and fits it to the budget
-// with [Fit].
+// Outline returns the tool that lists the declarations of a scope, by file. It narrows the
+// answer by the names, the kind, the prefix and the visibility of the input, and fits it to the
+// budget with [Fit]. An answer about a directory of one unit states the summary of the unit.
 func Outline(reads Outliner) (Tool, error) {
 	return New("outline", outlineDescription,
 		func(ctx context.Context, in OutlineInput) (Answer, error) {
@@ -60,6 +60,10 @@ func Outline(reads Outliner) (Tool, error) {
 			}
 
 			out := published(answered, about(scope, in.Language, answered), Declared(answered.Items, detail, include))
+			out.ByFile = true
+			if out.Scope.Path == "" && out.Scope.Unit != "" {
+				out.Scope.Summary = unitSummary(answered.Items)
+			}
 			out.Items = Narrow{
 				Names: in.Names, Kind: kind,
 				Prefix: in.Prefix, Private: in.Private,
@@ -69,11 +73,9 @@ func Outline(reads Outliner) (Tool, error) {
 }
 
 const outlineDescription = "PREFER OVER read for finding what a file or directory declares. " +
-	"An outline takes about a quarter of the tokens of the file, measured on real files in Go, " +
-	"Python, Java and TypeScript. It returns declarations, not lines, and states the evidence " +
-	"behind them, so an empty answer states whether there are none or none were found. " +
-	"The docs and source levels return whole comments and whole bodies, so over a whole file " +
-	"they cost more than reading it: narrow them with names, kind or prefix."
+	"It returns the declarations with their signatures for about a quarter of the tokens of " +
+	"the file. The summaries level adds the first sentence of each doc comment. The docs and " +
+	"source levels cost more than the file, so narrow them with names, kind or prefix."
 
 // about returns the scope of an answer about scope. The language is the language of the
 // declarations of a when they share one, and empty when they are of more than one language.

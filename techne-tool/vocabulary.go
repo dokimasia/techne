@@ -14,11 +14,13 @@ import (
 )
 
 // The types of the input fields that take a word of a closed vocabulary. The schema of each
-// field lists the words as an enum, which [New] derives from the vocabulary of core, so every
-// schema lists a word added there. A tool refuses any other word, and the reason lists the
-// words that the field takes.
+// field but a kind lists the words as an enum, which [New] derives from the vocabulary of core,
+// so every schema lists a word added there. A tool refuses any other word, and the reason lists
+// the words that the field takes.
 type (
-	// KindWord is a word of [sema.Kinds]. The empty word selects every kind.
+	// KindWord is a word of [sema.Kinds]. The empty word selects every kind. Its schema is a
+	// string without an enum, because five tools take a kind and the enum of the words of
+	// [sema.Kinds] in each was an eighth of the tool list. A wrong word is refused with the list.
 	KindWord string
 	// RelationWord is a word of [sema.RelationKinds].
 	RelationWord string
@@ -67,9 +69,20 @@ func kindOf(w KindWord) (sema.Kind, *Failure) {
 	return worded("kind", string(w), sema.Kinds())
 }
 
-// relationOf returns the relation kind of w, and a refusal for a word that no relation kind
-// has.
+// relationAliases are the words of a relation that relationOf takes beside the words of
+// [sema.RelationKinds]. textDocument/implementation is the request of LSP for what implements
+// a declaration, and agents ask for implementations under its name.
+var relationAliases = map[RelationWord]sema.RelationKind{
+	"implementation":  sema.ImplementedBy,
+	"implementations": sema.ImplementedBy,
+}
+
+// relationOf returns the relation kind of w or of its alias, and a refusal for a word that no
+// relation kind has.
 func relationOf(w RelationWord) (sema.RelationKind, *Failure) {
+	if kind, aliased := relationAliases[w]; aliased {
+		return kind, nil
+	}
 	return worded("relation", string(w), sema.RelationKinds())
 }
 

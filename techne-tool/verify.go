@@ -18,11 +18,11 @@ import (
 // language, such as its linters or its test runner, and the empty list runs the checks that the
 // language runs by default.
 type VerifyInput struct {
-	Scope     string       `json:"scope"                        jsonschema:"file or directory, relative to the workspace root"`
-	Suites    []string     `json:"suites,omitempty"             jsonschema:"the checks to run, in the words of the language"`
-	Language  string       `json:"language,omitempty"           jsonschema:"the language to ask, in place of the languages of the scope"`
-	MaxIssues int          `json:"max_issues,omitempty"         jsonschema:"the number of issues to return, all when omitted or 0"`
-	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence the caller wants: a weaker answer is degraded, not refused"`
+	Scope     string       `json:"scope"                        jsonschema:"file or directory, relative to the root"`
+	Suites    []string     `json:"suites,omitempty"             jsonschema:"checks to run, in the words of the language"`
+	Language  string       `json:"language,omitempty"           jsonschema:"a language to ask instead of the scope's"`
+	MaxIssues int          `json:"max_issues,omitempty"         jsonschema:"most issues to return, all by default"`
+	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence wanted; a weaker answer is marked degraded"`
 }
 
 // VerifyOutput is the output of the verify tool.
@@ -87,7 +87,7 @@ func (o VerifyOutput) Render() string {
 		}
 	}
 	b.WriteString("\n")
-	b.WriteString(evidence(o.Provenance))
+	b.WriteString(evidence(o.Provenance, len(o.Items) == 0))
 	return b.String()
 }
 
@@ -188,7 +188,5 @@ func fixes(changes []edit.Change) []Fix {
 }
 
 const verifyDescription = "PREFER OVER running the build or the linter in a shell. " +
-	"It runs the checks of a language over a scope and returns what they reported, each issue " +
-	"with its line and, where there is one obvious remedy, the change that makes it. Issues " +
-	"are an answer, not a failure. The write tools run the same checks before they write, so " +
-	"a caller can check its own work before it asks for a change."
+	"It runs the checks of a language over a scope and returns each issue with its line and, " +
+	"where one is obvious, its fix."
