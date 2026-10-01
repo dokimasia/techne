@@ -275,7 +275,13 @@ func drive(t *testing.T, m corpus.Manifest, r corpus.Repository, dir, root, bina
 					if filepath.IsAbs(site.Path) {
 						continue
 					}
-					content, err := os.ReadFile(filepath.Join(w.Root, site.Path))
+					at := filepath.Join(w.Root, site.Path)
+					if _, err := os.Stat(at); os.IsNotExist(err) {
+						// A rename of a type moves the file that the type names, as jdtls moves
+						// ClassReader.java to ClassReaderCorpus.java.
+						at = filepath.Join(filepath.Dir(at), strings.Replace(filepath.Base(at), target.item.Name, renamed, 1))
+					}
+					content, err := os.ReadFile(at)
 					written, _ := corpus.Line(content, site.Line)
 					if err != nil || !strings.Contains(written, renamed) {
 						t.Errorf("%s:%d does not show %s after the rename", site.Path, site.Line, renamed)
