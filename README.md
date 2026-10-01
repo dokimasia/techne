@@ -8,6 +8,7 @@ Scala and TypeScript. One techne process serves one workspace over standard inpu
 
 | Tool | What it does |
 |---|---|
+| `workspace` | Lists the units of a directory, such as its packages, with their files, declarations and summaries |
 | `outline` | Lists the declarations of a file or a directory |
 | `search` | Finds declarations by name |
 | `resolve` | Returns the declaration that the name at a position denotes |
@@ -66,12 +67,19 @@ Put the binary on your `PATH`.
 ## Run
 
 ```text
-techne [-h | --help] [--version] [--structured] [workspace]
+techne [-h | --help] [--version] [--structured] [--trust DIR]... [workspace]
 ```
 
 techne serves the workspace at the path that you pass, or the working directory. While it
 serves, it writes only protocol messages to standard output, and its errors to standard error.
 `-h` and `--help` print the usage and exit. `--version` prints the version and exits.
+
+`--trust DIR` adds a trusted folder, such as `~/Projects`, and repeats for more than one folder.
+Every tool then takes the field `wd`, a directory under a trusted folder, absolute or relative
+to the workspace. A call with `wd` runs in the workspace of that directory, and the paths of the
+call and of its answer are relative to it. A call without `wd` runs in the workspace that techne
+serves. techne keeps the language servers of three such directories running. A call in a fourth
+directory stops the servers of the directory that served a call least recently.
 
 By default a result contains its answer as text written for a model, and techne declares no
 output schema. Claude Code passes the JSON of a result to the model when the result contains
@@ -103,6 +111,10 @@ A client that reads a JSON configuration starts techne with the same command and
   }
 }
 ```
+
+An editor that starts techne in the project it opens can pass the trusted folder alone, as
+`"args": ["--trust", "~/Projects"]`. A call then sets `wd` to any other project under that
+folder. techne expands the `~`, because an editor passes it without a shell.
 
 ## Development
 

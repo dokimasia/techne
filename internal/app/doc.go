@@ -25,7 +25,17 @@
 // # Command line
 //
 // [Parse] reads the command line of techne, and [Usage] is its usage. [Run] serves the
-// workspace of the command line, at the root that [Root] resolves.
+// [Session] of the command line, at the root that [Root] resolves.
+//
+// # Sessions
+//
+// [Open] returns the tools of a session. A call runs in the workspace of the session unless the
+// command line has a trusted folder and the call sets the field
+// [go.dokimi.dev/techne/tool.WorkingDirectory] to a directory under it. The call then runs in
+// the workspace of that directory, which the session opens at its first call. A symbolic link
+// counts at its target, so a link that leads out of a trusted folder is not under it. The session
+// keeps the engines of three such workspaces open beside its own. The first call in a fourth
+// closes the one that served a call least recently and has no call in flight.
 //
 // # Dependency position
 //

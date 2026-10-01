@@ -171,14 +171,15 @@ func TestApp(t *testing.T) {
 			s, err := app.Build(lang.Workspace{FS: workspace()}, nil, "")
 			assert.NoError(t, err, "the error of Build")
 			t.Cleanup(func() { _ = s.Close(context.WithoutCancel(t.Context())) })
-			assert.Equal(t, named(s), []string{"outline", "search", "resolve", "relations", "verify", "capabilities"},
+			assert.Equal(t, named(s),
+				[]string{"workspace", "outline", "search", "resolve", "relations", "verify", "capabilities"},
 				"the tools of the server")
 		})
 
 		t.Run("offers the write tools with files", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, named(built(t, workspace(), "")), []string{
-				"outline", "search", "resolve", "relations", "verify", "capabilities",
+				"workspace", "outline", "search", "resolve", "relations", "verify", "capabilities",
 				"document.symbol", "rename.symbol", "move.file", "extract.function", "apply.change",
 			}, "the tools of the server")
 		})
@@ -319,6 +320,28 @@ func TestApp(t *testing.T) {
 			_, err := app.Root(filepath.Join(t.TempDir(), "nowhere"))
 			assert.HasError(t, err, "the error of Root")
 			assert.HasPrefix(t, err.Error(), "app: the workspace root ", "the error of Root")
+		})
+
+		for _, given := range []string{"~", "~/."} {
+			t.Run("returns the home directory for "+given, func(t *testing.T) {
+				t.Parallel()
+				home, err := os.UserHomeDir()
+				assert.NoError(t, err, "the error of UserHomeDir")
+				want, err := filepath.EvalSymlinks(home)
+				assert.NoError(t, err, "the error of EvalSymlinks")
+				got, err := app.Root(given)
+				assert.NoError(t, err, "the error of Root")
+				assert.Equal(t, got, want, "the root of "+given)
+			})
+		}
+
+		t.Run("resolves a ~ before a name against the working directory", func(t *testing.T) {
+			t.Parallel()
+			working, err := os.Getwd()
+			assert.NoError(t, err, "the error of Getwd")
+			_, err = app.Root("~nobody-techne")
+			assert.HasError(t, err, "the error of Root")
+			assert.Contains(t, err.Error(), filepath.Join(working, "~nobody-techne"), "the error of Root")
 		})
 	})
 }

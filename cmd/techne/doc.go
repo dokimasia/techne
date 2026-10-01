@@ -4,11 +4,20 @@
 // Command techne serves the tools of a workspace to a client of the Model Context Protocol over
 // standard input and output.
 //
-//	techne [-h | --help] [--version] [workspace]
+//	techne [-h | --help] [--version] [--structured] [--trust DIR]... [workspace]
 //
 // workspace is the root of the workspace, and the working directory when it is omitted. -h and
 // --help write the usage to standard output and exit. --version writes the version to standard
-// output and exits.
+// output and exits. --structured sends each result as JSON beside its text.
+//
+// # Trusted folders
+//
+// --trust DIR, or --trust=DIR, adds DIR to the trusted folders, and the flag repeats for more
+// than one. With a trusted folder, every tool takes the field wd: a directory under a trusted
+// folder, absolute or relative to the workspace root. A call that sets wd runs in the workspace
+// of that directory, and the paths of the call and of its answer are relative to it. A leading ~
+// in a folder or a directory is the home directory of the user, because an editor starts techne
+// without a shell to expand it.
 //
 // # Streams
 //
@@ -19,8 +28,10 @@
 //
 //   - 0 after a help flag or --version, after the client closes standard input, and after
 //     SIGINT or SIGTERM
-//   - 1 for a workspace that techne cannot serve, such as a root that does not exist
-//   - 2 for a flag other than -h, --help and --version, and for a second workspace
+//   - 1 for a workspace that techne cannot serve, such as a root that does not exist, and for a
+//     trusted folder that does not exist or is not a directory
+//   - 2 for a flag other than -h, --help, --version, --structured and --trust, for a --trust
+//     without a folder, and for a second workspace
 //
 // # Environment
 //

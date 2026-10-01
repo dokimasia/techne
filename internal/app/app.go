@@ -31,7 +31,6 @@ import (
 	"go.dokimi.dev/techne/presenter"
 	"go.dokimi.dev/techne/service/change"
 	"go.dokimi.dev/techne/service/query"
-	"go.dokimi.dev/techne/service/workspace/files"
 	"go.dokimi.dev/techne/tool"
 )
 
@@ -114,6 +113,7 @@ func Build(w lang.Workspace, files change.Files, mocks string) (*Server, error) 
 		return tools.Add(t)
 	}
 	err = errors.Join(
+		offer(tool.Workspace(reads)),
 		offer(tool.Outline(reads)),
 		offer(tool.Search(reads)),
 		offer(tool.Resolve(reads)),
@@ -202,44 +202,61 @@ func word[T fmt.Stringer](name, what, given string, values []T) (T, error) {
 		name, what, given, strings.Join(words, ", "))
 }
 
-// Root returns given as an absolute path without symbolic links, and the working directory for
-// the empty path. [Run] passes this form to every engine and to the write path, so each of them
-// names a file of the workspace by the same path. It returns an error for a path that does not
-// exist.
+// Root returns given as an absolute path without symbolic links, as [resolve] resolves it
+// against the working directory, and the working directory for the empty path. [Open] passes
+// this form to every engine and to the write path, so each of them refers to a file of the
+// workspace by the same path. It returns an error for a path that does not exist.
 func Root(given string) (string, error) {
-	if given == "" {
-		given = "."
-	}
-	absolute, err := filepath.Abs(given)
+	return resolve("the workspace root", given, "")
+}
+
+// resolve returns given as an absolute path without symbolic links. A leading ~ is the home
+// directory of the user, as [expand] expands it. A relative path is relative to base, or to the
+// working directory for the empty base, and the empty path is that directory. The error that
+// resolve returns for a path that does not exist calls the path what.
+func resolve(what, given, base string) (string, error) {
+	expanded, err := expand(given)
 	if err != nil {
-		return "", fmt.Errorf("app: the workspace root %q: %w", given, err)
+		return "", fmt.Errorf("app: %s %q: %w", what, given, err)
+	}
+	if !filepath.IsAbs(expanded) && base != "" {
+		expanded = filepath.Join(base, expanded)
+	}
+	absolute, err := filepath.Abs(expanded)
+	if err != nil {
+		return "", fmt.Errorf("app: %s %q: %w", what, given, err)
 	}
 	resolved, err := filepath.EvalSymlinks(absolute)
 	if err != nil {
-		return "", fmt.Errorf("app: the workspace root %q: %w", given, err)
+		return "", fmt.Errorf("app: %s %q: %w", what, given, err)
 	}
 	return resolved, nil
 }
 
-// Run serves the workspace at the root of command to a client over standard input and output,
-// with the results that the output of command selects. [Root] resolves the root, the variable
-// TECHNE_MOCK is the specification of the mock languages of [Build], and the server reports
-// version to the client.
+// expand returns given with a leading ~ replaced by the home directory of the user, for ~ alone
+// and for ~ before a separator, as a shell expands it. A client that starts techne without a
+// shell, such as an editor, passes ~ unexpanded. expand returns any other path unchanged, such
+// as ~user.
+func expand(given string) (string, error) {
+	rest, tilde := strings.CutPrefix(given, "~")
+	if !tilde || rest != "" && !os.IsPathSeparator(rest[0]) {
+		return given, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return home + rest, nil
+}
+
+// Run serves the [Session] of command to a client over standard input and output, with the
+// results that the output of command selects. The variable TECHNE_MOCK is the specification of
+// the mock languages of [Build], and the server reports version to the client.
 //
 // Run returns nil when the client closes standard input, and the error of ctx when ctx is done.
 // After the session it gives the engines five seconds to stop.
 func Run(ctx context.Context, command Command, version string) error {
-	resolved, err := Root(command.Root)
-	if err != nil {
-		return err
-	}
-	workspace, err := files.Open(resolved)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = workspace.Close() }()
-
-	built, err := Build(lang.Workspace{FS: workspace.FS(), Root: resolved}, workspace, os.Getenv(mockVar))
+	session, err := Open(ctx, command, os.Getenv(mockVar))
 	if err != nil {
 		return err
 	}
@@ -247,10 +264,10 @@ func Run(ctx context.Context, command Command, version string) error {
 		// ctx is done after a signal, so the engines stop on a context that ctx does not cancel.
 		stopping, stop := context.WithTimeout(context.WithoutCancel(ctx), shutting)
 		defer stop()
-		_ = built.Close(stopping)
+		_ = session.Close(stopping)
 	}()
 
-	server, err := presenter.NewServer(built.Tools, presenter.Info{Name: "techne", Version: version}, command.Output)
+	server, err := presenter.NewServer(session.Tools, presenter.Info{Name: "techne", Version: version}, command.Output)
 	if err != nil {
 		return fmt.Errorf("app: %w", err)
 	}

@@ -210,6 +210,20 @@ func TestTechne(t *testing.T) {
 			assert.HasPrefix(t, rendered.Text, "a.mock — ", "the text of the result")
 		})
 
+		t.Run("exits 1 for a trusted folder that does not exist", func(t *testing.T) {
+			t.Parallel()
+			_, stderr, code := ran(t, environment(t), "--trust", filepath.Join(t.TempDir(), "nowhere"), t.TempDir())
+			assert.Equal(t, code, 1, "the exit status")
+			assert.HasPrefix(t, stderr, "techne: app: the trusted folder ", "the standard error")
+		})
+
+		t.Run("exits 2 for a --trust without a folder", func(t *testing.T) {
+			t.Parallel()
+			_, stderr, code := ran(t, environment(t), "--trust")
+			assert.Equal(t, code, 2, "the exit status")
+			assert.Equal(t, stderr, "techne: app: --trust takes a folder\n"+app.Usage, "the standard error")
+		})
+
 		t.Run("exits 0 when the client closes stdin", func(t *testing.T) {
 			t.Parallel()
 			assert.NoError(t, session(t, environment(t), t.TempDir()).Close(), "the exit of the command after Close")

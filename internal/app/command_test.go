@@ -88,5 +88,57 @@ func TestCommand(t *testing.T) {
 			assert.Equal(t, err.Error(), `app: the command takes one workspace, and "b" is a second`,
 				"the error of Parse")
 		})
+
+		trusting := []struct {
+			name string
+			give []string
+			want app.Command
+		}{
+			{
+				name: "returns the folder of --trust",
+				give: []string{"--trust", "/projects", "/projects/a"},
+				want: app.Command{Root: "/projects/a", Trusted: []string{"/projects"}},
+			},
+			{
+				name: "returns the folder after --trust=",
+				give: []string{"--trust=/projects"},
+				want: app.Command{Trusted: []string{"/projects"}},
+			},
+			{
+				name: "returns every folder of a repeated --trust in order",
+				give: []string{"--trust", "/projects", "--trust=/work"},
+				want: app.Command{Trusted: []string{"/projects", "/work"}},
+			},
+			{
+				name: "returns a folder that starts with a hyphen after --trust=",
+				give: []string{"--trust=-projects"},
+				want: app.Command{Trusted: []string{"-projects"}},
+			},
+		}
+		for _, tt := range trusting {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				got, err := app.Parse(tt.give)
+				assert.NoError(t, err, "the error of Parse")
+				assert.Equal(t, got, tt.want, "the command of the arguments")
+			})
+		}
+
+		unfinished := []struct {
+			name string
+			give []string
+		}{
+			{name: "returns an error for --trust as the last argument", give: []string{"--trust"}},
+			{name: "returns an error for --trust before a flag", give: []string{"--trust", "--structured"}},
+			{name: "returns an error for --trust= without a folder", give: []string{"--trust="}},
+		}
+		for _, tt := range unfinished {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				_, err := app.Parse(tt.give)
+				assert.HasError(t, err, "the error of Parse")
+				assert.Equal(t, err.Error(), "app: --trust takes a folder", "the error of Parse")
+			})
+		}
 	})
 }

@@ -8,7 +8,9 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -25,10 +27,65 @@ var messages = []string{
 	`{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}`,
 }
 
-// TestDoc covers the claims of the comment of the command about its streams and its
-// environment.
+// trustedProject returns a trusted folder with the directory away, which contains the file
+// b.mock of store.
+func trustedProject(t *testing.T) (string, string) {
+	t.Helper()
+	trusted := t.TempDir()
+	away := filepath.Join(trusted, "away")
+	assert.NoError(t, os.Mkdir(away, 0o755), "the error of Mkdir")
+	assert.NoError(t, os.WriteFile(filepath.Join(away, "b.mock"), []byte(store), 0o644), "the error of WriteFile")
+	return trusted, away
+}
+
+// relatedIn returns the paths of the relations that a call of relations of Store in b.mock in
+// the directory wd returns.
+func relatedIn(t *testing.T, client *mcp.ClientSession, wd string) []any {
+	t.Helper()
+	got, err := client.CallTool(t.Context(), &mcp.CallToolParams{
+		Name:      "relations",
+		Arguments: map[string]any{"scope": "b.mock", "name": "Store", "relation": "referenced-by", "wd": wd},
+	})
+	assert.NoError(t, err, "the error of CallTool")
+	assert.False(t, got.IsError, "IsError of the result")
+	var paths []any
+	for _, item := range got.StructuredContent.(map[string]any)["items"].([]any) {
+		paths = append(paths, item.(map[string]any)["path"])
+	}
+	return paths
+}
+
+// TestDoc covers the claims of the comment of the command about its trusted folders, its
+// streams and its environment.
 func TestDoc(t *testing.T) {
 	t.Parallel()
+
+	t.Run("TrustedFolders", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("serves a call in the workspace of a wd under the folder of --trust DIR", func(t *testing.T) {
+			t.Parallel()
+			trusted, away := trustedProject(t)
+			client := session(t, environment(t, "TECHNE_MOCK=1"), "--structured", "--trust", trusted, t.TempDir())
+			assert.Equal(t, relatedIn(t, client, away), []any{"b.mock"}, "the paths of the relations")
+		})
+
+		t.Run("serves a call in the workspace of a wd under the folder of --trust=DIR", func(t *testing.T) {
+			t.Parallel()
+			trusted, away := trustedProject(t)
+			client := session(t, environment(t, "TECHNE_MOCK=1"), "--structured", "--trust="+trusted, t.TempDir())
+			assert.Equal(t, relatedIn(t, client, away), []any{"b.mock"}, "the paths of the relations")
+		})
+
+		t.Run("serves a wd relative to the workspace root", func(t *testing.T) {
+			t.Parallel()
+			trusted, _ := trustedProject(t)
+			home := filepath.Join(trusted, "home")
+			assert.NoError(t, os.Mkdir(home, 0o755), "the error of Mkdir")
+			client := session(t, environment(t, "TECHNE_MOCK=1"), "--structured", "--trust", trusted, home)
+			assert.Equal(t, relatedIn(t, client, "../away"), []any{"b.mock"}, "the paths of the relations")
+		})
+	})
 
 	t.Run("Streams", func(t *testing.T) {
 		t.Parallel()
