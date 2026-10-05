@@ -4,7 +4,7 @@ title: Operations and the write path
 author: Roy Klopper
 status: Accepted
 created: 2026-09-01
-updated: 2026-09-24
+updated: 2026-10-05
 discussion: none
 supersedes: none
 superseded-by: none
@@ -48,17 +48,17 @@ Twelve operations, named `verb.subject`.
 
 | Operation | Target | Rewrites references | Weakest fidelity that can be correct |
 |---|---|---|---|
-| `rename.symbol` | symbol | yes | resolved |
+| `rename.symbol` | symbol or span | yes | resolved |
 | `rename.file` | file | yes | resolved |
 | `move.file` | file | yes | resolved |
-| `move.symbol` | symbol | yes | resolved |
+| `move.symbol` | symbol or span | yes | resolved |
 | `extract.function` | span | no | resolved |
 | `extract.variable` | span | no | resolved |
-| `extract.interface` | symbol | no | resolved |
-| `inline.variable` | symbol | yes | resolved |
-| `inline.constant` | symbol | yes | resolved |
-| `change.signature` | symbol | yes | resolved |
-| `implement.interface` | symbol | no | resolved |
+| `extract.interface` | symbol or span | no | resolved |
+| `inline.variable` | symbol or span | yes | resolved |
+| `inline.constant` | symbol or span | yes | resolved |
+| `change.signature` | symbol or span | yes | resolved |
+| `implement.interface` | symbol or span | no | resolved |
 | `document.symbol` | symbol or span | no | syntactic |
 
 `document.symbol` writes a comment above a declaration and touches
@@ -67,12 +67,14 @@ correctly. It is in the table to show that the minimum is a property of
 the operation rather than a global setting. Every other operation either
 rewrites references or needs a type to be correct.
 
-It is also the one operation that takes a span as readily as a symbol. A
-name and a kind do not pick out one declaration, because a unit
-declaring two methods called `Get` satisfies one identity twice, and the
-prose to write is the caller's rather than something derived from the
-target. A caller that has already resolved which declaration it means
-says so by position.
+Every operation on one declaration takes a span as readily as a symbol.
+A name and a kind do not pick out one declaration, because a unit
+declaring two methods called `Get` satisfies one identity twice. A caller
+that has already resolved which declaration it means gives its position.
+A span does not pick out one declaration either. The names that one
+declaration lists share its span, as the parameters `have` and `want` of
+`func growCap(have, want int)` do. A span target also sets the ID of the
+declaration. The span and the ID together pick out one declaration.
 
 ### Types
 
@@ -111,7 +113,10 @@ const (
 	TargetSpan
 )
 
-// Target says what to operate on. Exactly one field matching Kind is set.
+// Target is what an operation applies to. Kind selects the field that
+// names it. A span target can also set Symbol to the ID of the declaration
+// whose span it is, because the names that one declaration lists share its
+// span.
 type Target struct {
 	Kind   TargetKind
 	Symbol sema.ID
