@@ -103,7 +103,9 @@ func (e *Engine) Plan(
 	var stuck []string
 	for _, one := range v.held() {
 		for i, f := range one.Syntax {
-			stuck = append(stuck, m.typed(v.fset, one, f, one.CompiledGoFiles[i], rewrites)...)
+			if full := v.sourceOf(one, i); full != "" {
+				stuck = append(stuck, m.typed(v, one, f, full, rewrites)...)
+			}
 		}
 	}
 	if len(stuck) > 0 {
@@ -176,11 +178,13 @@ func (e *Engine) ends(target edit.Target, args edit.Args) (source.Path, source.P
 	return from, to, nil
 }
 
-// compiling returns the package of v that compiles the file at full, with its syntax, or nil.
+// compiling returns the package of v that compiles the file at full, with its syntax, or nil. The
+// syntax of a file that imports C is the file that cgo generates in its place, by the rule of
+// [view.sourceOf].
 func compiling(v *view, full string) (*packages.Package, *ast.File) {
 	for _, pkg := range v.held() {
 		for i, f := range pkg.Syntax {
-			if pkg.CompiledGoFiles[i] == full {
+			if v.sourceOf(pkg, i) == full {
 				return pkg, f
 			}
 		}
@@ -214,7 +218,12 @@ func (v *view) moving(pkg *packages.Package, file *ast.File, dir string) (*move,
 		moved: map[token.Position]bool{}, remaining: map[token.Position]bool{},
 		movedNames: map[string]bool{}, remainingNames: map[string]bool{},
 	}
-	for _, f := range pkg.Syntax {
+	for i, f := range pkg.Syntax {
+		// The declarations that cgo generates for no file of the package, such as the functions
+		// that call C, go with the file that calls them.
+		if v.sourceOf(pkg, i) == "" {
+			continue
+		}
 		positions, names := m.moved, m.movedNames
 		if f != file {
 			positions, names = m.remaining, m.remainingNames
@@ -343,11 +352,13 @@ func replace(start, end int, text string) edit.TextEdit {
 	}
 }
 
-// typed adds the edits of f, the file at full of pkg, to rewrites. It binds each name with the
-// types of pkg. It returns the names that the move has to qualify and cannot: an unexported
-// name, and any name of an external test package, which no file imports.
+// typed adds the edits of f, the syntax of the file at full of pkg, to rewrites. It binds each
+// name with the types of pkg, and places each edit in the file at full by the rule of
+// [view.placed], so an edit of a file that cgo generates in place of the file is an edit of the
+// file. It returns the names that the move has to qualify and cannot: an unexported name, and any
+// name of an external test package, which no file imports.
 func (m *move) typed(
-	fset *token.FileSet,
+	v *view,
 	pkg *packages.Package,
 	f *ast.File,
 	full string,
@@ -361,7 +372,10 @@ func (m *move) typed(
 		}
 		return true
 	})
-	offset := func(p token.Pos) int { return fset.Position(p).Offset }
+	offset := func(p token.Pos) int {
+		_, at := v.placed(p)
+		return at.Offset
+	}
 	external := strings.HasSuffix(m.fromName, testSuffix)
 	target := m.toName
 	if local := importedAs(f, m.toPath, m.toName); local != "" {
@@ -387,7 +401,7 @@ func (m *move) typed(
 		if object == nil {
 			return true
 		}
-		declared := fset.Position(object.Pos())
+		declared := v.fset.Position(object.Pos())
 		// The name of a top-level declaration is the selector of a selector expression only
 		// behind the name of an imported package.
 		s, qualified := selected[name]
@@ -444,7 +458,7 @@ func (m *move) typed(
 	if !external {
 		links.own = importedAs(f, m.toPath, m.toName)
 	}
-	edits = append(edits, m.linked(fset, f, r, links)...)
+	edits = append(edits, m.linked(offset, f, r, links)...)
 	if len(edits) == 0 && !swap {
 		return stuck
 	}
@@ -600,12 +614,13 @@ type linking struct {
 }
 
 // linked returns the edits that keep the godoc links of f, a file of the role r, pointing at
-// the declarations that they name, with the qualifiers of links.
-func (m *move) linked(fset *token.FileSet, f *ast.File, r role, links linking) []edit.TextEdit {
+// the declarations that they name, with the qualifiers of links. offset returns the offset of a
+// position of f in the file that the edits change.
+func (m *move) linked(offset func(token.Pos) int, f *ast.File, r role, links linking) []edit.TextEdit {
 	var out []edit.TextEdit
 	for _, group := range f.Comments {
 		for _, c := range group.List {
-			start := fset.Position(c.Pos()).Offset
+			start := offset(c.Pos())
 			for _, at := range docLink.FindAllStringSubmatchIndex(c.Text, -1) {
 				begin := start + at[2]
 				if one, rewritten := m.pathLinked(c.Text[at[2]:at[3]], begin, r); rewritten {
@@ -703,14 +718,15 @@ func (e *Engine) written(m *move, rewrites map[string]*rewrite) ([]edit.Change, 
 
 // imports returns content, a file that a move rewrote, with the imports that it uses: the
 // source or the destination package where it names them, and the destination in place of the
-// source for a swap. It prints the file as gofmt does, with the line endings of content.
+// source for a swap and by the rule of [move.replaces]. It prints the file as gofmt does, with
+// the line endings of content.
 func (m *move) imports(full string, content []byte, r *rewrite) ([]byte, error) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, full, content, parser.ParseComments)
 	if err != nil {
 		return nil, err
 	}
-	if r.swap {
+	if r.swap || m.replaces(f) {
 		astutil.RewriteImport(fset, f, m.fromPath, m.toPath)
 	}
 	names := map[string]string{m.fromPath: m.fromName, m.toPath: m.toName}
@@ -747,6 +763,19 @@ func (m *move) imports(full string, content []byte, r *rewrite) ([]byte, error) 
 		return bytes.ReplaceAll(grouped, []byte("\n"), []byte("\r\n")), nil
 	}
 	return grouped, nil
+}
+
+// replaces reports whether f, a file that a move rewrote, imports the destination in place of
+// the source. f then imports the source under a name, not blank and not a dot, and no longer
+// qualifies a name with it. The destination has the last element of its import path as its name,
+// and f does not import it. The path of the destination then replaces the path of the source in
+// the same import, on the same line. A new import would follow the import of C of a file of cgo
+// on the next line, without the blank line between them. [move.imports] then deletes an import
+// that f does not use and adds an import that f needs, as for any other file.
+func (m *move) replaces(f *ast.File) bool {
+	local := importedAs(f, m.fromPath, m.fromName)
+	return local != "" && !qualifies(f, local) && m.toName == path.Base(m.toPath) &&
+		importedAs(f, m.toPath, m.toName) == ""
 }
 
 // printing prints a file as goimports does, and does not add or delete an import.

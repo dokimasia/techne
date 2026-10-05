@@ -39,6 +39,52 @@ func TestRelate(t *testing.T) {
 			assert.HasPrefix(t, got.Items[0].Via, "func (s *Store) Total()", "the source line of the first use")
 		})
 
+		t.Run("returns the span of a use in a file that cgo compiles", func(t *testing.T) {
+			t.Parallel()
+			got, err := cgoUses(t)
+			assert.NoError(t, err, "Relate of the uses of Now")
+			at := got.Items[0].At
+			assert.Equal(t, cgoFile[at.Start.Offset:at.End.Offset], "Now", "the text of the span of the use")
+		})
+
+		t.Run("returns the source line of a use in a file that cgo compiles", func(t *testing.T) {
+			t.Parallel()
+			got, err := cgoUses(t)
+			assert.NoError(t, err, "Relate of the uses of Now")
+			assert.Equal(t, got.Items[0].Via, "func One() int { return int(C.one()) + clock.Now() }",
+				"the source line of the use")
+		})
+
+		t.Run("returns the span of a declaration in a file that cgo compiles", func(t *testing.T) {
+			t.Parallel()
+			got, err := cgoUses(t)
+			assert.NoError(t, err, "Relate of the uses of Now")
+			to := got.Items[0].To.Span
+			assert.Equal(t, cgoFile[to.Start.Offset:to.End.Offset], "One", "the text of the span of One")
+		})
+
+		t.Run("returns a use in its own file where a line directive names another", func(t *testing.T) {
+			t.Parallel()
+			files := map[string]string{
+				"clock/clock.go": clocks()["clock/clock.go"],
+				"x/x.go": "package x\n\nimport \"example.com/p/clock\"\n\n//line other.go:100\n" +
+					"func Use() int { return clock.Now() }\n",
+			}
+			got, err := serving(t, files).Relate(t.Context(), engine.Request{Scope: "clock"},
+				sema.NewID(golang.Language, "clock", "Now", sema.KindFunction), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of the uses of Now")
+			assert.Equal(t, places(got.Items), []string{"x/x.go:5"}, "the sites of the uses")
+			assert.Equal(t, got.Items[0].Via, "func Use() int { return clock.Now() }", "the source line of the use")
+		})
+
+		t.Run("finds a declaration in its own file where a line directive names another", func(t *testing.T) {
+			t.Parallel()
+			files := map[string]string{"x/x.go": "package x\n\n//line other.go:100\nfunc Use() int { return 1 }\n"}
+			_, err := serving(t, files).Relate(t.Context(), engine.Request{Scope: "x/x.go"},
+				sema.NewID(golang.Language, "x", "Use", sema.KindFunction), sema.CalledBy)
+			assert.NoError(t, err, "Relate of the callers of Use")
+		})
+
 		t.Run("returns the caller of a function", func(t *testing.T) {
 			t.Parallel()
 			got, err := serving(t, whole()).Relate(t.Context(), engine.Request{Scope: "."},
@@ -184,4 +230,13 @@ func TestRelate(t *testing.T) {
 			assert.Empty(t, got.Items, "the uses of the Store of other")
 		})
 	})
+}
+
+// cgoUses returns the answer of the checker to the uses of the function Now of the package clock
+// of [clocks], which [cgoFile] uses in c/c.go.
+func cgoUses(t *testing.T) (engine.Result[sema.Relation], error) {
+	t.Helper()
+	files := map[string]string{"clock/clock.go": clocks()["clock/clock.go"], "c/c.go": cgoFile}
+	return serving(t, files).Relate(t.Context(), engine.Request{Scope: "clock"},
+		sema.NewID(golang.Language, "clock", "Now", sema.KindFunction), sema.ReferencedBy)
 }

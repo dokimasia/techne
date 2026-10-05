@@ -67,9 +67,11 @@ type view struct {
 	// index builds files on the first call of [view.file].
 	index sync.Once
 	files map[*token.File]*ast.File
-	// list builds compiled on the first call of [view.compiles].
-	list     sync.Once
-	compiled map[string]bool
+	// list builds compiled and generated on the first call of [view.compiles] or
+	// [view.generates].
+	list      sync.Once
+	compiled  map[string]bool
+	generated map[string]bool
 	// name builds paths on the first call of [view.contains].
 	name  sync.Once
 	paths map[string]bool
@@ -170,6 +172,39 @@ func (v *view) file(pos token.Pos) *ast.File {
 	return v.files[v.fset.File(pos)]
 }
 
+// placed returns the file of the position at and the position of at in that file.
+//
+// The syntax of a file that imports C is the file that cgo generates in its place, in the build
+// cache, by the rule of [view.generates]. Its line directives give the path, the lines and the
+// columns of the original file, and its byte offsets are offsets of the generated file. For a position of such a file, placed returns the original file, and the offset of the
+// line and the column there, which it reads from disk: the offset of the end of a file that
+// cannot be read. A column that a line directive leaves unknown is the start of its line. The
+// position of any other file is its own, also where a line directive of the file names another.
+func (v *view) placed(at token.Pos) (string, source.Position) {
+	own := v.fset.PositionFor(at, false)
+	if !v.generates(own.Filename) {
+		return own.Filename, source.Position{Offset: own.Offset, Line: own.Line - 1, Column: own.Column - 1}
+	}
+	named := v.fset.Position(at)
+	line, column := named.Line-1, max(named.Column-1, 0)
+	content, _ := os.ReadFile(named.Filename)
+	return named.Filename, source.Position{Offset: byteAt(content, line, column), Line: line, Column: column}
+}
+
+// sourceOf returns the path of the file of pkg whose syntax is the i-th file of the syntax of
+// pkg: the file at its own path, or the file that the line directives of a file that cgo
+// generates in place of a file of pkg name. It returns the empty string for a file that cgo
+// generates for no file of pkg, such as the declarations of the types of C.
+func (v *view) sourceOf(pkg *packages.Package, i int) string {
+	if compiled := pkg.CompiledGoFiles[i]; !v.generates(compiled) {
+		return compiled
+	}
+	if named := v.fset.Position(pkg.Syntax[i].Package).Filename; slices.Contains(pkg.GoFiles, named) {
+		return named
+	}
+	return ""
+}
+
 // expanded returns the name of the file of a position, with the $GOROOT prefix that the export
 // data of the standard library writes replaced by the root of the Go toolchain.
 func (v *view) expanded(name string) string {
@@ -181,15 +216,32 @@ func (v *view) expanded(name string) string {
 
 // compiles reports whether a package of v compiles the file at full, an absolute path.
 func (v *view) compiles(full string) bool {
+	v.listed()
+	return v.compiled[full]
+}
+
+// generates reports whether the file at full is a file that cgo generates for a package of v: a
+// file that the package compiles and does not list among its Go files.
+func (v *view) generates(full string) bool {
+	v.listed()
+	return v.generated[full]
+}
+
+// listed builds compiled and generated, once.
+func (v *view) listed() {
 	v.list.Do(func() {
-		v.compiled = map[string]bool{}
+		v.compiled, v.generated = map[string]bool{}, map[string]bool{}
 		for _, pkg := range v.all() {
 			for _, one := range slices.Concat(pkg.GoFiles, pkg.CompiledGoFiles) {
 				v.compiled[one] = true
 			}
+			for _, one := range pkg.CompiledGoFiles {
+				if !slices.Contains(pkg.GoFiles, one) {
+					v.generated[one] = true
+				}
+			}
 		}
 	})
-	return v.compiled[full]
 }
 
 // walked is what one walk of the workspace found.

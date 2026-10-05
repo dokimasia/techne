@@ -36,11 +36,10 @@ func (e *Engine) symbolFor(v *view, of types.Object) (sema.Symbol, bool) {
 		return sema.Symbol{}, false
 	}
 
-	at := v.fset.Position(of.Pos())
-	file := v.expanded(at.Filename)
-	start := source.Position{Offset: at.Offset, Line: at.Line - 1, Column: at.Column - 1}
+	named, start := v.placed(of.Pos())
+	file := v.expanded(named)
 	if v.file(of.Pos()) == nil {
-		start = located(file, at.Line-1, of.Name())
+		start = located(file, start.Line, of.Name())
 	}
 	p := e.pathOf(file)
 	unit := source.Path(e.declared.Namespace(string(p)))
@@ -278,23 +277,18 @@ func (s sources) read(full string) []byte {
 	return content
 }
 
-// sited returns the span of width bytes at a position, and the source line that the position
-// is on, without the white space around it.
+// sited returns the span of width bytes at a position in the file that the position names, by
+// the rule of [view.placed], and the source line that the position is on, without the white
+// space around it.
 func (e *Engine) sited(v *view, files sources, at token.Pos, width int) (source.Span, string) {
 	if !at.IsValid() {
 		return source.Span{}, ""
 	}
-	held := v.fset.Position(at)
-	span := source.Span{
-		Path:  e.pathOf(held.Filename),
-		Start: source.Position{Offset: held.Offset, Line: held.Line - 1, Column: held.Column - 1},
-		End: source.Position{
-			Offset: held.Offset + width,
-			Line:   held.Line - 1,
-			Column: held.Column - 1 + width,
-		},
-	}
-	return span, strings.TrimSpace(lang.LineAt(files.read(held.Filename), held.Offset))
+	named, start := v.placed(at)
+	end := start
+	end.Offset, end.Column = start.Offset+width, start.Column+width
+	span := source.Span{Path: e.pathOf(named), Start: start, End: end}
+	return span, strings.TrimSpace(lang.LineAt(files.read(named), start.Offset))
 }
 
 // enclosing returns the innermost declaration that contains a position of pkg, and reports

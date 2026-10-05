@@ -155,7 +155,8 @@ func (e *Engine) object(
 			if held == nil || ident.Name != of.Base() {
 				continue
 			}
-			p := e.pathOf(v.fset.Position(held.Pos()).Filename)
+			named, _ := v.placed(held.Pos())
+			p := e.pathOf(named)
 			if !lang.Within(p, scope) || !req.Tests && e.declared.IsTest(string(p)) {
 				continue
 			}
@@ -196,8 +197,8 @@ func (e *Engine) kinded(found sema.Symbol, of sema.ID) bool {
 func (e *Engine) sites(v *view, declared []types.Object) []string {
 	out := make([]string, 0, len(declared))
 	for _, one := range declared {
-		at := v.fset.Position(one.Pos())
-		out = append(out, fmt.Sprintf("%s:%d", e.pathOf(at.Filename), at.Line))
+		named, at := v.placed(one.Pos())
+		out = append(out, fmt.Sprintf("%s:%d", e.pathOf(named), at.Line+1))
 	}
 	slices.Sort(out)
 	return out

@@ -54,6 +54,20 @@ const (
 		"func Both() int { return src.Moved() + src.Twice() }\n"
 )
 
+// cgoUser is a file of user that imports C and calls src.Moved, and cgoUserMoved is cgoUser
+// after the move of Moved to dst. cgoMoved is a file of src that imports C and declares Moved,
+// and cgoMovedTo is cgoMoved after its move to dst.
+const (
+	cgoUser = "package user\n\n// int one(void) { return 1; }\nimport \"C\"\n\nimport \"example.com/p/src\"\n\n" +
+		"// One returns one more than [src.Moved].\nfunc One() int { return int(C.one()) + src.Moved() }\n"
+	cgoUserMoved = "package user\n\n// int one(void) { return 1; }\nimport \"C\"\n\nimport \"example.com/p/dst\"\n\n" +
+		"// One returns one more than [dst.Moved].\nfunc One() int { return int(C.one()) + dst.Moved() }\n"
+	cgoMoved = "package src\n\n// int two(void) { return 2; }\nimport \"C\"\n\n" +
+		"// Moved returns two.\nfunc Moved() int { return int(C.two()) }\n"
+	cgoMovedTo = "package dst\n\n// int two(void) { return 2; }\nimport \"C\"\n\n" +
+		"// Moved returns two.\nfunc Moved() int { return int(C.two()) }\n"
+)
+
 // excluded returns a file of the package named pkg that the build constraints of the load
 // exclude, with body after its package clause.
 func excluded(pkg, body string) string {
@@ -253,6 +267,22 @@ func TestMove(t *testing.T) {
 				"package dst\n\n// Use returns [Moved].\nfunc Use() int { return Moved() }\n", "the file of dst")
 		})
 
+		t.Run("rewrites a use of a moved declaration in a file that cgo compiles", func(t *testing.T) {
+			t.Parallel()
+			files := map[string]string{movedFrom: called, stayFile: stay, dstFile: base, "user/cgo.go": cgoUser}
+			root, _ := moved(t, files, movedFrom, movedTo)
+			builds(t, root)
+			assert.Equal(t, content(t, root, "user/cgo.go"), cgoUserMoved, "the file of user that cgo compiles")
+		})
+
+		t.Run("moves a file that cgo compiles", func(t *testing.T) {
+			t.Parallel()
+			files := map[string]string{movedFrom: cgoMoved, stayFile: stay, dstFile: base}
+			root, _ := moved(t, files, movedFrom, movedTo)
+			builds(t, root)
+			assert.Equal(t, content(t, root, movedTo), cgoMovedTo, "the moved file")
+		})
+
 		t.Run("imports the destination in a file that imports the source", func(t *testing.T) {
 			t.Parallel()
 			root, _ := moved(t, callers(), movedFrom, movedTo)
@@ -279,6 +309,25 @@ func TestMove(t *testing.T) {
 			root, _ := moved(t, files, movedFrom, movedTo)
 			builds(t, root)
 			assert.Contains(t, content(t, root, userFile), "return dst.Moved()", "the file of user")
+		})
+
+		t.Run("keeps a named import of the source that the file still uses", func(t *testing.T) {
+			t.Parallel()
+			files := callers()
+			files[userFile] = "package user\n\nimport s \"example.com/p/src\"\n\n" +
+				"func Both() int { return s.Moved() + s.Twice() }\n"
+			root, _ := moved(t, files, movedFrom, movedTo)
+			builds(t, root)
+			assert.Contains(t, content(t, root, userFile), "s \"example.com/p/src\"", "the file of user")
+		})
+
+		t.Run("keeps a blank import of the source", func(t *testing.T) {
+			t.Parallel()
+			files := callers()
+			files[userFile] = "package user\n\nimport _ \"example.com/p/src\"\n\n// One is not [src.Moved].\nvar One = 1\n"
+			root, _ := moved(t, files, movedFrom, movedTo)
+			builds(t, root)
+			assert.Contains(t, content(t, root, userFile), "import _ \"example.com/p/src\"", "the file of user")
 		})
 
 		t.Run("deletes a named import of the source that the file no longer uses", func(t *testing.T) {
