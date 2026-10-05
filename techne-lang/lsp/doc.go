@@ -19,7 +19,8 @@
 //
 //   - [Engine.Resolve]: textDocument/definition.
 //   - [Engine.Relate]: textDocument/references, the call hierarchy,
-//     textDocument/implementation and the type hierarchy.
+//     textDocument/implementation and the type hierarchy, and textDocument/definition at the
+//     imports of a declaration.
 //   - [Engine.Plan]: textDocument/rename to rename a declaration, workspace/willRenameFiles to
 //     move a file, and a code action to extract a function.
 //   - [Engine.Format]: textDocument/formatting.
@@ -45,6 +46,17 @@
 // A [Server.Related] server returns, among the references of a declaration, the references of
 // the declarations that it redeclares. The engine requests the definition at each reference and
 // at each caller, and keeps a site whose definition is the declaration or that has no definition.
+//
+// A [Server.Imports] server relates the imports of a declaration through the outline engine of
+// the language when that engine implements [engine.Relator]. The outline engine finds each
+// import that writes the name of the declaration. The engine requests the definition at the end
+// of each name of the import, and keeps the import when a definition is in the file of the
+// declaration, or under the scope of a request without one. typescript-language-server resolves
+// an import specifier to the specifier itself, and the engine then asks at the module of the
+// import statement. A server that declares [Server.Resolving] can resolve an import to no file
+// while it starts, as metals does while it compiles a build, and the engine asks again at such
+// an import once a second until the server has run that long. An import under another name,
+// such as an import of a directory, is not found, so the answer is partial.
 //
 // tsserver searches for the implementations of a declaration in the project of the file of the
 // request only. For a [Server.Tsserver] server the engine also asks at a use of the declaration

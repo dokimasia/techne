@@ -95,6 +95,8 @@ func Server() lsp.Server {
 		Serves:      lsp.Binding(),
 		Extracts:    lsp.Refactor{Kind: "refactor.extract.function"},
 		Indentation: lsp.Indentation{Size: "java.format.tabSize", Spaces: "java.format.insertSpaces"},
+		// jdtls returns the file of the imported class at the end of an import.
+		Imports: true,
 	}
 }
 

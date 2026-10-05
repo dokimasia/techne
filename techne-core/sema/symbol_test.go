@@ -81,6 +81,22 @@ func TestSymbol(t *testing.T) {
 		})
 	})
 
+	t.Run("File", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the file named by its path", func(t *testing.T) {
+			t.Parallel()
+			got := sema.File("go", "clock/clock.go")
+			assert.Equal(t, got, sema.Symbol{
+				ID:       sema.NewID("go", "clock/clock.go", "clock/clock.go", sema.KindFile),
+				Name:     "clock/clock.go",
+				Kind:     sema.KindFile,
+				Language: "go",
+				Span:     source.Span{Path: "clock/clock.go"},
+			}, "the file clock/clock.go")
+		})
+	})
+
 	t.Run("Annotation", func(t *testing.T) {
 		t.Parallel()
 

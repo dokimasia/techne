@@ -89,6 +89,9 @@ func Server() lsp.Server {
 		// loads the workspace and after each textDocument/didSave, and
 		// publishes the errors of rustc.
 		DiskCheck: "rust-analyzer/flycheck/",
+		// rust-analyzer returns the file of a module at the end of its mod
+		// declaration and of a use path.
+		Imports: true,
 	}
 }
 

@@ -41,7 +41,8 @@
 //
 // [Engine] returns an engine that reads every declaration from the scripted server. [Parsing]
 // returns an engine that reads the declarations of a file through [Parser], the outline engine
-// of [Language], as a language module passes its tree-sitter engine.
+// of [Language], as a language module passes its tree-sitter engine. [Parser] also finds the
+// files that import a name, as the tree-sitter engine finds them by the name an import writes.
 //
 // # Dependency position
 //

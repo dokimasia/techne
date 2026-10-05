@@ -33,10 +33,12 @@ import (
 //     its value or its pointer, and the types that satisfy an interface.
 //   - [sema.Embeds] and [sema.EmbeddedBy]: the types that a struct or an interface embeds, and
 //     the types that embed it.
+//   - [sema.ImportedBy]: the import lines that name a package, by the rule of
+//     [Engine.importers].
 //
-// Relate declines the imports and their inverse, which the parser reads from the source. It
-// returns a skipped result for a scope without a Go file. It declines an ID that no
-// declaration in the scope has, and refuses an ID that two or more declarations have.
+// Relate declines the imports of a file, which the parser reads from the source. It returns a
+// skipped result for a scope without a Go file. It declines an ID that no declaration in the
+// scope has, and refuses an ID that two or more declarations have.
 //
 // An error of the program of the declaration lowers the answer when it is on a line that
 // writes the name of the declaration outside every site of the answer.
@@ -61,6 +63,9 @@ func (e *Engine) Relate(
 	v, err := e.current(ctx, w)
 	if err != nil {
 		return engine.Result[sema.Relation]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
+	}
+	if kind == sema.ImportedBy {
+		return e.importers(v, req, of)
 	}
 
 	subject, pkg, err := e.object(v, req, of)
@@ -109,13 +114,14 @@ func (e *Engine) Relate(
 }
 
 // serves reports whether the type checker returns the relations of kind. The parser reads the
-// imports from the source.
+// imports of a file from the source.
 func serves(kind sema.RelationKind) bool {
 	switch kind {
 	case sema.References, sema.ReferencedBy,
 		sema.Calls, sema.CalledBy,
 		sema.Implements, sema.ImplementedBy,
-		sema.Embeds, sema.EmbeddedBy:
+		sema.Embeds, sema.EmbeddedBy,
+		sema.ImportedBy:
 		return true
 	}
 	return false

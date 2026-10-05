@@ -65,6 +65,11 @@ func TestLanguage(t *testing.T) {
 	t.Run("Server", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("declares that the server returns the imported file at an import", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, java.Server().Imports, "Imports of jdtls")
+		})
+
 		t.Run("keeps the Eclipse metadata of a project out of its root", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, java.Server().Command, []string{"jdtls", outside}, "the command of jdtls")

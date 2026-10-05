@@ -50,6 +50,11 @@ func TestLanguage(t *testing.T) {
 	t.Run("Server", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("declares that the server returns the imported file at an import", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, python.Server().Imports, "Imports of pyright")
+		})
+
 		t.Run("runs pyright-langserver over stdio", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, python.Server().Command, []string{"pyright-langserver", "--stdio"},

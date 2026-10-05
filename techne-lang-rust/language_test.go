@@ -56,6 +56,11 @@ func TestLanguage(t *testing.T) {
 	t.Run("Server", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("declares that the server returns the imported file at an import", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, rust.Server().Imports, "Imports of rust-analyzer")
+		})
+
 		t.Run("runs rust-analyzer without arguments", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, rust.Server().Command, []string{"rust-analyzer"}, "the command of rust-analyzer")

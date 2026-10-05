@@ -72,6 +72,11 @@ func TestLanguage(t *testing.T) {
 	t.Run("Server", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("leaves the importers of a package to the type checker", func(t *testing.T) {
+			t.Parallel()
+			assert.False(t, golang.Server().Imports, "Imports of gopls")
+		})
+
 		t.Run("runs gopls serve", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, golang.Server().Command, []string{"gopls", "serve"}, "the command of gopls")

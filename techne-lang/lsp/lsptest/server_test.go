@@ -55,6 +55,22 @@ func TestServer(t *testing.T) {
 			assert.True(t, lsptest.Server(lsptest.Extracts).Extracts.Offered(),
 				"Offered of the extraction of the Extracts mode")
 		})
+
+		t.Run("declares Imports for the Resolves mode", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, lsptest.Server(lsptest.Resolves).Imports, "Imports of the Resolves mode")
+		})
+
+		t.Run("declares Imports for the ResolvesLate mode", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, lsptest.Server(lsptest.ResolvesLate).Imports, "Imports of the ResolvesLate mode")
+		})
+
+		t.Run("declares a Resolving of three times LateStart for the ResolvesLate mode", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, lsptest.Server(lsptest.ResolvesLate).Resolving, 3*lsptest.LateStart,
+				"Resolving of the ResolvesLate mode")
+		})
 	})
 
 	t.Run("Engine", func(t *testing.T) {

@@ -55,6 +55,11 @@ func TestLanguage(t *testing.T) {
 	t.Run("Server", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("declares that the server returns the included file at an include", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, c.Server().Imports, "Imports of clangd")
+		})
+
 		t.Run("runs clangd without arguments", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, c.Server().Command, []string{"clangd"}, "the command of clangd")

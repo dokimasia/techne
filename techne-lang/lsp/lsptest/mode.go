@@ -334,7 +334,30 @@ const (
 	//
 	// On any other line it responds with no location.
 	Shorthand Mode = "shorthand"
+
+	// Resolves responds as the Default mode does, and to textDocument/definition on a line whose
+	// text starts with import with the start of line 2 of the file that the import names up to
+	// the position: the text from the start of the name at the position through the position,
+	// with the [Extension] suffix, under the root of the workspace. A file of the tests declares
+	// its first name on line 2. It responds with no location when no such file exists. So a
+	// server responds at the end of the name of an import with a declaration of the imported
+	// file, and jdtls responds at the qualifier of a Java import with no location.
+	//
+	// On a line whose text is from m import n, it responds at the module m as at the name of an
+	// import, and at the name n with the range of n, as typescript-language-server responds at
+	// an import specifier with the specifier.
+	Resolves Mode = "resolves"
+
+	// ResolvesLate responds as the Resolves mode does from [LateStart] after it starts. Before
+	// that it responds to textDocument/definition on a line that imports with no location, as
+	// metals does while it compiles the build that it imported.
+	ResolvesLate Mode = "resolves-late"
 )
+
+// LateStart is how long after its start the ResolvesLate mode responds to a definition at an
+// import with no location. A question waits 300 ms for the server to go quiet, so it asks before
+// the mode resolves an import.
+const LateStart = 1500 * time.Millisecond
 
 // LoadTime is how long the Loading mode takes to end its progress job.
 const LoadTime = 2 * time.Second

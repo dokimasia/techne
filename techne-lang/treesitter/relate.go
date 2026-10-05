@@ -140,13 +140,7 @@ func far(one sema.Symbol, p source.Path, kind sema.RelationKind, l source.Langua
 	if kind == sema.Imports {
 		return one
 	}
-	return sema.Symbol{
-		ID:       sema.NewID(l, p, string(p), sema.KindFile),
-		Name:     string(p),
-		Kind:     sema.KindFile,
-		Language: l,
-		Span:     source.Span{Path: p},
-	}
+	return sema.File(l, p)
 }
 
 // imports reports whether name matches the import written as written, by

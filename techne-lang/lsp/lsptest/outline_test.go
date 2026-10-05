@@ -4,6 +4,8 @@
 package lsptest_test
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -14,6 +16,17 @@ import (
 	"go.dokimi.dev/techne/lang/lsp"
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
+
+// importing is a file whose line 2 imports other and a/store. The name a/store starts at
+// character 14 of the line and ends at character 21.
+const importing = "package b\n\nimport other, a/store\n"
+
+// naming is a file whose line 2 imports value from a/store. The module a/store starts at
+// character 5 of the line and ends at character 12, and the name value starts at character 20.
+const naming = "package b\n\nfrom a/store import value\n"
+
+// store is the ID of a variable store at the root of a workspace, whose imports a test relates.
+var store = sema.NewID(lsptest.Language, ".", "store", sema.KindVariable)
 
 // outlined returns the declarations that [lsptest.Parser] reports for the file a.fake with
 // content.
@@ -147,11 +160,101 @@ func TestOutline(t *testing.T) {
 			}, "the parents of the shorthand properties")
 		})
 
+		t.Run("returns an import for each name of an import line with the span of the line", func(t *testing.T) {
+			t.Parallel()
+			got := outlined(t, importing)
+			other, imported := named(t, got, "other"), named(t, got, "a/store")
+			assert.Equal(t, imported.Kind, sema.KindImport, "the kind of a/store")
+			assert.Equal(t, importing[imported.Span.Start.Offset:imported.Span.End.Offset], "import other, a/store",
+				"the text of the span of a/store")
+			assert.Equal(t, other.Span, imported.Span, "the span of other")
+		})
+
+		t.Run("returns an import of the module of a from line with the span of the line", func(t *testing.T) {
+			t.Parallel()
+			module := named(t, outlined(t, naming), "a/store")
+			assert.Equal(t, module.Kind, sema.KindImport, "the kind of a/store")
+			assert.Equal(t, naming[module.Span.Start.Offset:module.Span.End.Offset], "from a/store import value",
+				"the text of the span of a/store")
+		})
+
+		t.Run("returns an import of the name of a from line with the span of the name", func(t *testing.T) {
+			t.Parallel()
+			name := named(t, outlined(t, naming), "value")
+			assert.Equal(t, name.Kind, sema.KindImport, "the kind of value")
+			assert.Equal(t, naming[name.Span.Start.Offset:name.Span.End.Offset], "value",
+				"the text of the span of value")
+		})
+
 		t.Run("skips a scope without the extension of the language", func(t *testing.T) {
 			t.Parallel()
 			got, err := lsptest.Parser(t.TempDir()).Outline(t.Context(), engine.Request{Scope: "notes.md"})
 			assert.NoError(t, err, "Outline of notes.md")
 			assert.True(t, got.Skipped, "the skip of notes.md")
+		})
+	})
+
+	t.Run("Relate", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns an import line that lists the name", func(t *testing.T) {
+			t.Parallel()
+			got := importersOf(t, map[string]string{
+				"b.fake": "package b\n\nimport store\n", "c.fake": "package c\n\nimport other\n",
+			})
+			assert.Equal(t, files(got), []string{"b.fake"}, "the files that import store")
+		})
+
+		t.Run("returns an import line that lists a name ending in the name after a slash", func(t *testing.T) {
+			t.Parallel()
+			got := importersOf(t, map[string]string{"a.fake": importing})
+			assert.Equal(t, files(got), []string{"a.fake"}, "the files that import store")
+		})
+
+		t.Run("returns one relation for a line that lists two names that end in the name", func(t *testing.T) {
+			t.Parallel()
+			got := importersOf(t, map[string]string{"a.fake": "package b\n\nimport store, a/store\n"})
+			assert.Length(t, got, 1, "the relations of the line")
+		})
+
+		t.Run("stops at the limit of the request", func(t *testing.T) {
+			t.Parallel()
+			root := lsptest.Workspace(t, map[string]string{
+				"b.fake": "package b\n\nimport store\n", "c.fake": "package c\n\nimport store\n",
+			})
+			got, err := relator(t, root).Relate(t.Context(), engine.Request{Scope: ".", Limit: 1}, store,
+				sema.ImportedBy)
+			assert.NoError(t, err, "Relate of the importers of store")
+			assert.Equal(t, files(got.Items), []string{"b.fake"}, "the files that import store")
+		})
+
+		t.Run("starts a relation at the span of the import line", func(t *testing.T) {
+			t.Parallel()
+			got := importersOf(t, map[string]string{"a.fake": importing})
+			at := got[0].At
+			assert.Equal(t, importing[at.Start.Offset:at.End.Offset], "import other, a/store", "the text of the site")
+			assert.Equal(t, got[0].Via, "import other, a/store", "the line of the site")
+		})
+
+		t.Run("returns the importing file as the far end", func(t *testing.T) {
+			t.Parallel()
+			got := importersOf(t, map[string]string{"a.fake": importing})
+			assert.Equal(t, got[0].To, sema.File(lsptest.Language, "a.fake"), "the far end of the relation")
+		})
+
+		t.Run("returns ErrDecline for a kind other than ImportedBy", func(t *testing.T) {
+			t.Parallel()
+			_, err := relator(t, t.TempDir()).Relate(t.Context(), engine.Request{Scope: "."}, store, sema.Imports)
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Relate")
+		})
+
+		t.Run("returns an error for a file that it cannot read", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			assert.NoError(t, os.Symlink(filepath.Join(root, "absent"), filepath.Join(root, "gone.fake")),
+				"the link gone.fake")
+			_, err := relator(t, root).Relate(t.Context(), engine.Request{Scope: "."}, store, sema.ImportedBy)
+			assert.HasError(t, err, "Relate over gone.fake")
 		})
 	})
 
@@ -206,4 +309,32 @@ func shorthands(t *testing.T, root string) lsp.Shorthands {
 	reads, implements := lsptest.Parser(root).(lsp.Shorthands)
 	assert.True(t, implements, "the parser implements lsp.Shorthands")
 	return reads
+}
+
+// relator returns the parser of the workspace at root as an engine that relates declarations,
+// and fails the test when it is not one.
+func relator(t *testing.T, root string) engine.Relator {
+	t.Helper()
+	relates, implements := lsptest.Parser(root).(engine.Relator)
+	assert.True(t, implements, "the parser implements engine.Relator")
+	return relates
+}
+
+// importersOf returns the relations of [sema.ImportedBy] of [store] that the parser returns over a
+// workspace of files.
+func importersOf(t *testing.T, files map[string]string) []sema.Relation {
+	t.Helper()
+	got, err := relator(t, lsptest.Workspace(t, files)).Relate(t.Context(), engine.Request{Scope: "."}, store,
+		sema.ImportedBy)
+	assert.NoError(t, err, "Relate of the importers of store")
+	return got.Items
+}
+
+// files returns the path of the site of each relation, in order.
+func files(relations []sema.Relation) []string {
+	out := make([]string, 0, len(relations))
+	for _, one := range relations {
+		out = append(out, string(one.At.Path))
+	}
+	return out
 }

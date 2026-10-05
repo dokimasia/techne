@@ -84,6 +84,8 @@ func Server() lsp.Server {
 		Command:    []string{server},
 		LanguageID: lsp.IdentityC,
 		Serves:     serves,
+		// clangd returns the included header at the end of an #include.
+		Imports: true,
 	}
 }
 

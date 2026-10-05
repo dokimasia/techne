@@ -146,6 +146,21 @@ type Server struct {
 	// the TypeScript repository. The engine keeps an implementation at the name of a
 	// declaration that can implement, such as a class, and leaves out the others.
 	Contextual bool
+
+	// Imports reports that the definition at the end of the name of an import returns the file
+	// that the import imports, as the definition at "./store" in import { Store } from "./store"
+	// returns store.ts. The engine then serves [sema.ImportedBy] by the rule of
+	// [Engine.importers]. csharp-ls returns one declaration of the namespace of a using
+	// directive, which other files declare as well, so a server of C# does not set it. The type
+	// checker of Go relates the importers of a package by its import path, so gopls does not set
+	// it either.
+	Imports bool
+
+	// Resolving is how long after its start the server can resolve an import to no file and later
+	// to the imported file, with no work-done progress job in between. metals does so while it
+	// compiles the build that it imported. Until the server has run that long, [Engine.importers]
+	// asks again at such an import once a second. Zero asks once.
+	Resolving time.Duration
 }
 
 // Refactor names the code action of a server that performs one refactoring.

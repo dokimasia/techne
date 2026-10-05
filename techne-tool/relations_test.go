@@ -180,6 +180,13 @@ func TestRelations(t *testing.T) {
 			assert.Equal(t, over.related[0].Limit, tool.DefaultRelations, "the limit of the request")
 		})
 
+		t.Run("asks with the test files", func(t *testing.T) {
+			t.Parallel()
+			over := calling()
+			relatedOver(t, over, store)
+			assert.True(t, over.related[0].Tests, "Tests of the request")
+		})
+
 		t.Run("returns the first relations up to the limit with a truncation caveat", func(t *testing.T) {
 			t.Parallel()
 			got := relatedOver(t, calls(60), store)

@@ -88,6 +88,10 @@ const (
 	shopRange    = `{"start":{"line":2,"character":0},"end":{"line":6,"character":43}}`
 	// getterName is the name of the interface of [Getter], which follows [Content].
 	getterName = `{"start":{"line":9,"character":5},"end":{"line":9,"character":11}}`
+	// importedStart is the range at which the Resolves mode responds in an imported file: the
+	// start of line 2, where a file of the tests declares its first name after the package
+	// clause.
+	importedStart = `{"start":{"line":2,"character":0},"end":{"line":2,"character":1}}`
 )
 
 // The names of [Literal] that the Shorthand mode responds with: the field size, the variable
@@ -176,6 +180,9 @@ type script struct {
 
 	// delay is how long the Quiet and Loads modes take to publish the report of an open.
 	delay time.Duration
+
+	// started is the time at which the process began to serve.
+	started time.Time
 }
 
 // serve runs the script over stdin and stdout until the client sends exit or closes stdin,
@@ -198,6 +205,7 @@ func serve(mode Mode) int {
 		delay = given
 	}
 	s := &script{
+		started:   time.Now(),
 		delay:     delay,
 		restarted: restarted,
 		mode:      mode,
@@ -832,6 +840,13 @@ func (s *script) definition(params json.RawMessage) string {
 		return "[" + location(s.seen, storeName) + "]"
 	case Projected:
 		return s.imported(params)
+	case Resolves, ResolvesLate:
+		if file, imports := s.resolved(params); imports {
+			if s.mode == ResolvesLate && time.Since(s.started) < LateStart {
+				return "[]"
+			}
+			return file
+		}
 	case Minified, Nested, Uncalled:
 		found := called(s.holding[s.seen], bundleCallee)
 		if len(found) == 0 {
@@ -1324,6 +1339,46 @@ func (s *script) imported(params json.RawMessage) string {
 		}
 	}
 	return "[]"
+}
+
+// resolved is the answer of the Resolves mode to textDocument/definition on a line that imports,
+// by the rule of [Resolves], and whether the line is one. On a line whose text starts with
+// [importKeyword], the name at the position starts after the keyword, a comma or a space. On a
+// line whose text starts with [fromKeyword], the module starts after the keyword, and a position
+// on the name after [fromSeparator] is the name itself. The answer for a position on a keyword
+// or past the end of the line is no location.
+func (s *script) resolved(params json.RawMessage) (string, bool) {
+	line, character := position(params)
+	lines := strings.Split(s.view(s.seen), "\n")
+	if line < 0 || line >= len(lines) {
+		return "", false
+	}
+	text := strings.TrimLeft(lines[line], "\t ")
+	indent := len(lines[line]) - len(text)
+	end := character - indent + 1
+	var start int
+	switch module, name, _ := strings.Cut(strings.TrimPrefix(text, fromKeyword), fromSeparator); {
+	case strings.HasPrefix(text, importKeyword):
+		if end <= len(importKeyword) || end > len(text) {
+			return "[]", true
+		}
+		start = strings.LastIndexAny(text[:end], ", ") + 1
+	case strings.HasPrefix(text, fromKeyword) && end > len(text)-len(name):
+		return "[" + location(s.seen, ranged(line, indent+len(text)-len(name), indent+len(text))) + "]", true
+	case strings.HasPrefix(text, fromKeyword):
+		if end <= len(fromKeyword) || end > len(fromKeyword)+len(module) {
+			return "[]", true
+		}
+		start = len(fromKeyword)
+	default:
+		return "", false
+	}
+	written := text[start:end]
+	file := filepath.Join(uri.URI(s.root).FsPath(), filepath.FromSlash(written+Extension))
+	if _, err := os.Stat(file); err != nil {
+		return "[]", true
+	}
+	return "[" + location(string(uri.File(file)), importedStart) + "]", true
 }
 
 // wordAt is the identifier of line that contains the character at column, or the empty

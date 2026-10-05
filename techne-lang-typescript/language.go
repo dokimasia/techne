@@ -127,6 +127,10 @@ func Server() lsp.Server {
 		Indentation: lsp.Indentation{Options: "formattingOptions"},
 		// A rename rewrites every use of a re-exported declaration.
 		Settings: lsp.TypeScriptSettings(),
+		// tsserver returns the imported module at the end of the specifier of an import, for a
+		// relative path and for a subpath import of package.json.
+		Imports:   true,
+		Resolving: lsp.TypeScriptResolving,
 	}
 }
 
@@ -149,6 +153,9 @@ func Native() lsp.Server {
 		Scoped:     true,
 		// A rename rewrites every use of a re-exported declaration.
 		Settings: lsp.NativeSettings(),
+		// tsc --lsp returns the imported module at the end of the specifier of an import, for a
+		// relative path and for a subpath import of package.json.
+		Imports: true,
 	}
 }
 

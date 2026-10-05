@@ -101,8 +101,9 @@ func (c Connected) render() string {
 
 // Relations returns the tool that reports the relations of one declaration in one direction.
 // It finds the declaration by the rule of [addressed], and asks the language of the
-// declaration with its span, the limit of the input and [DefaultRelations] for none. It fits
-// the output to the budget with the run of relations that [longest] finds.
+// declaration with its span, the limit of the input and [DefaultRelations] for none. It asks
+// with the test files, because a test that imports, calls or references a declaration uses it.
+// It fits the output to the budget with the run of relations that [longest] finds.
 func Relations(reads Outliner, relates Relator) (Tool, error) {
 	return New("relations", relationsDescription,
 		func(ctx context.Context, in RelationsInput) (RelationsOutput, error) {
@@ -126,6 +127,7 @@ func Relations(reads Outliner, relates Relator) (Tool, error) {
 				Language:  source.Language(in.Language),
 				Preferred: preferred,
 				Limit:     limit,
+				Tests:     true,
 			}
 			of, failure := addressed(ctx, reads, req, scope, in.Name, declaredKind, in.Line)
 			switch {

@@ -75,6 +75,11 @@ const server = "metals"
 // imports the build of the workspace before it answers.
 const importing = 2 * time.Minute
 
+// resolving is how long after its start Metals can resolve an import to no
+// file, while it compiles the build that it imported. Metals returned its
+// first definitions 7 to 12.5 seconds after its start.
+const resolving = 20 * time.Second
+
 // Server returns the declaration of Metals, the language server of Scala.
 //
 // Metals asks the client whether to import the build, and a client
@@ -91,6 +96,9 @@ func Server() lsp.Server {
 		Loading:    importing,
 		LanguageID: lsp.IdentityScala,
 		Serves:     lsp.Binding(),
+		// Metals returns the file of the imported class at the end of an import.
+		Imports:   true,
+		Resolving: resolving,
 	}
 }
 

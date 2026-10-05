@@ -60,6 +60,11 @@ func TestLanguage(t *testing.T) {
 	t.Run("Server", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("declares that the server returns the imported file at an import", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, scala.Server().Imports, "Imports of metals")
+		})
+
 		t.Run("runs metals without arguments", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, scala.Server().Command, []string{"metals"}, "the command of Metals")
@@ -79,6 +84,11 @@ func TestLanguage(t *testing.T) {
 		t.Run("waits two minutes for the build import", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, scala.Server().Loading, 2*time.Minute, "the loading time of Metals")
+		})
+
+		t.Run("asks again at an import for twenty seconds after the start", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, scala.Server().Resolving, 20*time.Second, "Resolving of Metals")
 		})
 	})
 }

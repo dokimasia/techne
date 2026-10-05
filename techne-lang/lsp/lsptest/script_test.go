@@ -19,6 +19,7 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
+	"go.lsp.dev/uri"
 )
 
 // publishing is the method of the notification with the diagnostics of a document, and
@@ -215,6 +216,28 @@ const (
 	asked = 2
 )
 
+// defining returns the textDocument/definition request of a.fake at a character of line 2, the
+// line of the imports of [importing] and [naming], with the id [asked].
+func defining(character int) string {
+	return fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"textDocument/definition","params":`+
+		`{"textDocument":{"uri":"file:///tmp/a.fake"},"position":{"line":2,"character":%d}}}`,
+		asked, character)
+}
+
+// located returns the URIs of the locations of the reply to the request [asked].
+func (p *process) located(t *testing.T) []string {
+	t.Helper()
+	var got []struct {
+		URI string `json:"uri"`
+	}
+	assert.NoError(t, json.Unmarshal(p.reply(t, asked), &got), "the reply to definition")
+	out := make([]string, 0, len(got))
+	for _, one := range got {
+		out = append(out, one.URI)
+	}
+	return out
+}
+
 // initialized is the notification that follows the reply to initialize. saving is the didSave
 // notification of a.fake.
 const (
@@ -321,6 +344,85 @@ func TestScript(t *testing.T) {
 				{Name: "t", Range: on(2, 4, 15), Selection: on(2, 7, 8)},
 				{Name: "Sum", Range: on(4, 0, 31), Selection: on(4, 5, 8)},
 			}, "the symbols of Pair")
+		})
+
+		t.Run("responds at the end of an import name with the file of the name in the Resolves mode",
+			func(t *testing.T) {
+				t.Parallel()
+				root := lsptest.Workspace(t, map[string]string{"a/store.fake": "package a\n"})
+				p := run(t, lsptest.Resolves)
+				p.initializeAt(t, root)
+				p.send(t, opening(importing))
+				p.send(t, defining(20))
+				assert.Equal(t, p.located(t), []string{string(uri.File(filepath.Join(root, "a", "store.fake")))},
+					"the definition at the end of a/store")
+			})
+
+		t.Run("responds at the qualifier of an import name with no location in the Resolves mode",
+			func(t *testing.T) {
+				t.Parallel()
+				root := lsptest.Workspace(t, map[string]string{"a/store.fake": "package a\n"})
+				p := run(t, lsptest.Resolves)
+				p.initializeAt(t, root)
+				p.send(t, opening(importing))
+				p.send(t, defining(14))
+				assert.Empty(t, p.located(t), "the definition at the qualifier of a/store")
+			})
+
+		t.Run("responds at the end of an import name with no location before LateStart in the ResolvesLate mode",
+			func(t *testing.T) {
+				t.Parallel()
+				root := lsptest.Workspace(t, map[string]string{"a/store.fake": "package a\n"})
+				p := run(t, lsptest.ResolvesLate)
+				p.initializeAt(t, root)
+				p.send(t, opening(importing))
+				p.send(t, defining(20))
+				assert.Empty(t, p.located(t), "the definition at the end of a/store")
+			})
+
+		t.Run("responds at the end of an import name with its file from LateStart in the ResolvesLate mode",
+			func(t *testing.T) {
+				t.Parallel()
+				root := lsptest.Workspace(t, map[string]string{"a/store.fake": "package a\n"})
+				p := run(t, lsptest.ResolvesLate)
+				p.initializeAt(t, root)
+				p.send(t, opening(importing))
+				time.Sleep(lsptest.LateStart)
+				p.send(t, defining(20))
+				assert.Equal(t, p.located(t), []string{string(uri.File(filepath.Join(root, "a", "store.fake")))},
+					"the definition at the end of a/store")
+			})
+
+		t.Run("responds at the end of the module of a from line with its file in the Resolves mode",
+			func(t *testing.T) {
+				t.Parallel()
+				root := lsptest.Workspace(t, map[string]string{"a/store.fake": "package a\n"})
+				p := run(t, lsptest.Resolves)
+				p.initializeAt(t, root)
+				p.send(t, opening(naming))
+				p.send(t, defining(11))
+				assert.Equal(t, p.located(t), []string{string(uri.File(filepath.Join(root, "a", "store.fake")))},
+					"the definition at the end of a/store")
+			})
+
+		t.Run("responds at the name of a from line with the name in the Resolves mode", func(t *testing.T) {
+			t.Parallel()
+			p := run(t, lsptest.Resolves)
+			p.initializeAt(t, lsptest.Workspace(t, map[string]string{"a/store.fake": "package a\n"}))
+			p.send(t, opening(naming))
+			p.send(t, defining(24))
+			var got []struct {
+				URI   string `json:"uri"`
+				Range struct {
+					Start struct {
+						Character int `json:"character"`
+					} `json:"start"`
+				} `json:"range"`
+			}
+			assert.NoError(t, json.Unmarshal(p.reply(t, asked), &got), "the reply to definition")
+			assert.Length(t, got, 1, "the definitions at value")
+			assert.Equal(t, got[0].URI, "file:///tmp/a.fake", "the file of the definition at value")
+			assert.Equal(t, got[0].Range.Start.Character, 20, "the start of the definition at value")
 		})
 
 		t.Run("publishes the report of an opened document after QuietDelay in the Quiet mode", func(t *testing.T) {

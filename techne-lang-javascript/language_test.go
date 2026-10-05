@@ -72,6 +72,17 @@ func TestLanguage(t *testing.T) {
 	t.Run("Server", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("declares that the server returns the imported file at an import", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, javascript.Server().Imports, "Imports of typescript-language-server")
+		})
+
+		t.Run("declares how long after its start the server resolves an import late", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, javascript.Server().Resolving, lsp.TypeScriptResolving,
+				"Resolving of typescript-language-server")
+		})
+
 		t.Run("runs typescript-language-server over stdio", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, javascript.Server().Command, []string{"typescript-language-server", "--stdio"},
@@ -138,6 +149,11 @@ func TestLanguage(t *testing.T) {
 
 	t.Run("Native", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("declares that the server returns the imported file at an import", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, javascript.Native().Imports, "Imports of tsc")
+		})
 
 		t.Run("runs tsc over LSP on stdio", func(t *testing.T) {
 			t.Parallel()

@@ -55,6 +55,11 @@ func TestLanguage(t *testing.T) {
 	t.Run("Server", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("declares that the server returns the required file at a require_relative", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, ruby.Server().Imports, "Imports of ruby-lsp")
+		})
+
 		t.Run("runs ruby-lsp without arguments", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, ruby.Server().Command, []string{"ruby-lsp"}, "the command of ruby-lsp")

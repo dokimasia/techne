@@ -78,6 +78,8 @@ func Server() lsp.Server {
 		Command:    []string{server, stdio},
 		LanguageID: lsp.IdentityPython,
 		Serves:     lsp.Binding(),
+		// pyright returns the file of the imported module at the end of the module of an import.
+		Imports: true,
 	}
 }
 

@@ -6,6 +6,7 @@ package lsptest
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -15,6 +16,17 @@ import (
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/core/trust"
+)
+
+// The words of a line that imports, for [Parser] and the Resolves mode.
+const (
+	// importKeyword starts a line such as import store.
+	importKeyword = "import "
+	// fromKeyword starts a line such as from store import value.
+	fromKeyword = "from "
+	// fromSeparator separates the module of a line that starts with fromKeyword from the name
+	// that the line imports.
+	fromSeparator = " import "
 )
 
 // Parser returns the outline engine of [Language] over the workspace at root. It reads a file
@@ -29,18 +41,84 @@ import (
 //   - a field for each line whose text starts with field, such as field size int
 //   - a field for each shorthand property, a name written alone between braces as s in { s },
 //     which spans the name, as the tags query of TypeScript declares a shorthand property
+//   - an import for each name that a line whose text starts with import lists, separated by
+//     a comma and a space, such as other and a/store of import other, a/store
+//   - two imports for a line whose text is from m import n: m, and n, which spans the name n
+//     alone, as the tags query of TypeScript declares an import statement and an import
+//     specifier inside it
 //
 // A declaration whose line ends with an opening brace spans the lines through the next line
 // that is a closing brace. Any other declaration spans its text on its line, so the variables
-// of one line share a span. The parent of a declaration is the smallest declaration whose span
-// contains it.
+// of one line share a span, and so do the imports of a line that starts with import, as the
+// tags query of Python gives each name of from m import a, b the span of the statement. The
+// parent of a declaration is the smallest declaration whose span contains it.
 //
-// The engine also reads the calls of a file, as [parser.Calls] states, and its shorthand
-// properties, as [parser.Shorthands] states.
+// The engine also reads the calls of a file, as [parser.Calls] states, its shorthand
+// properties, as [parser.Shorthands] states, and the files that import a name, as
+// [parser.Relate] states.
 func Parser(root string) engine.Outliner { return parser{root: root} }
 
 // parser is the outline engine that [Parser] returns.
 type parser struct{ root string }
+
+// Relate returns the import lines of the workspace that list the name in of for
+// [sema.ImportedBy]. A line lists the name when one of its imports is the qualified name in of
+// or ends in it after a slash, as a/store ends in store. Each such line has one relation. Its
+// site is the span of the line and its far end is the file of the line. Relate reads the files
+// with the [Extension] suffix under the root in the order of [filepath.WalkDir], whatever the
+// scope of req. It stops at the [engine.Request.Limit] of req, as the port allows an engine to.
+//
+// Relate returns [engine.ErrDecline] for any other kind. It returns an error for a file that it
+// cannot read.
+func (p parser) Relate(
+	_ context.Context,
+	req engine.Request,
+	of sema.ID,
+	kind sema.RelationKind,
+) (engine.Result[sema.Relation], error) {
+	if kind != sema.ImportedBy {
+		return engine.Result[sema.Relation]{}, fmt.Errorf("%w: lsptest: the parser relates no %s", engine.ErrDecline,
+			kind)
+	}
+	name := of.Name()
+	var out []sema.Relation
+	walked := filepath.WalkDir(p.root, func(at string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || filepath.Ext(at) != Extension {
+			return err
+		}
+		content, err := os.ReadFile(at)
+		if err != nil {
+			return fmt.Errorf("lsptest: read %s: %w", at, err)
+		}
+		relative, err := filepath.Rel(p.root, at)
+		if err != nil {
+			return fmt.Errorf("lsptest: the path of %s: %w", at, err)
+		}
+		file := source.Path(filepath.ToSlash(relative))
+		related := map[int]bool{}
+		for _, one := range declarations(file, string(content)) {
+			matches := one.Name == name || strings.HasSuffix(one.Name, "/"+name)
+			if one.Kind != sema.KindImport || !matches || related[one.Span.Start.Offset] {
+				continue
+			}
+			related[one.Span.Start.Offset] = true
+			out = append(out, sema.Relation{
+				Kind: kind,
+				To:   sema.File(Language, file),
+				At:   one.Span,
+				Via:  string(content[one.Span.Start.Offset:one.Span.End.Offset]),
+			})
+			if len(out) == req.Limit {
+				return fs.SkipAll
+			}
+		}
+		return nil
+	})
+	if walked != nil {
+		return engine.Result[sema.Relation]{}, walked
+	}
+	return engine.Result[sema.Relation]{Items: out, Completeness: trust.ScopeTotal}, nil
+}
 
 // Calls returns the span of the name of each call of the file at p: an identifier that an
 // opening parenthesis follows, other than the name that a func declares. A path without the
@@ -196,6 +274,20 @@ func declarations(p source.Path, text string) []sema.Symbol {
 				name: word(text[len("field "):]),
 				span: spanned(n, len(line)-len(text), len(line)),
 			})
+		}
+		if text := strings.TrimLeft(line, "\t "); strings.HasPrefix(text, importKeyword) {
+			span := spanned(n, len(line)-len(text), len(line))
+			for name := range strings.SplitSeq(text[len(importKeyword):], ", ") {
+				read = append(read, found{kind: sema.KindImport, name: name, span: span})
+			}
+		}
+		if rest, from := strings.CutPrefix(strings.TrimLeft(line, "\t "), fromKeyword); from {
+			if module, name, split := strings.Cut(rest, fromSeparator); split {
+				start := len(line) - len(rest) - len(fromKeyword)
+				read = append(read,
+					found{kind: sema.KindImport, name: module, span: spanned(n, start, len(line))},
+					found{kind: sema.KindImport, name: name, span: spanned(n, len(line)-len(name), len(line))})
+			}
 		}
 		for _, one := range braced(p, n, starts[n], line) {
 			read = append(read, found{kind: sema.KindField, name: line[one.Start.Column:one.End.Column], span: one})

@@ -85,6 +85,8 @@ func Server() lsp.Server {
 		Command:    []string{server},
 		LanguageID: lsp.IdentityRuby,
 		Serves:     serves,
+		// ruby-lsp returns the required file at the end of the path of a require_relative.
+		Imports: true,
 	}
 }
 

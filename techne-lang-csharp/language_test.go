@@ -63,6 +63,11 @@ func TestLanguage(t *testing.T) {
 	t.Run("Server", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("declares that a using directive names no file that the server returns", func(t *testing.T) {
+			t.Parallel()
+			assert.False(t, csharp.Server().Imports, "Imports of csharp-ls")
+		})
+
 		t.Run("runs csharp-ls without arguments", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, csharp.Server().Command, []string{"csharp-ls"}, "the command of csharp-ls")

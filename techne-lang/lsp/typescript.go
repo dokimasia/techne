@@ -3,6 +3,8 @@
 
 package lsp
 
+import "time"
+
 // TypeScriptSettings returns a new map of the [Server.Settings] of typescript-language-server,
 // which the TypeScript and the JavaScript modules both declare. The server sends the tsserver
 // preference providePrefixAndSuffixTextForRename as false before a rename, and starts tsserver
@@ -26,6 +28,13 @@ func TypeScriptSettings() map[string]any {
 // tsserver past that heap, and tsserver exited while typescript-language-server went on
 // answering every request with nothing. With this heap the same searches peaked at 7.5 GB.
 const TSServerMemory = 8192
+
+// TypeScriptResolving is the [Server.Resolving] of typescript-language-server, which the
+// TypeScript and the JavaScript modules both declare. Right after its start, the server with
+// TypeScript 5.9.3 resolved an import of the imports field of package.json, as #a/store.ts, to
+// no file, and to the file 2 seconds later. Ten seconds after the open of the importing file it
+// resolved the import at once.
+const TypeScriptResolving = 5 * time.Second
 
 // NativeSettings returns a new map of the [Server.Settings] of tsc --lsp of TypeScript 7,
 // which the TypeScript and the JavaScript modules both declare. The server reads

@@ -34,9 +34,12 @@ import (
 //   - [sema.Implements] and [sema.ImplementedBy]: textDocument/implementation, whose direction
 //     depends on the declaration it is asked about.
 //   - [sema.Embeds] and [sema.EmbeddedBy]: the supertypes and subtypes of the type hierarchy.
+//   - [sema.ImportedBy] of a [Server.Imports] server: textDocument/definition at each import
+//     that the outline engine of the language finds by name, by the rule of [Engine.importers].
 //
-// Imports and their inverse have no request. Relate returns [engine.ErrDecline] for them, so
-// the tree-sitter engine reads them from the source.
+// The imports of a file have no request, and neither has [sema.ImportedBy] of any other
+// server. Relate returns [engine.ErrDecline] for them, so the tree-sitter engine reads them from
+// the source.
 //
 // Relate finds the declaration in the file of [engine.Request.Declared] when the request names
 // one, and asks the server about the name in that span when no symbol of the server matches
@@ -90,6 +93,7 @@ func (e *Engine) relating(
 		return engine.Result[sema.Relation]{Skipped: true, Completeness: trust.ScopeTotal}, nil
 	}
 	switch {
+	case kind == sema.ImportedBy && e.server.Imports:
 	case !related(kind):
 		return engine.Result[sema.Relation]{}, fmt.Errorf(
 			"%w: %s: no request returns %s", engine.ErrDecline, e.server.Name, kind)
@@ -105,6 +109,9 @@ func (e *Engine) relating(
 	defer e.reading()()
 	ctx, done := e.answered(ctx)
 	defer done()
+	if kind == sema.ImportedBy {
+		return e.importers(ctx, held, req, of)
+	}
 	found := newFinder(e, held)
 	subject, doc, known, err := e.declaring(ctx, found, req, of, files.Read)
 	switch {

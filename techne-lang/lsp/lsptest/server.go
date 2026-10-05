@@ -91,9 +91,11 @@ func Delaying(delay time.Duration) Option {
 // and no tier for format. The Asks mode is declared with settings and the sections of an
 // [lsp.Indentation], the Loading, Created and
 // Stuck modes with a loading time, the Extracts and Commands modes with the extraction they
-// offer, and the Quiet mode as [lsp.Server.Quiet]. The DiskChecks and DiskStuck modes are
-// declared with the check on disk of [DiskPrefix] and with [Unchecked], and the DiskStuck mode
-// with a loading time of one second.
+// offer, the Quiet mode as [lsp.Server.Quiet], and the Resolves mode as [lsp.Server.Imports].
+// The ResolvesLate mode is declared as [lsp.Server.Imports] with a [lsp.Server.Resolving] of
+// three times [LateStart]. The DiskChecks and DiskStuck modes are declared with the check on
+// disk of [DiskPrefix] and with [Unchecked], and the DiskStuck mode with a loading time of one
+// second.
 func Server(mode Mode, options ...Option) lsp.Server {
 	server := lsp.Server{
 		Name:       Name,
@@ -120,6 +122,10 @@ func Server(mode Mode, options ...Option) lsp.Server {
 		server.Extracts = lsp.Refactor{Kind: extractKind, Titles: []string{"into function"}}
 	case Quiet:
 		server.Quiet = true
+	case Resolves:
+		server.Imports = true
+	case ResolvesLate:
+		server.Imports, server.Resolving = true, 3*LateStart
 	case DiskChecks:
 		server.DiskCheck, server.Unchecked = DiskPrefix, Unchecked
 	case DiskStuck:

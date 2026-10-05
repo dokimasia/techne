@@ -50,6 +50,20 @@ type Symbol struct {
 	Snippet string `json:"snippet,omitempty"`
 }
 
+// File returns the file at p of the language l as a declaration: the far end of a relation
+// whose far end is a whole file, such as the importing file of an [ImportedBy] relation. The
+// declaration has the name p and the kind [KindFile]. Its span contains the path p and no
+// position.
+func File(l source.Language, p source.Path) Symbol {
+	return Symbol{
+		ID:       NewID(l, p, string(p), KindFile),
+		Name:     string(p),
+		Kind:     KindFile,
+		Language: l,
+		Span:     source.Span{Path: p},
+	}
+}
+
 // Annotated reports whether s has an annotation named name.
 func (s Symbol) Annotated(name string) bool {
 	for _, a := range s.Annotations {
