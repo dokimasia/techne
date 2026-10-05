@@ -22,8 +22,14 @@ type Grammar struct {
 
 	// Dialects maps each extension that Language cannot parse to the grammar
 	// that parses it, such as ".tsx" to the TSX grammar in TypeScript. Tags
-	// compiles against every dialect.
+	// and Shorthands compile against every dialect.
 	Dialects map[string]*ts.Language
+
+	// Shorthands is the source of a query that captures the name of each
+	// shorthand property of an object literal, a name that is the key and
+	// the value of the property at once, as file in { file }. It is empty
+	// for a language that writes none.
+	Shorthands string
 }
 
 // For returns the grammar that parses the file at p.

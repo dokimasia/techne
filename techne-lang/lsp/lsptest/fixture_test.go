@@ -114,6 +114,43 @@ func TestFixture(t *testing.T) {
 		})
 	})
 
+	t.Run("Literal", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("declares the field size at character 7 of line 3", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, line(lsptest.Literal, 3)[7:11], "size", "line 3, characters 7 to 11")
+		})
+
+		t.Run("declares the variable size at character 4 of line 6", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, line(lsptest.Literal, 6)[4:8], "size", "line 6, characters 4 to 8")
+		})
+
+		t.Run("writes the shorthand property of Make at character 32 of line 8", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, line(lsptest.Literal, 8)[5:9], "Make", "line 8, characters 5 to 9")
+			assert.Equal(t, line(lsptest.Literal, 8)[30:38], "{ size }", "line 8, characters 30 to 38")
+		})
+
+		t.Run("writes the shorthand property of Copy at character 32 of line 10", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, line(lsptest.Literal, 10)[5:9], "Copy", "line 10, characters 5 to 9")
+			assert.Equal(t, line(lsptest.Literal, 10)[30:38], "{ size }", "line 10, characters 30 to 38")
+		})
+
+		t.Run("writes the type Item at character 26 of line 8", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, line(lsptest.Literal, 8)[26:30], "Item", "line 8, characters 26 to 30")
+		})
+
+		t.Run("declares the method size of Item at character 14 of line 12", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, line(lsptest.Literal, 12)[14:18], "size", "line 12, characters 14 to 18")
+			assert.Contains(t, line(lsptest.Literal, 12), "(i Item)", "the receiver on line 12")
+		})
+	})
+
 	t.Run("Twins", func(t *testing.T) {
 		t.Parallel()
 

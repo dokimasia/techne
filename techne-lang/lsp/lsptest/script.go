@@ -90,6 +90,18 @@ const (
 	getterName = `{"start":{"line":9,"character":5},"end":{"line":9,"character":11}}`
 )
 
+// The names of [Literal] that the Shorthand mode responds with: the field size, the variable
+// size, the shorthand properties of Make and of Copy, the type Item of the literal of Make, and
+// the method size of Item.
+const (
+	fieldOfItem   = `{"start":{"line":3,"character":7},"end":{"line":3,"character":11}}`
+	variableSize  = `{"start":{"line":6,"character":4},"end":{"line":6,"character":8}}`
+	shorthandMake = `{"start":{"line":8,"character":32},"end":{"line":8,"character":36}}`
+	shorthandCopy = `{"start":{"line":10,"character":32},"end":{"line":10,"character":36}}`
+	itemInMake    = `{"start":{"line":8,"character":26},"end":{"line":8,"character":30}}`
+	methodOfItem  = `{"start":{"line":12,"character":14},"end":{"line":12,"character":18}}`
+)
+
 // The symbol kinds that the responses of the script use, as the protocol numbers them.
 const (
 	kindFile        = 1
@@ -826,6 +838,20 @@ func (s *script) definition(params json.RawMessage) string {
 			return "null"
 		}
 		return "[" + location(s.seen, found[0]) + "]"
+	case Shorthand:
+		switch line, _ := position(params); line {
+		case 8:
+			return "[" + strings.Join([]string{
+				location(s.seen, variableSize), location(s.seen, fieldOfItem),
+				location(s.seen, shorthandMake), location(s.seen, shorthandCopy), location(s.seen, itemInMake),
+			}, ",") + "]"
+		case 10:
+			return "[" + strings.Join([]string{
+				location(s.seen, variableSize), location(s.seen, fieldOfItem), location(s.seen, methodOfItem),
+				location(s.seen, shorthandMake), location(s.seen, shorthandCopy),
+			}, ",") + "]"
+		}
+		return "[]"
 	}
 	return "[" + location(s.seen, storeName) + "]"
 }
@@ -854,7 +880,7 @@ func (s *script) references() string {
 		return "[" + location(other, at) + "]"
 	case (s.mode == Loading || s.mode == Stuck || s.mode == Created) && !s.isLoaded():
 		return "[]"
-	case s.mode == Receivers || s.mode == Impls || s.mode == Aims:
+	case s.mode == Receivers || s.mode == Impls || s.mode == Aims || s.mode == Shorthand:
 		return "[]"
 	case s.mode == Minified || s.mode == Nested:
 		var out []string

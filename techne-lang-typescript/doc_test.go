@@ -13,7 +13,8 @@ import (
 
 // TestDoc runs the conformance suite over a fixture that declares every
 // form of TypeScript declaration once. The namespace import declares the
-// path and the binding under one name on one line.
+// path and the binding under one name on one line. The body of pick writes
+// two shorthand properties, and its destructuring parameter writes none.
 func TestDoc(t *testing.T) {
 	t.Parallel()
 
@@ -62,7 +63,9 @@ export function make<T>(value: T): Promise<T> {
   return Promise.resolve(value);
 }
 
-export function pick({ depth = 0, key: label = "" }: Options, [first = 1]: number[]): void {}
+export function pick({ depth = 0, key: label = "" }: Options, [first = 1]: number[]): void {
+  console.log({ depth, label });
+}
 `,
 			"pkg/index.ts": `export * as Shapes from "./shapes";
 export { Store as Vault } from "./store";
@@ -103,6 +106,8 @@ export default make(1);
 			{Name: "depth", Kind: sema.KindParameter, Visibility: sema.Unexported},
 			{Name: "label", Kind: sema.KindParameter, Visibility: sema.Unexported},
 			{Name: "first", Kind: sema.KindParameter, Visibility: sema.Unexported},
+			{Name: "depth", Kind: sema.KindField},
+			{Name: "label", Kind: sema.KindField},
 			{Name: "Shapes", Kind: sema.KindModule},
 			{Name: "./shapes", Kind: sema.KindImport, Visibility: sema.Unexported, Simple: "shapes"},
 			{Name: "./store", Kind: sema.KindImport, Visibility: sema.Unexported, Simple: "store"},
@@ -110,5 +115,6 @@ export default make(1);
 			{Name: "Vault", Kind: sema.KindConstant},
 			{Name: "default", Kind: sema.KindConstant},
 		},
+		Shorthands: []string{"depth", "label"},
 	})
 }

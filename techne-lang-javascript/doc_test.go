@@ -13,7 +13,8 @@ import (
 
 // TestDoc runs the conformance suite over a fixture that declares every
 // form of JavaScript declaration. The classes Store and Cache both declare
-// the method get.
+// the method get. The body of pick writes two shorthand properties, and its
+// destructuring parameter writes none.
 func TestDoc(t *testing.T) {
 	t.Parallel()
 
@@ -58,7 +59,9 @@ export function helper(a, b) {
   return a;
 }
 
-export function pick({ depth = 0, key: label = "" }, [first = 1]) {}
+export function pick({ depth = 0, key: label = "" }, [first = 1]) {
+  console.log({ depth, label });
+}
 `,
 			"pkg/index.js": `export * as Shapes from "./shapes.js";
 export { Store as Vault } from "./store.js";
@@ -96,6 +99,8 @@ export default helper(1);
 			{Name: "depth", Kind: sema.KindParameter, Visibility: sema.Unexported},
 			{Name: "label", Kind: sema.KindParameter, Visibility: sema.Unexported},
 			{Name: "first", Kind: sema.KindParameter, Visibility: sema.Unexported},
+			{Name: "depth", Kind: sema.KindField},
+			{Name: "label", Kind: sema.KindField},
 			{Name: "Shapes", Kind: sema.KindModule},
 			{Name: "./shapes.js", Kind: sema.KindImport, Visibility: sema.Unexported, Simple: "shapes"},
 			{Name: "./store.js", Kind: sema.KindImport, Visibility: sema.Unexported, Simple: "store"},
@@ -103,5 +108,6 @@ export default helper(1);
 			{Name: "Vault", Kind: sema.KindConstant},
 			{Name: "default", Kind: sema.KindConstant},
 		},
+		Shorthands: []string{"depth", "label"},
 	})
 }

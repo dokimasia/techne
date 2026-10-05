@@ -55,6 +55,16 @@ const Locals = "package a\n\nfunc Wait() int {\n\tvar t = 1\n\treturn t\n}\n"
 // start at characters 4 and 7 of the line, and the function Sum on line 4, which uses both.
 const Pair = "package a\n\nvar s, t = 1, 2\n\nfunc Sum() int { return s + t }\n"
 
+// Literal is a file whose struct Item on line 2 declares the field size on line 3, which
+// declares the variable size on line 6, whose functions Make and Copy on lines 8 and 10 each
+// return an Item with the shorthand property { size }, and whose method size of Item is on line
+// 12. The name of the field starts at character 7 of its line, that of the variable at
+// character 4, each shorthand property at character 32, and the name of the method at
+// character 14.
+const Literal = "package a\n\ntype Item struct {\n\tfield size int\n}\n\nvar size = 1\n\n" +
+	"func Make() Item { return Item{ size } }\n\nfunc Copy() Item { return Item{ size } }\n\n" +
+	"func (i Item) size() int { return 1 }\n"
+
 // Twins is a file with the types Store and Cache on lines 2 and 6, which each declare a method
 // Get, on lines 4 and 8. The name of each method starts at character 16 of its line.
 const Twins = "package a\n\ntype Store struct{}\n\nfunc (s *Store) Get() int { return 1 }\n\n" +

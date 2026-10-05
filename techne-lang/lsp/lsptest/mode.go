@@ -320,6 +320,20 @@ const (
 	// the first such line of the document, as tsserver responds at a use of an imported name
 	// with the binding of the import, and with no location when the document has no such line.
 	Projected Mode = "projected"
+
+	// Shorthand responds as the Default mode does, and to textDocument/references with no
+	// location. It responds to textDocument/definition at the shorthand properties of [Literal],
+	// as tsserver responds at a shorthand property, with the declarations of the value and then
+	// those of the key, and the key of an object literal that types another one is a shorthand
+	// property too:
+	//
+	//   - on line 8, with the variable size, the field size, both shorthand properties and the
+	//     Item of the literal of Make, at which [Parser] declares nothing
+	//   - on line 10, with the variable size, the field size, the method size and both shorthand
+	//     properties, as a key of a union type has two declarations
+	//
+	// On any other line it responds with no location.
+	Shorthand Mode = "shorthand"
 )
 
 // LoadTime is how long the Loading mode takes to end its progress job.

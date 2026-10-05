@@ -161,7 +161,10 @@
 //
 // A rename rewrites every use of a declaration. [TypeScriptSettings] and [NativeSettings] turn
 // off the alias that typescript-language-server and tsc --lsp write in an export statement that
-// re-exports a renamed declaration.
+// re-exports a renamed declaration. The servers then write a bare new name at a shorthand
+// property of an object literal, as blob for { file }. When the outline engine of the language
+// implements [Shorthands], the engine writes such an edit out as file: blob or blob: file, from
+// the declarations that the definition at the name returns.
 //
 // # Positions
 //

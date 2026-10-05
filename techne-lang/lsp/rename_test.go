@@ -188,7 +188,7 @@ func TestRename(t *testing.T) {
 			root := lsptest.Workspace(t, map[string]string{"a.fake": lsptest.Locals})
 			e := lsptest.Parsing(t, root, lsptest.Server(lsptest.Aims))
 			got, err := e.Plan(t.Context(), engine.Request{Scope: "a.fake"}, edit.RenameSymbol,
-				parsed(t, root, "t"), edit.Args{edit.ArgNewName: "count"})
+				variable(t, root, "t"), edit.Args{edit.ArgNewName: "count"})
 			assert.NoError(t, err, "Plan of the rename of the local t")
 			assert.Length(t, got.Items, 1, "the changes of the plan")
 			assert.Equal(t, got.Items[0].Edits[0].Span.Start.Offset, strings.Index(lsptest.Locals, "var t")+len("var "),
@@ -200,7 +200,7 @@ func TestRename(t *testing.T) {
 			root := lsptest.Workspace(t, map[string]string{"a.fake": lsptest.Pair})
 			e := lsptest.Parsing(t, root, lsptest.Server(lsptest.Aims))
 			got, err := e.Plan(t.Context(), engine.Request{Scope: "a.fake"}, edit.RenameSymbol,
-				parsed(t, root, "t"), edit.Args{edit.ArgNewName: "count"})
+				variable(t, root, "t"), edit.Args{edit.ArgNewName: "count"})
 			assert.NoError(t, err, "Plan of the rename of t")
 			assert.Length(t, got.Items, 1, "the changes of the plan")
 			assert.Equal(t, got.Items[0].Edits[0].Span.Start.Offset, strings.Index(lsptest.Pair, "s, t")+len("s, "),
@@ -230,7 +230,7 @@ func TestRename(t *testing.T) {
 			server := lsptest.Server(lsptest.Aims)
 			server.Scoped = true
 			got, err := lsptest.Parsing(t, root, server).Plan(t.Context(), engine.Request{Scope: "a.fake"},
-				edit.RenameSymbol, parsed(t, root, "t"), edit.Args{edit.ArgNewName: "count"})
+				edit.RenameSymbol, variable(t, root, "t"), edit.Args{edit.ArgNewName: "count"})
 			assert.NoError(t, err, "Plan of the rename of the local t")
 			assert.False(t, cutShort(got.Caveats), "the plan has the caveat of a short preload")
 		})
@@ -286,18 +286,18 @@ func moving() string {
 		`{"kind":"rename","oldUri":"{file}","newUri":"{root}/vault.fake"}`)
 }
 
-// parsed returns the target by which a tool addresses the declaration name that [lsptest.Parser]
+// variable returns the target by which a tool addresses the variable name that [lsptest.Parser]
 // reads in a.fake of the workspace at root: the span of the declaration with its ID.
-func parsed(t *testing.T, root, name string) edit.Target {
+func variable(t *testing.T, root, name string) edit.Target {
 	t.Helper()
 	got, err := lsptest.Parser(root).Outline(t.Context(), engine.Request{Scope: "a.fake"})
 	assert.NoError(t, err, "Outline of a.fake")
 	for _, one := range got.Items {
-		if one.Name == name {
+		if one.Name == name && one.Kind == sema.KindVariable {
 			return edit.Target{Kind: edit.TargetSpan, Symbol: one.ID, Span: one.Span}
 		}
 	}
-	t.Fatalf("a.fake declares no %s", name)
+	t.Fatalf("a.fake declares no variable %s", name)
 	return edit.Target{}
 }
 

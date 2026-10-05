@@ -58,6 +58,13 @@ type Suite struct {
 	// Unclaimed is a path with an extension that the language does not
 	// claim, or empty.
 	Unclaimed string
+
+	// Shorthands lists the name of each shorthand property of an object
+	// literal in Files, such as value in { value }, in any order, and is
+	// empty for a language without them. Run compares it with the names that
+	// Shorthands of the engine returns for every file, so a shorthand of a
+	// destructuring pattern in Files fails when the engine returns it.
+	Shorthands []string
 }
 
 // Declared is one declaration of a fixture. Run compares Name, Kind and
@@ -208,6 +215,15 @@ func Run(t *testing.T, s Suite) {
 			spoiled.Tags = s.Grammar.Tags + "\n((_) @definition.no_such_shape)"
 			_, err := treesitter.New(fsys, s.Declaration, spoiled)
 			assert.ErrorIs(t, err, treesitter.ErrUnknownCapture, "New")
+		})
+
+		t.Run("returns an error for a shorthands query that does not compile", func(t *testing.T) {
+			t.Parallel()
+			spoiled := s.Grammar
+			spoiled.Shorthands = "(no_such_shape) @name"
+			_, err := treesitter.New(fsys, s.Declaration, spoiled)
+			assert.HasError(t, err, "New")
+			assert.Contains(t, err.Error(), "shorthands query", "the error of New")
 		})
 	})
 
@@ -423,6 +439,36 @@ func Run(t *testing.T, s Suite) {
 					),
 				)
 			}
+		})
+	})
+
+	t.Run("Shorthands", func(t *testing.T) {
+		t.Parallel()
+		e := build(t, fsys, s)
+
+		t.Run("returns the shorthand properties of the fixture", func(t *testing.T) {
+			t.Parallel()
+			var got []string
+			for path, content := range s.Files {
+				spans, err := e.Shorthands(t.Context(), source.Path(path))
+				assert.NoError(t, err, "Shorthands of "+path)
+				for _, one := range spans {
+					got = append(got, content[one.Start.Offset:one.End.Offset])
+				}
+			}
+			slices.Sort(got)
+			assert.Equal(t, got, slices.Sorted(slices.Values(s.Shorthands)), "the shorthand properties")
+		})
+
+		t.Run("returns no span for a path of another language without reading it", func(t *testing.T) {
+			t.Parallel()
+			if s.Unclaimed == "" {
+				t.Skip("the suite names no file of another language")
+			}
+			absent := source.Path("absent/" + s.Unclaimed)
+			got, err := e.Shorthands(t.Context(), absent)
+			assert.NoError(t, err, "Shorthands of "+string(absent))
+			assert.Empty(t, got, "the shorthand properties of "+string(absent))
 		})
 	})
 

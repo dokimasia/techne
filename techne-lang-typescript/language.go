@@ -32,6 +32,12 @@ const Language source.Language = "typescript"
 //go:embed queries/extends.scm
 var extendsQuery string
 
+// shorthandsQuery captures the name of each shorthand property of an object
+// literal.
+//
+//go:embed queries/shorthands.scm
+var shorthandsQuery string
+
 // Declaration returns the declaration of TypeScript. It claims .tsx,
 // because the server and the type checker read a .tsx file as TypeScript.
 // A rename across the two extensions is a rename within one language.
@@ -54,16 +60,18 @@ func Declaration() lang.Declaration {
 	}
 }
 
-// Grammar returns the tree-sitter grammar of TypeScript with the tags
-// query of the module. A .tsx file takes the TSX grammar of the same
-// binding, because the TypeScript grammar parses JSX as an error.
+// Grammar returns the tree-sitter grammar of TypeScript with the tags query
+// and the shorthands query of the module. A .tsx file takes the TSX grammar
+// of the same binding, because the TypeScript grammar parses JSX as an
+// error.
 func Grammar() treesitter.Grammar {
 	return treesitter.Grammar{
 		Language: ts.NewLanguage(binding.LanguageTypescript()),
 		Dialects: map[string]*ts.Language{
 			".tsx": ts.NewLanguage(binding.LanguageTSX()),
 		},
-		Tags: extendsQuery,
+		Tags:       extendsQuery,
+		Shorthands: shorthandsQuery,
 	}
 }
 

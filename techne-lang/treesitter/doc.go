@@ -16,6 +16,10 @@
 // patterns can match one declaration. The declaration takes the kind that
 // [MoreSpecific] ranks higher.
 //
+// A language whose object literals have shorthand properties, as
+// JavaScript and TypeScript write { file }, also supplies a shorthands
+// query. [Engine.Shorthands] returns its captures.
+//
 // # Metadata
 //
 // The engine reads the metadata of a declaration from the tree, not from

@@ -27,10 +27,13 @@ import (
 //     a use in its file, by the rule of [Engine.prepared]. A rename from a use takes the uses
 //     that textDocument/references names from there when it named none from the declaration.
 //  4. Ask textDocument/rename where the server prepared it.
+//  5. Write out each edit at a shorthand property of an object literal, by the rule of
+//     [Engine.shorthanded].
 //
 // renaming returns [engine.ErrRefuse] when the server refuses the position or the rename. A
-// plan that leaves a use unrewritten is partial, and so is a plan that moves a file of a server
-// that does not serve workspace/willRenameFiles, by the rule of [Engine.unmoved].
+// plan that leaves a use unrewritten is partial, and so are a plan that moves a file of a server
+// that does not serve workspace/willRenameFiles, by the rule of [Engine.unmoved], and a plan
+// with a shorthand property whose sides [Engine.shorthanded] cannot tell apart.
 func (e *Engine) renaming(
 	ctx context.Context,
 	req engine.Request,
@@ -100,9 +103,16 @@ func (e *Engine) renaming(
 			"%w: %s: the rename changes %s, which is outside the workspace",
 			engine.ErrRefuse, e.server.Name, outside)
 	}
+	unspelled, err := e.shorthanded(ctx, held, changes)
+	if err != nil {
+		return engine.Result[edit.Change]{}, err
+	}
 	covered, reaches, caveats := e.corroborated(ctx, held, doc, at, uses, changes, ready)
 	if short != nil {
 		covered, caveats = trust.ScopePartial, append(caveats, *short)
+	}
+	if unspelled != nil {
+		covered, caveats = trust.ScopePartial, append(caveats, *unspelled)
 	}
 	if moved, unseen := e.unmoved(held, changes); unseen {
 		covered, caveats = trust.ScopePartial, append(caveats, trust.Caveat{

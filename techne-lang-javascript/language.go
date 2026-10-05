@@ -35,6 +35,12 @@ var upstreamQuery string
 //go:embed queries/extends.scm
 var extendsQuery string
 
+// shorthandsQuery captures the name of each shorthand property of an object
+// literal.
+//
+//go:embed queries/shorthands.scm
+var shorthandsQuery string
+
 // Declaration returns the declaration of JavaScript.
 func Declaration() lang.Declaration {
 	return lang.Declaration{
@@ -56,11 +62,13 @@ func Declaration() lang.Declaration {
 }
 
 // Grammar returns the tree-sitter grammar of JavaScript with the upstream
-// tags query and the patterns of the module.
+// tags query and the patterns of the module, and the shorthands query of
+// the module.
 func Grammar() treesitter.Grammar {
 	return treesitter.Grammar{
-		Language: ts.NewLanguage(binding.Language()),
-		Tags:     upstreamQuery + "\n" + extendsQuery,
+		Language:   ts.NewLanguage(binding.Language()),
+		Tags:       upstreamQuery + "\n" + extendsQuery,
+		Shorthands: shorthandsQuery,
 	}
 }
 

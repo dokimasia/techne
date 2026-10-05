@@ -33,8 +33,11 @@ type Engine struct {
 	grammar  Grammar
 	// tags is the compiled query of each grammar. A query compiles against
 	// one grammar, so a language with a dialect has one query per grammar.
-	tags  map[*ts.Language]*ts.Query
-	scans scans
+	tags map[*ts.Language]*ts.Query
+	// shorthands is the compiled shorthands query of each grammar, and empty
+	// for a grammar without one.
+	shorthands map[*ts.Language]*ts.Query
+	scans      scans
 	// keywords are the words that a grammar of the engine parses as tokens
 	// without a name, such as func and type of Go.
 	keywords map[string]bool
@@ -44,11 +47,12 @@ type Engine struct {
 // covers.
 var ErrUnknownCapture = errors.New("treesitter: unknown definition capture")
 
-// New compiles the tags query of g for each of its grammars and returns the
-// engine. It returns an error for a nil fsys, an incomplete declaration, a
-// grammar that lacks a language or a query, and a query that does not
-// compile. It returns [ErrUnknownCapture] for a definition capture that no
-// kind covers, because such a capture matches and is dropped.
+// New compiles the tags query of g, and its shorthands query when it has one,
+// for each of its grammars and returns the engine. It returns an error for a
+// nil fsys, an incomplete declaration, a grammar that lacks a language or a
+// tags query, and a query that does not compile. It returns
+// [ErrUnknownCapture] for a definition capture that no kind covers, because
+// such a capture matches and is dropped.
 //
 // The caller calls Close when it no longer needs the engine.
 func New(fsys fs.FS, d lang.Declaration, g Grammar) (*Engine, error) {
@@ -68,8 +72,13 @@ func New(fsys fs.FS, d lang.Declaration, g Grammar) (*Engine, error) {
 	}
 
 	e := &Engine{
-		fsys: fsys, declared: d, grammar: g, tags: map[*ts.Language]*ts.Query{},
-		scans: scans{files: map[source.Path]scan{}}, keywords: map[string]bool{},
+		fsys:       fsys,
+		declared:   d,
+		grammar:    g,
+		tags:       map[*ts.Language]*ts.Query{},
+		shorthands: map[*ts.Language]*ts.Query{},
+		scans:      scans{files: map[source.Path]scan{}},
+		keywords:   map[string]bool{},
 	}
 	for _, grammar := range g.each() {
 		if grammar == nil {
@@ -95,6 +104,15 @@ func New(fsys fs.FS, d lang.Declaration, g Grammar) (*Engine, error) {
 			}
 		}
 		e.tags[grammar] = q
+		if g.Shorthands == "" {
+			continue
+		}
+		s, serr := ts.NewQuery(grammar, g.Shorthands)
+		if serr != nil {
+			e.Close()
+			return nil, fmt.Errorf("treesitter: %q shorthands query: %w", d.Language, *serr)
+		}
+		e.shorthands[grammar] = s
 	}
 	return e, nil
 }
@@ -137,6 +155,10 @@ func (e *Engine) Close() {
 		q.Close()
 	}
 	clear(e.tags)
+	for _, q := range e.shorthands {
+		q.Close()
+	}
+	clear(e.shorthands)
 	e.scans.mu.Lock()
 	clear(e.scans.files)
 	e.scans.mu.Unlock()

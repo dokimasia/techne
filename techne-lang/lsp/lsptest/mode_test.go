@@ -24,7 +24,7 @@ var modes = []lsptest.Mode{
 	lsptest.Compiles, lsptest.DiskChecks, lsptest.DiskStuck, lsptest.Unbound, lsptest.WorkspaceDiagnostics,
 	lsptest.Canonical, lsptest.Receivers, lsptest.Impls, lsptest.Wrapped, lsptest.Minified, lsptest.Nested,
 	lsptest.Aims, lsptest.Mutes, lsptest.Exits, lsptest.Uncalled, lsptest.Projects, lsptest.Redeclares,
-	lsptest.Contextual, lsptest.Projected, lsptest.Qualified, lsptest.FromUse,
+	lsptest.Contextual, lsptest.Projected, lsptest.Qualified, lsptest.FromUse, lsptest.Shorthand,
 }
 
 func TestMode(t *testing.T) {

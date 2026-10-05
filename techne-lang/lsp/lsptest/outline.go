@@ -26,13 +26,17 @@ import (
 //     qualified by the type of its receiver when it has one
 //   - a variable for each name that a line whose text starts with var lists before =, such as
 //     s and t of var s, t = 1, 2
+//   - a field for each line whose text starts with field, such as field size int
+//   - a field for each shorthand property, a name written alone between braces as s in { s },
+//     which spans the name, as the tags query of TypeScript declares a shorthand property
 //
 // A declaration whose line ends with an opening brace spans the lines through the next line
 // that is a closing brace. Any other declaration spans its text on its line, so the variables
 // of one line share a span. The parent of a declaration is the smallest declaration whose span
 // contains it.
 //
-// The engine also reads the calls of a file, as [parser.Calls] states.
+// The engine also reads the calls of a file, as [parser.Calls] states, and its shorthand
+// properties, as [parser.Shorthands] states.
 func Parser(root string) engine.Outliner { return parser{root: root} }
 
 // parser is the outline engine that [Parser] returns.
@@ -75,6 +79,26 @@ func (p parser) Calls(_ context.Context, file source.Path) ([]source.Span, error
 				})
 			}
 		}
+		offset += len(line) + 1
+	}
+	return out, nil
+}
+
+// Shorthands returns the span of each shorthand property of the file at p, a name written alone
+// between braces as s in { s }, in the order of the file. A path without the [Extension] suffix
+// has none.
+func (p parser) Shorthands(_ context.Context, file source.Path) ([]source.Span, error) {
+	if path.Ext(string(file)) != Extension {
+		return nil, nil
+	}
+	content, err := os.ReadFile(filepath.Join(p.root, filepath.FromSlash(string(file))))
+	if err != nil {
+		return nil, fmt.Errorf("lsptest: read %s: %w", file, err)
+	}
+	var out []source.Span
+	offset := 0
+	for n, line := range strings.Split(string(content), "\n") {
+		out = append(out, braced(file, n, offset, line)...)
 		offset += len(line) + 1
 	}
 	return out, nil
@@ -166,8 +190,43 @@ func declarations(p source.Path, text string) []sema.Symbol {
 				read = append(read, found{kind: sema.KindVariable, name: word(name), span: span})
 			}
 		}
+		if text := strings.TrimLeft(line, "\t "); strings.HasPrefix(text, "field ") {
+			read = append(read, found{
+				kind: sema.KindField,
+				name: word(text[len("field "):]),
+				span: spanned(n, len(line)-len(text), len(line)),
+			})
+		}
+		for _, one := range braced(p, n, starts[n], line) {
+			read = append(read, found{kind: sema.KindField, name: line[one.Start.Column:one.End.Column], span: one})
+		}
 	}
 	return identified(p, read)
+}
+
+// braced returns the span of each name of line n of the file at p, which starts at the byte
+// offset start, that is written alone between braces, as s in { s }.
+func braced(p source.Path, n, start int, line string) []source.Span {
+	var out []source.Span
+	from := 0
+	// Each pass moves from past one "{ ", so a line has fewer passes than bytes.
+	for range len(line) {
+		at := strings.Index(line[from:], "{ ")
+		if at < 0 {
+			break
+		}
+		at += from + len("{ ")
+		name := word(line[at:])
+		if name != "" && strings.HasPrefix(line[at+len(name):], " }") {
+			out = append(out, source.Span{
+				Path:  p,
+				Start: source.Position{Offset: start + at, Line: n, Column: at},
+				End:   source.Position{Offset: start + at + len(name), Line: n, Column: at + len(name)},
+			})
+		}
+		from = at
+	}
+	return out
 }
 
 // function returns the function or the method that text declares, from func to the end of the

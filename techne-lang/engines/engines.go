@@ -13,8 +13,12 @@ import (
 )
 
 // The tree-sitter engine is the outline engine of the server engine, which reads the calls of a
-// file through it for a server without the call hierarchy.
-var _ lsp.Calls = (*treesitter.Engine)(nil)
+// file through it for a server without the call hierarchy, and the shorthand properties of a
+// file for a rename.
+var (
+	_ lsp.Calls      = (*treesitter.Engine)(nil)
+	_ lsp.Shorthands = (*treesitter.Engine)(nil)
+)
 
 // For returns the engines of one language over a workspace, in the order in which a catalogue
 // meets them: the tree-sitter engine, the server engine when [Serving] returns one, and then

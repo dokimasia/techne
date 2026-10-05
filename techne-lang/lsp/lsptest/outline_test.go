@@ -4,12 +4,14 @@
 package lsptest_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
+	"go.dokimi.dev/techne/lang/lsp"
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
 
@@ -122,6 +124,29 @@ func TestOutline(t *testing.T) {
 			assert.Equal(t, s.Span, u.Span, "the span of s")
 		})
 
+		t.Run("returns a field for a line that starts with field", func(t *testing.T) {
+			t.Parallel()
+			got := outlined(t, lsptest.Literal)
+			field := got[slices.IndexFunc(got, func(one sema.Symbol) bool { return one.Kind == sema.KindField })]
+			assert.Equal(t, lsptest.Literal[field.Span.Start.Offset:field.Span.End.Offset], "field size int",
+				"the text of the span of the field")
+			assert.Equal(t, field.Parent, named(t, got, "Item").ID, "the parent of the field")
+		})
+
+		t.Run("returns a field for each shorthand property", func(t *testing.T) {
+			t.Parallel()
+			var parents []sema.ID
+			for _, one := range outlined(t, lsptest.Literal) {
+				if one.Kind == sema.KindField && lsptest.Literal[one.Span.Start.Offset:one.Span.End.Offset] == "size" {
+					parents = append(parents, one.Parent)
+				}
+			}
+			assert.Equal(t, parents, []sema.ID{
+				sema.NewID(lsptest.Language, ".", "Make", sema.KindFunction),
+				sema.NewID(lsptest.Language, ".", "Copy", sema.KindFunction),
+			}, "the parents of the shorthand properties")
+		})
+
 		t.Run("skips a scope without the extension of the language", func(t *testing.T) {
 			t.Parallel()
 			got, err := lsptest.Parser(t.TempDir()).Outline(t.Context(), engine.Request{Scope: "notes.md"})
@@ -129,4 +154,56 @@ func TestOutline(t *testing.T) {
 			assert.True(t, got.Skipped, "the skip of notes.md")
 		})
 	})
+
+	t.Run("Shorthands", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the span of each name written alone between braces", func(t *testing.T) {
+			t.Parallel()
+			root := lsptest.Workspace(t, map[string]string{"a.fake": lsptest.Literal})
+			got, err := shorthands(t, root).Shorthands(t.Context(), "a.fake")
+			assert.NoError(t, err, "Shorthands of a.fake")
+			var starts []int
+			for _, one := range got {
+				assert.Equal(t, lsptest.Literal[one.Start.Offset:one.End.Offset], "size", "the text of a span")
+				starts = append(starts, one.Start.Offset)
+			}
+			assert.Equal(t, starts, []int{
+				strings.Index(lsptest.Literal, "{ size }") + len("{ "),
+				strings.LastIndex(lsptest.Literal, "{ size }") + len("{ "),
+			}, "the starts of the shorthand properties")
+		})
+
+		t.Run("returns no span for braces around no name", func(t *testing.T) {
+			t.Parallel()
+			root := lsptest.Workspace(t, map[string]string{
+				"a.fake": "package a\n\nfunc Empty() Item { return Item{  } }\n",
+			})
+			got, err := shorthands(t, root).Shorthands(t.Context(), "a.fake")
+			assert.NoError(t, err, "Shorthands of a.fake")
+			assert.Empty(t, got, "the shorthand properties of a.fake")
+		})
+
+		t.Run("returns no span for a path without the extension of the language", func(t *testing.T) {
+			t.Parallel()
+			got, err := shorthands(t, t.TempDir()).Shorthands(t.Context(), "notes.md")
+			assert.NoError(t, err, "Shorthands of notes.md")
+			assert.Empty(t, got, "the shorthand properties of notes.md")
+		})
+
+		t.Run("returns an error for a file that does not exist", func(t *testing.T) {
+			t.Parallel()
+			_, err := shorthands(t, t.TempDir()).Shorthands(t.Context(), "gone.fake")
+			assert.HasError(t, err, "Shorthands of gone.fake")
+		})
+	})
+}
+
+// shorthands returns the parser of the workspace at root as an engine that reads shorthand
+// properties, and fails the test when it is not one.
+func shorthands(t *testing.T, root string) lsp.Shorthands {
+	t.Helper()
+	reads, implements := lsptest.Parser(root).(lsp.Shorthands)
+	assert.True(t, implements, "the parser implements lsp.Shorthands")
+	return reads
 }
