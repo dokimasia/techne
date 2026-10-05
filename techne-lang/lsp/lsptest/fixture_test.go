@@ -94,6 +94,26 @@ func TestFixture(t *testing.T) {
 		})
 	})
 
+	t.Run("Pair", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("declares s at character 4 of line 2", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, line(lsptest.Pair, 2)[4:5], "s", "line 2, character 4")
+		})
+
+		t.Run("declares t at character 7 of line 2", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, line(lsptest.Pair, 2)[7:8], "t", "line 2, character 7")
+		})
+
+		t.Run("declares Sum on line 4 with a use of s and t", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, line(lsptest.Pair, 4)[5:8], "Sum", "line 4, characters 5 to 8")
+			assert.Contains(t, line(lsptest.Pair, 4), "s + t", "the uses on line 4")
+		})
+	})
+
 	t.Run("Twins", func(t *testing.T) {
 		t.Parallel()
 

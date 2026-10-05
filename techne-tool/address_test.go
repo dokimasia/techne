@@ -58,6 +58,17 @@ func TestAddress(t *testing.T) {
 			assert.Equal(t, asked.Target.Span.Start.Offset, 10, "the offset of the target")
 		})
 
+		t.Run("points the write path at the ID of a declaration whose span another declaration shares",
+			func(t *testing.T) {
+				t.Parallel()
+				have := declared("have", sema.KindParameter, "", 3, 30)
+				want := declared("want", sema.KindParameter, "", 3, 30)
+				got, asked := addressing(t, []sema.Symbol{have, want}, `{"scope":"a.fx","name":"want","doc":"x"}`)
+				assert.False(t, got.Failed(), "the failure of the output")
+				assert.Equal(t, asked.Target.Symbol, want.ID, "the ID of the target")
+				assert.Equal(t, asked.Target.Span, want.Span, "the span of the target")
+			})
+
 		t.Run("addresses a member by its qualified name", func(t *testing.T) {
 			t.Parallel()
 			got, asked := addressing(t, stored(), `{"scope":"a.fx","name":"Store.Get","doc":"x"}`)

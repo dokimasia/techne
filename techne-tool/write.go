@@ -241,8 +241,10 @@ func asked(
 }
 
 // addressing returns the declaration that a name, a kind and a line address in scope, by the
-// rule of [addressed], and the target of an operation at its span. The span identifies one of
-// two declarations that share an ID, and a language server takes a position for the same
+// rule of [addressed], and the target of an operation at its span with its ID. The span selects
+// one of two declarations that share an ID, as the prototype and the definition of a C function
+// do. The ID selects one of two declarations that share a span, as the parameters have and want
+// of func growCap(have, want int) do. A language server takes a position for the same
 // operations.
 func addressing(
 	ctx context.Context,
@@ -263,7 +265,7 @@ func addressing(
 	if failure != nil {
 		return sema.Symbol{}, edit.Target{}, failure
 	}
-	return found, edit.Target{Kind: edit.TargetSpan, Span: found.Span}, nil
+	return found, edit.Target{Kind: edit.TargetSpan, Symbol: found.ID, Span: found.Span}, nil
 }
 
 // reported returns the output of the write tool op for done. A refused or unsupported

@@ -269,10 +269,12 @@ const (
 	// class of the same name and range that contains one method.
 	Nested Mode = "nested"
 
-	// Aims describes its buffer as gopls does, with a function for each func keyword and no
-	// local or parameter, and responds to textDocument/rename with one edit that replaces the
-	// word at the position of the request. It responds to textDocument/references with no
-	// location. A test reads the edit of a rename to learn where the client aimed it.
+	// Aims describes its buffer as gopls does, with a variable for each name of a line that
+	// starts with var, a function for each func keyword and no local or parameter. The names of
+	// one line have one range, as gopls gives each name of var a, b = 1, 2 the range of
+	// a, b = 1, 2. It responds to textDocument/rename with one edit that replaces the word at
+	// the position of the request, and to textDocument/references with no location. A test
+	// reads the edit of a rename to learn where the client aimed it.
 	Aims Mode = "aims"
 
 	// Mutes responds as the Default mode does until it receives textDocument/references or

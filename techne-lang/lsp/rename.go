@@ -178,12 +178,12 @@ func (e *Engine) targeted(req engine.Request, target edit.Target) (lang.Files, b
 // aimed opens the file of target and returns the protocol position of the name of the
 // declaration that target names, and the document of the file.
 //
-// A span names the declaration of the outline engine of the language with that span, because a
-// tool addresses a declaration by the span that the engine reports, and the engine reports the
-// locals and the parameters that a server leaves out of its document symbols. Any other span
-// names the innermost document symbol of the server that contains its start, and a span outside
-// every symbol names its own start. A declaration is looked up in the files of the walk, and a
-// declaration that no file declares returns [engine.ErrRefuse].
+// A span names the declaration of the outline engine of the language that [Engine.parsedAt]
+// returns. A tool addresses a declaration by the span and the ID that the engine reports, and
+// the engine reports the locals and the parameters that a server leaves out of its document
+// symbols. Any other span names the innermost document symbol of the server that contains its
+// start, and a span outside every symbol names its own start. A declaration is looked up in the
+// files of the walk, and a declaration that no file declares returns [engine.ErrRefuse].
 func (e *Engine) aimed(
 	ctx context.Context,
 	held *session,
@@ -207,7 +207,7 @@ func (e *Engine) aimed(
 	if err != nil {
 		return protocol.Position{}, document{}, err
 	}
-	parsed, known, err := e.parsedAt(ctx, held, target.Span)
+	parsed, known, err := e.parsedAt(ctx, held, target)
 	switch {
 	case err != nil:
 		return protocol.Position{}, document{}, err
@@ -225,18 +225,23 @@ func (e *Engine) aimed(
 	return start, doc, nil
 }
 
-// parsedAt returns the declaration of the outline engine of the language whose span is span,
-// and reports whether there is one. An engine without an outline engine reports none.
-func (e *Engine) parsedAt(ctx context.Context, held *session, span source.Span) (sema.Symbol, bool, error) {
+// parsedAt returns the declaration of the outline engine of the language that target names, and
+// reports whether there is one: the declaration whose span is the span of target, with the ID of
+// target when target has one. The names that one declaration lists share its span, as the
+// parameters have and want of func growCap(have, want int) do, and the ID selects one of them.
+// An engine without an outline engine reports none.
+func (e *Engine) parsedAt(ctx context.Context, held *session, target edit.Target) (sema.Symbol, bool, error) {
 	if e.outliner == nil {
 		return sema.Symbol{}, false, nil
 	}
+	span := target.Span
 	kept, err := newFinder(e, held).file(ctx, span.Path)
 	if err != nil {
 		return sema.Symbol{}, false, err
 	}
 	for _, one := range kept.symbols {
-		if one.Span.Start.Offset == span.Start.Offset && one.Span.End.Offset == span.End.Offset {
+		spanned := one.Span.Start.Offset == span.Start.Offset && one.Span.End.Offset == span.End.Offset
+		if spanned && (target.Symbol == "" || one.ID == target.Symbol) {
 			return one, true, nil
 		}
 	}

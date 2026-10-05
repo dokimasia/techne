@@ -100,6 +100,7 @@ const (
 	kindField       = 8
 	kindConstructor = 9
 	kindFunction    = 12
+	kindVariable    = 13
 	kindString      = 15
 	kindObject      = 19
 	kindStruct      = 23
@@ -731,10 +732,13 @@ func (s *script) symbols() string {
 			kindFunction, location(s.seen, afterRange))
 	case Extracts, Commands:
 		return functions(s.holding[s.seen])
-	case Minified, Aims, Uncalled:
-		return bundled(s.holding[s.seen])
+	case Minified, Uncalled:
+		return "[" + strings.Join(bundled(s.holding[s.seen]), ",") + "]"
+	case Aims:
+		text := s.holding[s.seen]
+		return "[" + strings.Join(append(variables(text), bundled(text)...), ",") + "]"
 	case Nested:
-		return nested(s.holding[s.seen])
+		return "[" + strings.Join(nested(s.holding[s.seen]), ",") + "]"
 	case Receivers:
 		return "[" + strings.Join([]string{
 			symbol("Store", kindStruct, "", ranged(2, 0, 19), ranged(2, 5, 10), ""),
@@ -1473,26 +1477,51 @@ func functions(text string) string {
 // bundleCallee is the name of the function that After calls in a [Bundle].
 const bundleCallee = "F0"
 
-// bundled is the answer to textDocument/documentSymbol in the Minified mode: one function for
-// each func keyword of text, from the keyword to the brace that closes its body.
-func bundled(text string) string {
+// bundled returns the symbols of the answer to textDocument/documentSymbol in the Minified mode:
+// one function for each func keyword of text, from the keyword to the brace that closes its
+// body.
+func bundled(text string) []string {
 	return bodied(text, func(name, whole, selection string) string {
 		return symbol(name, kindFunction, "", whole, selection, "")
 	})
 }
 
-// nested is the answer to textDocument/documentSymbol in the Nested mode: for each func keyword
-// of text, a class that contains one method, both with the name and the range of the function.
-func nested(text string) string {
+// nested returns the symbols of the answer to textDocument/documentSymbol in the Nested mode: for
+// each func keyword of text, a class that contains one method, both with the name and the range
+// of the function.
+func nested(text string) []string {
 	return bodied(text, func(name, whole, selection string) string {
 		return symbol(name, kindClass, "", whole, selection, symbol(name, kindMethod, "", whole, selection, ""))
 	})
 }
 
-// bodied returns the list of the symbols that render returns for each func keyword of text. It
-// passes the name of the function, its range from the keyword to the brace that closes its body,
-// and the range of its name.
-func bodied(text string, render func(name, whole, selection string) string) string {
+// variables returns the symbols that the answer to textDocument/documentSymbol in the Aims mode
+// lists before those of [bundled]: a variable for each name that a line that starts with var
+// lists before =. Each name of one line has the range of the line after var, and the range of
+// the name as its selection, as gopls gives each name of var a, b = 1, 2 the range of
+// a, b = 1, 2.
+func variables(text string) []string {
+	const keyword = "var "
+	var out []string
+	for i, line := range strings.Split(text, "\n") {
+		listed, declares := strings.CutPrefix(line, keyword)
+		if !declares {
+			continue
+		}
+		names, _, _ := strings.Cut(listed, " =")
+		whole, from := ranged(i, len(keyword), len(line)), len(keyword)
+		for name := range strings.SplitSeq(names, ", ") {
+			out = append(out, symbol(name, kindVariable, "", whole, ranged(i, from, from+len(name)), ""))
+			from += len(name) + len(", ")
+		}
+	}
+	return out
+}
+
+// bodied returns the symbols that render returns for each func keyword of text. It passes the
+// name of the function, its range from the keyword to the brace that closes its body, and the
+// range of its name.
+func bodied(text string, render func(name, whole, selection string) string) []string {
 	const keyword = "func "
 	var out []string
 	for i, line := range strings.Split(text, "\n") {
@@ -1513,7 +1542,7 @@ func bodied(text string, render func(name, whole, selection string) string) stri
 			from = end
 		}
 	}
-	return "[" + strings.Join(out, ",") + "]"
+	return out
 }
 
 // called returns the range of each occurrence of name before a parenthesis in text, in order.

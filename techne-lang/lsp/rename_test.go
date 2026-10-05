@@ -188,12 +188,37 @@ func TestRename(t *testing.T) {
 			root := lsptest.Workspace(t, map[string]string{"a.fake": lsptest.Locals})
 			e := lsptest.Parsing(t, root, lsptest.Server(lsptest.Aims))
 			got, err := e.Plan(t.Context(), engine.Request{Scope: "a.fake"}, edit.RenameSymbol,
-				edit.Target{Kind: edit.TargetSpan, Span: parsed(t, root, "t")}, edit.Args{edit.ArgNewName: "count"})
+				parsed(t, root, "t"), edit.Args{edit.ArgNewName: "count"})
 			assert.NoError(t, err, "Plan of the rename of the local t")
 			assert.Length(t, got.Items, 1, "the changes of the plan")
 			assert.Equal(t, got.Items[0].Edits[0].Span.Start.Offset, strings.Index(lsptest.Locals, "var t")+len("var "),
 				"the offset of the edit")
 		})
+
+		t.Run("aims a span at the name of its ID among the names of one declaration", func(t *testing.T) {
+			t.Parallel()
+			root := lsptest.Workspace(t, map[string]string{"a.fake": lsptest.Pair})
+			e := lsptest.Parsing(t, root, lsptest.Server(lsptest.Aims))
+			got, err := e.Plan(t.Context(), engine.Request{Scope: "a.fake"}, edit.RenameSymbol,
+				parsed(t, root, "t"), edit.Args{edit.ArgNewName: "count"})
+			assert.NoError(t, err, "Plan of the rename of t")
+			assert.Length(t, got.Items, 1, "the changes of the plan")
+			assert.Equal(t, got.Items[0].Edits[0].Span.Start.Offset, strings.Index(lsptest.Pair, "s, t")+len("s, "),
+				"the offset of the edit")
+		})
+
+		t.Run("aims an ID at its own name among the names of one declaration that the server lists",
+			func(t *testing.T) {
+				t.Parallel()
+				got, err := serving(t, lsptest.Aims, map[string]string{"a.fake": lsptest.Pair}).Plan(t.Context(),
+					engine.Request{Scope: "a.fake"}, edit.RenameSymbol,
+					edit.Target{Kind: edit.TargetSymbol, Symbol: declared("s", sema.KindVariable)},
+					edit.Args{edit.ArgNewName: "count"})
+				assert.NoError(t, err, "Plan of the rename of s")
+				assert.Length(t, got.Items, 1, "the changes of the plan")
+				assert.Equal(t, got.Items[0].Edits[0].Span.Start.Offset, strings.Index(lsptest.Pair, "s, t"),
+					"the offset of the edit")
+			})
 
 		t.Run("opens no other file for a rename of a local by a scoped server", func(t *testing.T) {
 			t.Parallel()
@@ -205,8 +230,7 @@ func TestRename(t *testing.T) {
 			server := lsptest.Server(lsptest.Aims)
 			server.Scoped = true
 			got, err := lsptest.Parsing(t, root, server).Plan(t.Context(), engine.Request{Scope: "a.fake"},
-				edit.RenameSymbol, edit.Target{Kind: edit.TargetSpan, Span: parsed(t, root, "t")},
-				edit.Args{edit.ArgNewName: "count"})
+				edit.RenameSymbol, parsed(t, root, "t"), edit.Args{edit.ArgNewName: "count"})
 			assert.NoError(t, err, "Plan of the rename of the local t")
 			assert.False(t, cutShort(got.Caveats), "the plan has the caveat of a short preload")
 		})
@@ -262,19 +286,19 @@ func moving() string {
 		`{"kind":"rename","oldUri":"{file}","newUri":"{root}/vault.fake"}`)
 }
 
-// parsed returns the span of the declaration name that [lsptest.Parser] reads in a.fake of the
-// workspace at root, the span by which a tool addresses the declaration.
-func parsed(t *testing.T, root, name string) source.Span {
+// parsed returns the target by which a tool addresses the declaration name that [lsptest.Parser]
+// reads in a.fake of the workspace at root: the span of the declaration with its ID.
+func parsed(t *testing.T, root, name string) edit.Target {
 	t.Helper()
 	got, err := lsptest.Parser(root).Outline(t.Context(), engine.Request{Scope: "a.fake"})
 	assert.NoError(t, err, "Outline of a.fake")
 	for _, one := range got.Items {
 		if one.Name == name {
-			return one.Span
+			return edit.Target{Kind: edit.TargetSpan, Symbol: one.ID, Span: one.Span}
 		}
 	}
 	t.Fatalf("a.fake declares no %s", name)
-	return source.Span{}
+	return edit.Target{}
 }
 
 // unrewritten reports whether caveats contain a [trust.CaveatUnrewritten] caveat whose note

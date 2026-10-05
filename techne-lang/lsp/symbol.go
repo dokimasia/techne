@@ -184,7 +184,7 @@ func (e *Engine) nest(
 		within := qualified(kind, name, container, one.Name)
 		id := sema.NewID(e.declared.Language, unit, within, kind)
 		span := doc.span(one.Range)
-		doc.names[span.Start.Offset] = one.SelectionRange.Start
+		doc.names[nameAt{start: span.Start.Offset, name: name}] = one.SelectionRange.Start
 
 		*into = append(*into, sema.Symbol{
 			ID:         id,
@@ -712,12 +712,12 @@ func dotted(a, b string) bool {
 // naming returns the protocol position of the name of a declaration, which is the position a
 // request about the declaration names.
 //
-// It returns the start of the selection range that the server reported. A server that
-// replied with SymbolInformation reports none, and naming then returns the first occurrence
-// of the name as a whole word in the source of the declaration, or the start of the
-// declaration when the name does not occur.
+// It returns the start of the selection range that the server reported for a symbol with the
+// start and the name of the declaration. A server that replied with SymbolInformation reports
+// none, and naming then returns the first occurrence of the name as a whole word in the source
+// of the declaration, or the start of the declaration when the name does not occur.
 func naming(doc document, of sema.Symbol) protocol.Position {
-	if at, reported := doc.names[of.Span.Start.Offset]; reported {
+	if at, reported := doc.names[nameAt{start: of.Span.Start.Offset, name: of.Name}]; reported {
 		return at
 	}
 	if at := lang.Worded(doc.text(of.Span), of.Name); at >= 0 {

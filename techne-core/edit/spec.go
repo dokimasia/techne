@@ -45,7 +45,9 @@ type Spec struct {
 
 // pointed lists the target kinds of an operation on one declaration: an ID
 // or a span. An ID matches two declarations when one unit declares two
-// methods named Get, and a span selects exactly one of them.
+// methods named Get, and a span selects one of them. The names that one
+// declaration lists share a span, and the ID in a span target selects one of
+// them.
 var pointed = []TargetKind{TargetSymbol, TargetSpan}
 
 // specs contains one spec for every operation that [Operations] returns.

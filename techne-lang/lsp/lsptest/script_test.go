@@ -207,11 +207,13 @@ func changing(text string, version int) string {
 const closing = `{"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":` +
 	`{"uri":"file:///tmp/a.fake"}}}`
 
-// asking is a textDocument/documentSymbol request of a.fake with the id id.
-func asking(id int) string {
-	return fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"textDocument/documentSymbol","params":`+
-		`{"textDocument":{"uri":"file:///tmp/a.fake"}}}`, id)
-}
+// asking is the textDocument/documentSymbol request of a.fake that a test sends after
+// initialize, and asked is its id, the id after the id 1 of initialize.
+const (
+	asking = `{"jsonrpc":"2.0","id":2,"method":"textDocument/documentSymbol","params":` +
+		`{"textDocument":{"uri":"file:///tmp/a.fake"}}}`
+	asked = 2
+)
 
 // initialized is the notification that follows the reply to initialize. saving is the didSave
 // notification of a.fake.
@@ -292,6 +294,35 @@ func TestScript(t *testing.T) {
 			assert.NoError(t, p.cmd.Wait(), "Wait after exit")
 		})
 
+		t.Run("ranges each name of a var line over the line after var in the Aims mode", func(t *testing.T) {
+			t.Parallel()
+			type place struct {
+				Line      int `json:"line"`
+				Character int `json:"character"`
+			}
+			type ranged struct {
+				Start place `json:"start"`
+				End   place `json:"end"`
+			}
+			type described struct {
+				Name      string `json:"name"`
+				Range     ranged `json:"range"`
+				Selection ranged `json:"selectionRange"`
+			}
+			on := func(line, from, to int) ranged { return ranged{place{line, from}, place{line, to}} }
+			p := run(t, lsptest.Aims)
+			p.initialize(t)
+			p.send(t, opening(lsptest.Pair))
+			p.send(t, asking)
+			var got []described
+			assert.NoError(t, json.Unmarshal(p.reply(t, asked), &got), "the reply to documentSymbol")
+			assert.Equal(t, got, []described{
+				{Name: "s", Range: on(2, 4, 15), Selection: on(2, 4, 5)},
+				{Name: "t", Range: on(2, 4, 15), Selection: on(2, 7, 8)},
+				{Name: "Sum", Range: on(4, 0, 31), Selection: on(4, 5, 8)},
+			}, "the symbols of Pair")
+		})
+
 		t.Run("publishes the report of an opened document after QuietDelay in the Quiet mode", func(t *testing.T) {
 			t.Parallel()
 			p := run(t, lsptest.Quiet)
@@ -310,8 +341,8 @@ func TestScript(t *testing.T) {
 			p.send(t, opening(lsptest.Content))
 			assert.Equal(t, p.report(t), "[]", "the report of the opened document")
 			p.send(t, changing(lsptest.Content+"\n", 2))
-			p.send(t, asking(2))
-			assert.Empty(t, p.reports(t, 2), "the reports of the change")
+			p.send(t, asking)
+			assert.Empty(t, p.reports(t, asked), "the reports of the change")
 		})
 
 		t.Run("publishes the report of a closed document after QuietClose in the Quiet mode", func(t *testing.T) {
@@ -333,8 +364,8 @@ func TestScript(t *testing.T) {
 			p.send(t, opening(lsptest.Faulty))
 			p.report(t)
 			p.send(t, closing)
-			p.send(t, asking(2))
-			assert.Equal(t, p.reports(t, 2), []string{"[]"}, "the reports of the close")
+			p.send(t, asking)
+			assert.Equal(t, p.reports(t, asked), []string{"[]"}, "the reports of the close")
 		})
 
 		t.Run("checks the files on disk after initialized in the DiskChecks mode", func(t *testing.T) {
@@ -370,8 +401,8 @@ func TestScript(t *testing.T) {
 			p := run(t, lsptest.DiskStuck)
 			p.initializeAt(t, placed(t, lsptest.Content))
 			p.send(t, initialized)
-			p.send(t, asking(2))
-			assert.Equal(t, p.jobs(t, 2), []string{beginning}, "the notifications of the check before the reply")
+			p.send(t, asking)
+			assert.Equal(t, p.jobs(t, asked), []string{beginning}, "the notifications of the check before the reply")
 		})
 	})
 }

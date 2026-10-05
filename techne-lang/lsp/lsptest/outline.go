@@ -24,11 +24,13 @@ import (
 //     struct and an interface when it contains interface
 //   - a function for each func at the start of a line or after "; ", which is a method
 //     qualified by the type of its receiver when it has one
-//   - a variable for each line whose text starts with var
+//   - a variable for each name that a line whose text starts with var lists before =, such as
+//     s and t of var s, t = 1, 2
 //
 // A declaration whose line ends with an opening brace spans the lines through the next line
-// that is a closing brace. Any other declaration spans its text on its line. The parent of a
-// declaration is the smallest declaration whose span contains it.
+// that is a closing brace. Any other declaration spans its text on its line, so the variables
+// of one line share a span. The parent of a declaration is the smallest declaration whose span
+// contains it.
 //
 // The engine also reads the calls of a file, as [parser.Calls] states.
 func Parser(root string) engine.Outliner { return parser{root: root} }
@@ -158,10 +160,11 @@ func declarations(p source.Path, text string) []sema.Symbol {
 			from = end + 1
 		}
 		if text := strings.TrimLeft(line, "\t "); strings.HasPrefix(text, "var ") {
-			from := len(line) - len(text)
-			read = append(read, found{
-				kind: sema.KindVariable, name: word(text[len("var "):]), span: spanned(n, from, len(line)),
-			})
+			span := spanned(n, len(line)-len(text), len(line))
+			names, _, _ := strings.Cut(text[len("var "):], " =")
+			for name := range strings.SplitSeq(names, ", ") {
+				read = append(read, found{kind: sema.KindVariable, name: word(name), span: span})
+			}
 		}
 	}
 	return identified(p, read)

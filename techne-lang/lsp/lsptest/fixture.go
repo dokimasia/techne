@@ -51,6 +51,10 @@ const Emoji = "package a\n\nvar 🌍 = 1; type Störe struct{}\n"
 // starts at character 5 of its line.
 const Locals = "package a\n\nfunc Wait() int {\n\tvar t = 1\n\treturn t\n}\n"
 
+// Pair is a file that declares the variables s and t in one statement on line 2, whose names
+// start at characters 4 and 7 of the line, and the function Sum on line 4, which uses both.
+const Pair = "package a\n\nvar s, t = 1, 2\n\nfunc Sum() int { return s + t }\n"
+
 // Twins is a file with the types Store and Cache on lines 2 and 6, which each declare a method
 // Get, on lines 4 and 8. The name of each method starts at character 16 of its line.
 const Twins = "package a\n\ntype Store struct{}\n\nfunc (s *Store) Get() int { return 1 }\n\n" +

@@ -19,12 +19,16 @@ const (
 	TargetSymbol
 	// TargetFile is a file, named by Target.Path.
 	TargetFile
-	// TargetSpan is a range of a file, named by Target.Span.
+	// TargetSpan is a range of a file, named by Target.Span. With
+	// Target.Symbol set, it is the declaration with that span and that ID.
 	TargetSpan
 )
 
-// Target is what an operation applies to. Kind selects the field that is
-// set: Symbol, Path or Span. The other fields are zero.
+// Target is what an operation applies to. Kind selects the field that names
+// the target: Symbol, Path or Span. A span target can also set Symbol to the
+// ID of the declaration whose span it is, because the names that one
+// declaration lists share its span, as the parameters have and want of
+// func growCap(have, want int) do. The other fields are zero.
 type Target struct {
 	Kind   TargetKind
 	Symbol sema.ID

@@ -13,6 +13,14 @@ import (
 	"go.lsp.dev/protocol"
 )
 
+// nameAt is the key of the position of a name in [document.names]: the offset at which a
+// declaration starts and the name of the declaration. The names that one declaration lists can
+// start at one offset: gopls gives each name of var a, b = 1, 2 the range of a, b = 1, 2.
+type nameAt struct {
+	start int
+	name  string
+}
+
 // document is the content of one file and the offset at which each of its lines starts. It
 // converts positions between the protocol and techne:
 //
@@ -30,15 +38,14 @@ type document struct {
 	at []int
 	// plain is the number of ASCII bytes at the start of each line.
 	plain []int
-	// names is the position of the name of each declaration that the server reported,
-	// keyed by the offset at which the declaration starts. It is empty for a document whose
-	// symbols were not read.
-	names map[int]protocol.Position
+	// names is the position of the name of each declaration that the server reported. It is
+	// empty for a document whose symbols were not read.
+	names map[nameAt]protocol.Position
 }
 
 // texted returns the document of content at p, with no name recorded.
 func texted(p source.Path, content []byte) document {
-	d := document{path: p, content: content, at: lines(content), names: map[int]protocol.Position{}}
+	d := document{path: p, content: content, at: lines(content), names: map[nameAt]protocol.Position{}}
 	d.plain = make([]int, len(d.at))
 	for n := range d.at {
 		start, end := d.bounds(n)

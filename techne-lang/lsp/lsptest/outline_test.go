@@ -111,6 +111,17 @@ func TestOutline(t *testing.T) {
 			assert.Equal(t, held.ID, sema.NewID(lsptest.Language, ".", "Use.held", sema.KindVariable), "the ID of held")
 		})
 
+		t.Run("returns each name of a var line with the span of the line", func(t *testing.T) {
+			t.Parallel()
+			got := outlined(t, lsptest.Pair)
+			s, u := named(t, got, "s"), named(t, got, "t")
+			assert.Equal(t, s.Kind, sema.KindVariable, "the kind of s")
+			assert.Equal(t, u.ID, sema.NewID(lsptest.Language, ".", "t", sema.KindVariable), "the ID of t")
+			assert.Equal(t, lsptest.Pair[u.Span.Start.Offset:u.Span.End.Offset], "var s, t = 1, 2",
+				"the text of the span of t")
+			assert.Equal(t, s.Span, u.Span, "the span of s")
+		})
+
 		t.Run("skips a scope without the extension of the language", func(t *testing.T) {
 			t.Parallel()
 			got, err := lsptest.Parser(t.TempDir()).Outline(t.Context(), engine.Request{Scope: "notes.md"})
