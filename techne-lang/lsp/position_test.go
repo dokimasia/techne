@@ -4,7 +4,8 @@
 package lsp_test
 
 import (
-	"runtime/debug"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,25 @@ import (
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/lang/lsp"
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
+)
+
+// The case of Relate that times the conversion of positions relates F0 in two files of
+// [lsptest.Bundle], one with ten times the declarations of the other on its line. The fastest
+// of its timed calls over the larger file takes at most linearGrowth times the fastest over the
+// smaller. A conversion that is linear in the declarations of the line takes 9.8 to 11.7 times
+// as long in an ordinary build, 10.7 to 11.1 times with atomic coverage and 9.9 to 10.5 times
+// with the race detector. A conversion that decodes the line from its first byte at each
+// position takes 101.5 times as long.
+const (
+	// fewDeclarations is the number of declarations on the line of the smaller file.
+	fewDeclarations = 2000
+	// manyDeclarations is the number of declarations on the line of the larger file.
+	manyDeclarations = 20000
+	// timedCalls is the number of warm Relate calls that the case times in each file.
+	timedCalls = 5
+	// linearGrowth is the most that the fastest call over the larger file takes, in multiples
+	// of the fastest over the smaller.
+	linearGrowth = 30
 )
 
 // renamedAt plans a rename of Store in a.fake over a workspace of files, and returns the
@@ -41,18 +61,18 @@ func spanned(t *testing.T, e *lsp.Engine, start source.Position) (engine.Result[
 		edit.Args{edit.ArgNewName: "Vault"})
 }
 
-// relating is the time within which a warm Relate converts the positions of a line of 20000
-// declarations: one second, and five seconds under the race detector, which slows the
-// conversion about thirteen times.
-func relating() time.Duration {
-	if info, built := debug.ReadBuildInfo(); built {
-		for _, setting := range info.Settings {
-			if setting.Key == "-race" && setting.Value == "true" {
-				return 5 * time.Second
-			}
-		}
-	}
-	return time.Second
+// timedRelate returns the time that one Relate of the uses of F0 by e takes, over a file of
+// [lsptest.Bundle] at a.fake. It stops the test unless the call returns After, the one
+// declaration of the file that uses F0.
+func timedRelate(t *testing.T, e *lsp.Engine) time.Duration {
+	t.Helper()
+	request, of := engine.Request{Scope: "a.fake"}, declared("F0", sema.KindFunction)
+	start := time.Now()
+	got, err := e.Relate(t.Context(), request, of, sema.ReferencedBy)
+	took := time.Since(start)
+	assert.NoError(t, err, "the Relate of the uses of F0")
+	assert.Equal(t, edges(got.Items), []string{"After"}, "the declarations that use F0")
+	return took
 }
 
 // applied returns content with the edits of the one change of changes applied.
@@ -123,21 +143,24 @@ func TestPosition(t *testing.T) {
 	t.Run("Relate", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("converts the positions of a line of 20000 declarations within its bound", func(t *testing.T) {
+		t.Run("converts the positions of a line in time linear in its declarations", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, lsptest.Minified, map[string]string{"a.fake": lsptest.Bundle(20000)})
-			request, of := engine.Request{Scope: "a.fake"}, declared("F0", sema.KindFunction)
-			// The first question starts the server and waits for it to settle.
-			_, err := e.Relate(t.Context(), request, of, sema.ReferencedBy)
-			assert.NoError(t, err, "the first Relate of the uses of F0")
+			few := serving(t, lsptest.Minified, map[string]string{"a.fake": lsptest.Bundle(fewDeclarations)})
+			many := serving(t, lsptest.Minified, map[string]string{"a.fake": lsptest.Bundle(manyDeclarations)})
+			// The first question to each engine starts its server and waits for it to settle.
+			timedRelate(t, few)
+			timedRelate(t, many)
 
-			start := time.Now()
-			got, err := e.Relate(t.Context(), request, of, sema.ReferencedBy)
-			took := time.Since(start)
-			assert.NoError(t, err, "the second Relate of the uses of F0")
-			assert.Equal(t, edges(got.Items), []string{"After"}, "the declarations that use F0")
-			bound := relating()
-			assert.True(t, took < bound, "the second Relate takes less than "+bound.String()+": "+took.String())
+			// The timed calls alternate between the files, so a load on the machine slows both.
+			tookFew, tookMany := make([]time.Duration, 0, timedCalls), make([]time.Duration, 0, timedCalls)
+			for range timedCalls {
+				tookFew = append(tookFew, timedRelate(t, few))
+				tookMany = append(tookMany, timedRelate(t, many))
+			}
+			fastFew, fastMany := slices.Min(tookFew), slices.Min(tookMany)
+			assert.InRange(t, float64(fastMany)/float64(fastFew), 0, linearGrowth, fmt.Sprintf(
+				"the fastest Relate over %d declarations, %s, in multiples of the fastest over %d, %s",
+				manyDeclarations, fastMany, fewDeclarations, fastFew))
 		})
 	})
 
