@@ -186,6 +186,22 @@ func TestFixture(t *testing.T) {
 		})
 	})
 
+	t.Run("Stacked", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("declares the functions of Bundle with each on a line of its own", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, lsptest.Stacked(2), "package a\nfunc F0() int { return 0 }\nfunc F1() int { return 1 }\n"+
+				"func After() int { return F0() }\n", "the file of two functions")
+		})
+
+		t.Run("declares the functions that Bundle declares", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, strings.ReplaceAll(lsptest.Stacked(3), "\n", "; "),
+				strings.ReplaceAll(lsptest.Bundle(3), "\n", "; "), "the files with their line endings replaced")
+		})
+	})
+
 	t.Run("Declaration", func(t *testing.T) {
 		t.Parallel()
 

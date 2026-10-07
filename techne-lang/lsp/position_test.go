@@ -19,23 +19,22 @@ import (
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
 
-// The case of Relate that times the conversion of positions relates F0 in two files of
-// [lsptest.Bundle], one with ten times the declarations of the other on its line. The fastest
-// of its timed calls over the larger file takes at most linearGrowth times the fastest over the
-// smaller. A conversion that is linear in the declarations of the line takes 9.8 to 11.7 times
-// as long in an ordinary build, 10.7 to 11.1 times with atomic coverage and 9.9 to 10.5 times
-// with the race detector. A conversion that decodes the line from its first byte at each
-// position takes 101.5 times as long.
+// The case of Relate that times the conversion of positions relates F0 in two files of the same
+// declarations: [lsptest.Bundle], which writes them on one line, and [lsptest.Stacked], which
+// writes each on a line of its own. Both calls do the same work but for the conversion, so a
+// load on the machine slows both alike. The fastest of the timed calls over the one line takes
+// at most lineCost times the fastest over the lines. A conversion whose cost at a position does
+// not grow with the length of its line measures 0.98 to 1.06 in an ordinary build, with atomic
+// coverage, with the race detector and beside the tests of every other module. A conversion that
+// decodes the line from its first byte at each position measures 234.9.
 const (
-	// fewDeclarations is the number of declarations on the line of the smaller file.
-	fewDeclarations = 2000
-	// manyDeclarations is the number of declarations on the line of the larger file.
-	manyDeclarations = 20000
+	// declarations is the number of declarations in each file.
+	declarations = 20000
 	// timedCalls is the number of warm Relate calls that the case times in each file.
 	timedCalls = 5
-	// linearGrowth is the most that the fastest call over the larger file takes, in multiples
-	// of the fastest over the smaller.
-	linearGrowth = 30
+	// lineCost is the most that the fastest call over the one line takes, in multiples of the
+	// fastest over the lines.
+	lineCost = 3
 )
 
 // renamedAt plans a rename of Store in a.fake over a workspace of files, and returns the
@@ -143,25 +142,26 @@ func TestPosition(t *testing.T) {
 	t.Run("Relate", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("converts the positions of a line in time linear in its declarations", func(t *testing.T) {
-			t.Parallel()
-			few := serving(t, lsptest.Minified, map[string]string{"a.fake": lsptest.Bundle(fewDeclarations)})
-			many := serving(t, lsptest.Minified, map[string]string{"a.fake": lsptest.Bundle(manyDeclarations)})
-			// The first question to each engine starts its server and waits for it to settle.
-			timedRelate(t, few)
-			timedRelate(t, many)
+		t.Run("converts the positions of one line in at most three times their time on a line each",
+			func(t *testing.T) {
+				t.Parallel()
+				line := serving(t, lsptest.Minified, map[string]string{"a.fake": lsptest.Bundle(declarations)})
+				lines := serving(t, lsptest.Minified, map[string]string{"a.fake": lsptest.Stacked(declarations)})
+				// The first question to each engine starts its server and waits for it to settle.
+				timedRelate(t, line)
+				timedRelate(t, lines)
 
-			// The timed calls alternate between the files, so a load on the machine slows both.
-			tookFew, tookMany := make([]time.Duration, 0, timedCalls), make([]time.Duration, 0, timedCalls)
-			for range timedCalls {
-				tookFew = append(tookFew, timedRelate(t, few))
-				tookMany = append(tookMany, timedRelate(t, many))
-			}
-			fastFew, fastMany := slices.Min(tookFew), slices.Min(tookMany)
-			assert.InRange(t, float64(fastMany)/float64(fastFew), 0, linearGrowth, fmt.Sprintf(
-				"the fastest Relate over %d declarations, %s, in multiples of the fastest over %d, %s",
-				manyDeclarations, fastMany, fewDeclarations, fastFew))
-		})
+				// The timed calls alternate between the files, so a load on the machine slows both.
+				tookLine, tookLines := make([]time.Duration, 0, timedCalls), make([]time.Duration, 0, timedCalls)
+				for range timedCalls {
+					tookLine = append(tookLine, timedRelate(t, line))
+					tookLines = append(tookLines, timedRelate(t, lines))
+				}
+				fastLine, fastLines := slices.Min(tookLine), slices.Min(tookLines)
+				assert.InRange(t, float64(fastLine)/float64(fastLines), 0, lineCost, fmt.Sprintf(
+					"the fastest Relate over %d declarations on one line, %s, in multiples of the fastest "+
+						"over a line each, %s", declarations, fastLine, fastLines))
+			})
 	})
 
 	t.Run("Resolve", func(t *testing.T) {

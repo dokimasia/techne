@@ -73,11 +73,21 @@ const Twins = "package a\n\ntype Store struct{}\n\nfunc (s *Store) Get() int { r
 // Bundle returns a file with a package clause on line 0 and n+1 functions on line 1: F0 to
 // F<n-1>, then After, which calls F0. A minifier writes a program on one line this way. The
 // Minified and Nested modes read the declarations and the uses of F0 from this file.
-func Bundle(n int) string {
+func Bundle(n int) string { return program(n, "; ") }
+
+// Stacked returns the functions of [Bundle] with each on a line of its own: a package clause on
+// line 0, F0 to F<n-1> on lines 1 to n, and After, which calls F0, on line n+1. The Minified and
+// Nested modes read it as they read Bundle.
+func Stacked(n int) string { return program(n, "\n") }
+
+// program returns a package clause on line 0 and then the functions F0 to F<n-1> and After,
+// which calls F0, on line 1. Separator follows each function before After, and a line ending
+// follows After.
+func program(n int, separator string) string {
 	var out strings.Builder
 	out.WriteString("package a\n")
 	for i := range n {
-		fmt.Fprintf(&out, "func F%d() int { return %d }; ", i, i)
+		fmt.Fprintf(&out, "func F%d() int { return %d }%s", i, i, separator)
 	}
 	out.WriteString("func After() int { return F0() }\n")
 	return out.String()
