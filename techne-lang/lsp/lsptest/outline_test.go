@@ -113,7 +113,7 @@ func TestOutline(t *testing.T) {
 			}
 			assert.Equal(t, names, []string{"F0", "F1", "After"}, "the functions of the bundle")
 			after := named(t, got, "After")
-			assert.True(t, strings.HasPrefix(lsptest.Bundle(2)[after.Span.Start.Offset:], "func After()"),
+			assert.HasPrefix(t, lsptest.Bundle(2)[after.Span.Start.Offset:], "func After()",
 				"the start of the span of After")
 		})
 

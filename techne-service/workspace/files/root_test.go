@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
+	assertfiles "go.dokimi.dev/assert/files"
 	"go.dokimi.dev/techne/service/workspace/files"
 )
 
@@ -178,9 +179,7 @@ func TestRoot(t *testing.T) {
 			assert.NoError(t, os.Symlink("real.go", filepath.Join(dir, "link.go")), "Symlink of link.go")
 			assert.NoError(t, root.Write("link.go", []byte("new\n")), "Write of link.go")
 			assert.Equal(t, read(t, dir, "real.go"), "new\n", "the content of real.go")
-			info, err := os.Lstat(filepath.Join(dir, "link.go"))
-			assert.NoError(t, err, "Lstat of link.go")
-			assert.True(t, info.Mode()&fs.ModeSymlink != 0, "the link at link.go")
+			assertfiles.LinksTo(t, filepath.Join(dir, "link.go"), "real.go", "the link at link.go")
 		})
 
 		t.Run("refuses a symbolic link out of the directory", func(t *testing.T) {
@@ -210,8 +209,7 @@ func TestRoot(t *testing.T) {
 			assert.NoError(t, root.Move("run.sh", "bin/run.sh"), "Move of run.sh")
 			assert.Equal(t, read(t, dir, "bin/run.sh"), "#!/bin/sh\n", "the content of bin/run.sh")
 			assert.Equal(t, mode(t, dir, "bin/run.sh"), fs.FileMode(0o755), "the mode of bin/run.sh")
-			_, err := os.Stat(filepath.Join(dir, "run.sh"))
-			assert.ErrorIs(t, err, fs.ErrNotExist, "the file at run.sh")
+			assertfiles.Absent(t, filepath.Join(dir, "run.sh"), "the file at run.sh")
 		})
 
 		t.Run("refuses a destination with a file", func(t *testing.T) {
@@ -232,8 +230,7 @@ func TestRoot(t *testing.T) {
 			root, dir := opened(t)
 			written(t, dir, "a.go", "package a\n", 0o644)
 			assert.NoError(t, root.Remove("a.go"), "Remove of a.go")
-			_, err := os.Stat(filepath.Join(dir, "a.go"))
-			assert.ErrorIs(t, err, fs.ErrNotExist, "the file at a.go")
+			assertfiles.Absent(t, filepath.Join(dir, "a.go"), "the file at a.go")
 		})
 
 		t.Run("returns no error for a path without a file", func(t *testing.T) {

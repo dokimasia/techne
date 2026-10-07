@@ -61,8 +61,7 @@ func TestIdentity(t *testing.T) {
 		t.Run("claims no tier for outline or search", func(t *testing.T) {
 			t.Parallel()
 			for _, role := range []engine.Role{engine.RoleOutline, engine.RoleSearch} {
-				_, claimed := lsp.Binding()[role]
-				assert.False(t, claimed, "Binding claims "+role.String())
+				assert.NotContains(t, lsp.Binding(), role, "Binding claims "+role.String())
 			}
 		})
 
@@ -70,8 +69,7 @@ func TestIdentity(t *testing.T) {
 			t.Parallel()
 			first := lsp.Binding()
 			delete(first, engine.RolePlan)
-			_, kept := lsp.Binding()[engine.RolePlan]
-			assert.True(t, kept, "the second Binding contains RolePlan")
+			assert.Contains(t, lsp.Binding(), engine.RolePlan, "the second Binding contains RolePlan")
 		})
 
 		t.Run("returns a map that Server.Valid accepts", func(t *testing.T) {

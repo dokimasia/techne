@@ -4,6 +4,7 @@
 package lang_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -276,11 +277,17 @@ func TestComment(t *testing.T) {
 		t.Run("returns text through Documentation for a block form", func(t *testing.T) {
 			t.Parallel()
 			for _, style := range []lang.CommentStyle{javaStyle, typescriptStyle, pythonStyle} {
-				for _, text := range []string{"One.", "One.\n\nTwo.", "One.\n    indented\nTwo."} {
-					for _, indent := range []string{"", "    ", "\t\t"} {
-						got, ok := style.Documentation(style.Document(text, indent))
-						assert.True(t, ok, "documentation")
-						assert.Equal(t, got, text, "text")
+				read := func(comment string) (string, error) {
+					got, ok := style.Documentation(comment)
+					if !ok {
+						return "", fmt.Errorf("no documentation form reads %q", comment)
+					}
+					return got, nil
+				}
+				for _, indent := range []string{"", "    ", "\t\t"} {
+					document := func(text string) (string, error) { return style.Document(text, indent), nil }
+					for _, text := range []string{"One.", "One.\n\nTwo.", "One.\n    indented\nTwo."} {
+						assert.RoundTrip(t, document, read, text, "the text through Documentation")
 					}
 				}
 			}

@@ -297,7 +297,7 @@ func Run(t *testing.T, s Suite) {
 					}
 				}
 			}
-			assert.True(t, pairs > 0, "the fixture declares two members of one name and kind in one file")
+			assert.InRange(t, pairs, 1, 1<<63, "the fixture declares two members of one name and kind in one file")
 		})
 
 		t.Run("reports total coverage", func(t *testing.T) {
@@ -683,10 +683,10 @@ func Run(t *testing.T, s Suite) {
 			t.Parallel()
 			counted := &counting{FS: maps.Clone(fsys), opens: map[string]int{}}
 			searched := build(t, counted, s)
-			search(t, searched, missing)
-			before := sources(counted, s)
-			search(t, searched, missing)
-			assert.Equal(t, sources(counted, s), before, "the reads of the fixture files")
+			assert.Idempotent(t, func(q engine.Query) error {
+				_, err := searched.Search(t.Context(), engine.Request{Scope: "."}, q)
+				return err
+			}, missing, func() int { return sources(counted, s) }, "the reads of the fixture files")
 		})
 
 		t.Run("reads a file again after its size changes", func(t *testing.T) {
@@ -726,9 +726,9 @@ func Run(t *testing.T, s Suite) {
 				counted := &counting{FS: maps.Clone(spoiled), opens: map[string]int{}}
 				searched := build(t, counted, s)
 				search(t, searched, missing)
-				before := sources(counted, s)
-				got := search(t, searched, missing)
-				assert.Equal(t, sources(counted, s), before, "the reads of the fixture files")
+				var got engine.Result[sema.Symbol]
+				assert.Pure(t, func() int { return sources(counted, s) }, func() { got = search(t, searched, missing) },
+					"the reads of the fixture files")
 				assert.Equal(t, unreadIn(got.Caveats), []source.Path{broken}, "unread")
 			})
 	})
@@ -786,8 +786,9 @@ func Run(t *testing.T, s Suite) {
 			for _, d := range imported {
 				want := farNames(importedBy(t, wide, d.Name))
 				got := farNames(importedIn(t, wide, source.Path(quiet), d.Name))
-				assert.NotEmpty(t, got, "the files that import "+d.Name+" from the scope "+quiet)
-				assert.Equal(t, got, want, "the files that import "+d.Name+" from the scope "+quiet)
+				assert.That(t, got).
+					NotEmpty("the files that import "+d.Name+" from the scope "+quiet).
+					Equal(want, "the files that import "+d.Name+" from the scope "+quiet)
 			}
 		})
 

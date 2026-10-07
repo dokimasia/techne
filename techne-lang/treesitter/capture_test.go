@@ -74,12 +74,11 @@ func TestCapture(t *testing.T) {
 
 		t.Run("lists every capture with the definition prefix once", func(t *testing.T) {
 			t.Parallel()
-			seen := map[treesitter.Capture]bool{}
 			for _, c := range treesitter.Definitions() {
 				assert.HasPrefix(t, string(c), treesitter.DefinitionPrefix, string(c))
-				assert.False(t, seen[c], string(c))
-				seen[c] = true
 			}
+			assert.NoDuplicates(t, func() ([]treesitter.Capture, error) { return treesitter.Definitions(), nil },
+				"the definition captures")
 		})
 	})
 

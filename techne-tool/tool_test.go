@@ -86,8 +86,8 @@ func enum(s *jsonschema.Schema) []string {
 // itemOf returns the schema of one declaration of the output of a read tool.
 func itemOf(t *testing.T, out *jsonschema.Schema) map[string]*jsonschema.Schema {
 	t.Helper()
-	items, has := out.Properties["items"]
-	assert.True(t, has, "the items of the output schema")
+	assert.Contains(t, out.Properties, "items", "the items of the output schema")
+	items := out.Properties["items"]
 	assert.NotNil(t, items.Items, "the schema of an item")
 	return items.Items.Properties
 }
@@ -236,7 +236,7 @@ func TestTool(t *testing.T) {
 			assert.NoError(t, err, "the error of New")
 			got, err := waiting.Execute(t.Context(), json.RawMessage(`{"name":"world"}`))
 			assert.NoError(t, err, "the error of Execute")
-			assert.True(t, got.Waited >= time.Millisecond, "the time that the handler waited")
+			assert.InRange(t, got.Waited, float64(time.Millisecond), 1<<63, "the time that the handler waited")
 		})
 
 		t.Run("returns an error for input that does not decode", func(t *testing.T) {

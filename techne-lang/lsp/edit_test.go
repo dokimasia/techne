@@ -132,7 +132,7 @@ func TestEdit(t *testing.T) {
 			got, err := renamedAt(t, sample(), ordered(`{"kind":"create","uri":"{root}/new.fake"}`))
 			assert.NoError(t, err, "Plan of a create")
 			assert.Equal(t, kinds(got.Items), []edit.ChangeKind{edit.ChangeCreate}, "the changes of the plan")
-			assert.True(t, got.Items[0].Content != nil, "the content of the created file is not nil")
+			assert.NotNil(t, got.Items[0].Content, "the content of the created file is not nil")
 			assert.Empty(t, got.Items[0].Content, "the content of the created file")
 		})
 

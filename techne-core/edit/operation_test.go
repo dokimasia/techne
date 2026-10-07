@@ -21,17 +21,16 @@ func TestOperation(t *testing.T) {
 			t.Parallel()
 			for _, op := range edit.Operations() {
 				verb, subject, found := strings.Cut(string(op), ".")
-				assert.True(t, found && verb != "" && subject != "", "the name of "+string(op))
+				assert.True(t, found, "the dot of "+string(op))
+				assert.NotEmpty(t, verb, "the verb of "+string(op))
+				assert.NotEmpty(t, subject, "the subject of "+string(op))
 			}
 		})
 
 		t.Run("lists each operation once", func(t *testing.T) {
 			t.Parallel()
-			seen := map[edit.Operation]bool{}
-			for _, op := range edit.Operations() {
-				assert.False(t, seen[op], "a second listing of "+string(op))
-				seen[op] = true
-			}
+			assert.NoDuplicates(t, func() ([]edit.Operation, error) { return edit.Operations(), nil },
+				"the operations")
 		})
 
 		t.Run("returns a new slice on each call", func(t *testing.T) {

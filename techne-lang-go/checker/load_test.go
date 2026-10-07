@@ -6,7 +6,6 @@ package checker_test
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -271,7 +270,7 @@ func TestLoad(t *testing.T) {
 			assert.HasSuffix(t, string(found.Span.Path), "/fmt/print.go", "the file of Println")
 			content, err := os.ReadFile(filepath.FromSlash(string(found.Span.Path)))
 			assert.NoError(t, err, "ReadFile print.go")
-			assert.True(t, strings.HasPrefix(string(content[found.Span.Start.Offset:]), "Println("),
+			assert.HasPrefix(t, string(content[found.Span.Start.Offset:]), "Println(",
 				"the offset of Println in print.go")
 			assert.Equal(t, found.Signature, "func Println(a ...any) (n int, err error)", "the signature of Println")
 		})

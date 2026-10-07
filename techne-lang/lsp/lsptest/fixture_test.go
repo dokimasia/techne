@@ -182,7 +182,7 @@ func TestFixture(t *testing.T) {
 
 		t.Run("ends line 1 with a call of F0", func(t *testing.T) {
 			t.Parallel()
-			assert.True(t, strings.HasSuffix(line(lsptest.Bundle(3), 1), "return F0() }"), "the end of line 1")
+			assert.HasSuffix(t, line(lsptest.Bundle(3), 1), "return F0() }", "the end of line 1")
 		})
 	})
 

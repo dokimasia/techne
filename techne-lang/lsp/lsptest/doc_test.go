@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
+	assertfiles "go.dokimi.dev/assert/files"
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
 
@@ -34,9 +35,7 @@ func TestDoc(t *testing.T) {
 		t.Run("writes the fixtures that the script describes", func(t *testing.T) {
 			t.Parallel()
 			root := lsptest.Workspace(t, map[string]string{"a.fake": lsptest.Content})
-			content, err := os.ReadFile(root + "/a.fake")
-			assert.NoError(t, err, "the test reads a.fake")
-			assert.Equal(t, string(content), lsptest.Content, "the content of a.fake")
+			assertfiles.HasContent(t, root+"/a.fake", lsptest.Content, "the content of a.fake")
 		})
 	})
 }

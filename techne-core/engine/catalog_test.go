@@ -16,9 +16,7 @@ import (
 func catalog(t *testing.T, engines ...engine.Engine) *engine.Catalog {
 	t.Helper()
 	c := engine.NewCatalog()
-	for _, e := range engines {
-		assert.NoError(t, c.Add(e), "Add "+e.Name())
-	}
+	assert.Total(t, c.Add, engines, "Add of each engine")
 	return c
 }
 

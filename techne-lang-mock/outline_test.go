@@ -34,7 +34,7 @@ func names(items []sema.Symbol) []string {
 func declared(t *testing.T, items []sema.Symbol, name string) sema.Symbol {
 	t.Helper()
 	i := slices.IndexFunc(items, func(one sema.Symbol) bool { return one.Name == name })
-	assert.True(t, i >= 0, "a declaration named "+name)
+	assert.InRange(t, i, 0, 1<<63, "a declaration named "+name)
 	return items[i]
 }
 

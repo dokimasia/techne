@@ -5,7 +5,6 @@ package main_test
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -105,10 +104,8 @@ func ran(t *testing.T, env []string, args ...string) (string, string, int) {
 	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err := cmd.Run()
-	var exited *exec.ExitError
-	if err != nil && !errors.As(err, &exited) {
-		t.Fatalf("run the command: %v", err)
+	if err := cmd.Run(); err != nil {
+		_ = assert.ErrorAs[*exec.ExitError](t, err, "the error of Run")
 	}
 	return stdout.String(), stderr.String(), cmd.ProcessState.ExitCode()
 }

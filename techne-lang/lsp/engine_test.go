@@ -300,7 +300,7 @@ func TestEngine(t *testing.T) {
 			began := time.Now()
 			assert.NoError(t, e.Close(t.Context()), "Close during the handshake")
 			took := time.Since(began)
-			assert.True(t, took < lsptest.SlowStart, "Close took "+took.String())
+			assert.InRange(t, took, -1<<63, float64(lsptest.SlowStart-1), "Close took "+took.String())
 		})
 
 		t.Run("returns while a child of the server keeps its stderr open", func(t *testing.T) {
@@ -312,7 +312,7 @@ func TestEngine(t *testing.T) {
 			began := time.Now()
 			assert.NoError(t, e.Close(t.Context()), "Close")
 			took := time.Since(began)
-			assert.True(t, took < lsptest.OrphanTime/2, "Close took "+took.String())
+			assert.InRange(t, took, -1<<63, float64(lsptest.OrphanTime/2-1), "Close took "+took.String())
 		})
 
 		t.Run("stops the server while questions run", func(t *testing.T) {
@@ -332,8 +332,8 @@ func TestEngine(t *testing.T) {
 			var closed error
 			group.Go(func() { closed = e.Close(t.Context()) })
 			group.Wait()
-			if closed != nil && !strings.Contains(closed.Error(), "shutdown") {
-				t.Errorf("Close returned %v, want nil or a shutdown error", closed)
+			if closed != nil {
+				assert.Contains(t, closed.Error(), "shutdown", "the error of Close")
 			}
 		})
 	})

@@ -27,13 +27,17 @@ func TestHeld(t *testing.T) {
 		t.Run("returns a different handle for each dry run", func(t *testing.T) {
 			t.Parallel()
 			_, s := serving(t, planner{}, clean())
-			seen := map[string]bool{}
-			for range 8 {
-				got, err := s.Apply(t.Context(), asking(true))
-				assert.NoError(t, err, "Apply")
-				assert.False(t, seen[got.Handle], "the reuse of "+got.Handle)
-				seen[got.Handle] = true
-			}
+			assert.NoDuplicates(t, func() ([]string, error) {
+				handles := make([]string, 0, 8)
+				for range 8 {
+					got, err := s.Apply(t.Context(), asking(true))
+					if err != nil {
+						return nil, err
+					}
+					handles = append(handles, got.Handle)
+				}
+				return handles, nil
+			}, "the handles of eight dry runs")
 		})
 
 		t.Run("returns no handle for a write", func(t *testing.T) {

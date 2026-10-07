@@ -64,8 +64,9 @@ func TestClose(t *testing.T) {
 				closing{name: "first", closed: &first, err: one},
 				closing{name: "second", closed: &second, err: two})
 			err := c.Close(t.Context())
-			assert.ErrorIs(t, err, one, "first failure")
-			assert.ErrorIs(t, err, two, "second failure")
+			assert.That(t, err).
+				ErrorIs(one, "first failure").
+				ErrorIs(two, "second failure")
 		})
 
 		t.Run("returns nil for an empty catalogue", func(t *testing.T) {

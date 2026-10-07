@@ -5,7 +5,6 @@ package mock_test
 
 import (
 	"bytes"
-	"slices"
 	"testing"
 	"testing/fstest"
 
@@ -70,7 +69,8 @@ func TestCheck(t *testing.T) {
 			for _, one := range got.Items {
 				paths = append(paths, one.Diagnostic.Span.Path)
 			}
-			assert.True(t, slices.IsSorted(paths), "the order of the findings")
+			assert.Pairwise(t, paths, func(earlier, later source.Path) bool { return earlier <= later },
+				"the order of the findings")
 		})
 
 		t.Run("declines a change without a file of the language", func(t *testing.T) {

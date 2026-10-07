@@ -149,7 +149,7 @@ func TestCheck(t *testing.T) {
 			_, err := e.Check(t.Context(), faulty)
 			took := time.Since(began)
 			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Check")
-			assert.True(t, took < 10*time.Second, "Check took "+took.String())
+			assert.InRange(t, took, -1<<63, float64(10*time.Second-1), "Check took "+took.String())
 		})
 
 		t.Run("returns the report of a quiet server that publishes it after two seconds", func(t *testing.T) {

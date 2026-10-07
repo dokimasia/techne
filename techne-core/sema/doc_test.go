@@ -4,7 +4,6 @@
 package sema_test
 
 import (
-	"slices"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -21,7 +20,7 @@ func TestDoc(t *testing.T) {
 			t.Parallel()
 			kinds := sema.RelationKinds()
 			for _, k := range kinds {
-				assert.True(t, slices.Contains(kinds, k.Inverse()), k.String())
+				assert.Contains(t, kinds, k.Inverse(), k.String())
 			}
 		})
 	})

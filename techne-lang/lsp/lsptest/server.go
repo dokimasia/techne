@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/lang/lsp"
@@ -158,9 +159,7 @@ func Parsing(tb testing.TB, root string, server lsp.Server) *lsp.Engine {
 func built(tb testing.TB, root string, server lsp.Server, declarations engine.Outliner) *lsp.Engine {
 	tb.Helper()
 	e, err := lsp.New(root, Declaration(), server, declarations)
-	if err != nil {
-		tb.Fatalf("lsptest: build an engine over %s: %v", root, err)
-	}
+	assert.NoError(tb, err, "the error of New over "+root)
 	Cleanup(tb, e)
 	return e
 }

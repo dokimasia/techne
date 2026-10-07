@@ -19,12 +19,13 @@ func TestDoc(t *testing.T) {
 		t.Run("round-trips every declared value through JSON", func(t *testing.T) {
 			t.Parallel()
 			names := wire.New(unknown, map[colour]string{unknown: "unknown", red: "red", green: "green"})
-			for _, v := range []colour{unknown, red, green} {
-				encoded, err := names.Marshal(v)
-				assert.NoError(t, err, "marshal")
+			decode := func(encoded []byte) (colour, error) {
 				var decoded colour
-				assert.NoError(t, names.Unmarshal(encoded, &decoded), "unmarshal")
-				assert.Equal(t, decoded, v, "round trip")
+				err := names.Unmarshal(encoded, &decoded)
+				return decoded, err
+			}
+			for _, v := range []colour{unknown, red, green} {
+				assert.RoundTrip(t, names.Marshal, decode, v, "round trip")
 			}
 		})
 	})

@@ -262,14 +262,14 @@ func TestAsk(t *testing.T) {
 
 		t.Run("returns the error of a failed language when the context is done", func(t *testing.T) {
 			t.Parallel()
-			ctx, cancel := context.WithCancel(t.Context())
-			cancel()
 			calls := 0
 			c := catalog(t,
 				fake{name: "fixture", fidelity: trust.Syntactic, err: context.Canceled},
 				fake{name: "other", language: other, fidelity: trust.Syntactic, calls: &calls})
-			_, _, err := engine.AskEach(ctx, c, router{}, directory, engine.RoleOutline, outline)
-			assert.ErrorIs(t, err, context.Canceled, "AskEach")
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				_, _, err := engine.AskEach(ctx, c, router{}, directory, engine.RoleOutline, outline)
+				return err
+			}, "AskEach")
 			assert.Equal(t, calls, 0, "other calls")
 		})
 

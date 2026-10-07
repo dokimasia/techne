@@ -12,6 +12,7 @@ import (
 	"testing/synctest"
 
 	"go.dokimi.dev/assert"
+	assertfiles "go.dokimi.dev/assert/files"
 	"go.dokimi.dev/techne/internal/app"
 	"go.dokimi.dev/techne/service/workspace/files"
 	"go.dokimi.dev/techne/tool"
@@ -244,8 +245,7 @@ func TestSession(t *testing.T) {
 			t.Parallel()
 			s := started(t, app.Command{Root: project(t, t.TempDir(), "home", "Home")})
 			for _, one := range s.Tools.Tools() {
-				_, declared := one.InputSchema().Properties[tool.WorkingDirectory]
-				assert.False(t, declared, "the wd of "+one.Name())
+				assert.NotContains(t, one.InputSchema().Properties, tool.WorkingDirectory, "the wd of "+one.Name())
 			}
 		})
 
@@ -258,9 +258,8 @@ func TestSession(t *testing.T) {
 			})
 			got := applied(t, s, away, renamed(t, s, away, "Away"))
 			assert.Equal(t, got["applied"], any(true), "applied of the change")
-			content, err := os.ReadFile(filepath.Join(away, projectFile))
-			assert.NoError(t, err, "the error of ReadFile")
-			assert.Equal(t, string(content), "type Moved\nfunc New\n  use Moved\n", "the file after the change")
+			assertfiles.HasContent(t, filepath.Join(away, projectFile), "type Moved\nfunc New\n  use Moved\n",
+				"the file after the change")
 		})
 
 		t.Run("keeps the workspaces of three directories open", func(t *testing.T) {

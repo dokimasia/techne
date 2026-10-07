@@ -115,7 +115,7 @@ func TestVerify(t *testing.T) {
 			took := time.Since(began)
 			assert.NoError(t, err, "Verify of ten files")
 			assert.Equal(t, got.Completeness, trust.ScopePartial, "the completeness of the answer")
-			assert.True(t, took < 3*time.Second, "Verify of ten files took "+took.String())
+			assert.InRange(t, took, -1<<63, float64(3*time.Second-1), "Verify of ten files took "+took.String())
 		})
 
 		t.Run("returns the findings of the check on disk beside the pulled diagnostics", func(t *testing.T) {

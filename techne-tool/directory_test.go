@@ -117,8 +117,7 @@ func TestDirectory(t *testing.T) {
 			inner := greeter(t)
 			_, err := tool.Directed(inner, about, nil)
 			assert.NoError(t, err, "the error of Directed")
-			_, declared := inner.InputSchema().Properties[tool.WorkingDirectory]
-			assert.False(t, declared, "wd in the schema of the tool")
+			assert.NotContains(t, inner.InputSchema().Properties, tool.WorkingDirectory, "wd in the schema of the tool")
 			assert.Equal(t, inner.InputSchema().PropertyOrder, []string{"name", "times"},
 				"the fields of the schema of the tool")
 		})

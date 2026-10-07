@@ -4,7 +4,6 @@
 package mock_test
 
 import (
-	"slices"
 	"strconv"
 	"testing"
 
@@ -123,7 +122,8 @@ func TestSource(t *testing.T) {
 
 		t.Run("returns the words in byte order", func(t *testing.T) {
 			t.Parallel()
-			assert.True(t, slices.IsSorted(mock.Kinds()), "the order of the words")
+			assert.Pairwise(t, mock.Kinds(), func(earlier, later string) bool { return earlier <= later },
+				"the order of the words")
 		})
 	})
 

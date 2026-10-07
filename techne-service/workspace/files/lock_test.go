@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"go.dokimi.dev/assert"
+	assertfiles "go.dokimi.dev/assert/files"
 	"go.dokimi.dev/techne/service/workspace/files"
 )
 
@@ -98,17 +99,6 @@ func waiting(root *files.Root) error {
 	return nil
 }
 
-// created waits up to ten seconds for the file at p.
-func created(t *testing.T, p string) {
-	t.Helper()
-	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
-		if _, err := os.Stat(p); err == nil {
-			return
-		}
-	}
-	t.Fatalf("%s was not created within ten seconds", p)
-}
-
 func TestLock(t *testing.T) {
 	t.Parallel()
 
@@ -148,7 +138,9 @@ func TestLock(t *testing.T) {
 				_ = holder.Process.Kill()
 				_ = holder.Wait()
 			})
-			created(t, ready)
+			assert.Eventually(t, 10*time.Second, 10*time.Millisecond, func(tb assert.TB) {
+				assertfiles.IsFile(tb, ready, "the ready file of the holder")
+			}, "the holder takes the lock within ten seconds")
 
 			out, err := child(t, cache, "wait", dir, "", patienceVar+"=100ms").CombinedOutput()
 			assert.HasError(t, err, "the exit of the waiter")

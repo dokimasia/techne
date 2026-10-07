@@ -47,9 +47,7 @@ func asking(dry bool) edit.Request {
 func serving(t *testing.T, engines ...engine.Engine) (*workspace, *change.Service) {
 	t.Helper()
 	catalogue := engine.NewCatalog()
-	for _, e := range engines {
-		assert.NoError(t, catalogue.Add(e), "Add of "+e.Name())
-	}
+	assert.Total(t, catalogue.Add, engines, "Add of each engine")
 	files := &workspace{content: map[source.Path]string{"a.fx": original}}
 	return files, change.New(catalogue, router{}, files)
 }

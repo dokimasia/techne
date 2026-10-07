@@ -80,7 +80,7 @@ func TestWorking(t *testing.T) {
 			_, err = e.Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
 			took := time.Since(began)
 			assert.NoError(t, err, "the second Resolve")
-			assert.True(t, took < 100*time.Millisecond, "the second Resolve took "+took.String())
+			assert.InRange(t, took, -1<<63, float64(100*time.Millisecond-1), "the second Resolve took "+took.String())
 		})
 	})
 }

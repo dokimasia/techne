@@ -36,11 +36,7 @@ func TestMode(t *testing.T) {
 
 		t.Run("names each behaviour with a distinct string", func(t *testing.T) {
 			t.Parallel()
-			seen := map[lsptest.Mode]bool{}
-			for _, mode := range modes {
-				assert.False(t, seen[mode], "the mode "+string(mode)+" is declared twice")
-				seen[mode] = true
-			}
+			assert.NoDuplicates(t, func() ([]lsptest.Mode, error) { return modes, nil }, "the modes")
 		})
 
 		t.Run("has Default as its zero value", func(t *testing.T) {

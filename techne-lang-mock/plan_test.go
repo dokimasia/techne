@@ -125,8 +125,9 @@ func TestPlan(t *testing.T) {
 			_, err := built(t).Plan(t.Context(), engine.Request{Scope: "src"}, edit.RenameSymbol,
 				edit.Target{Kind: edit.TargetSymbol, Symbol: id("Absent", sema.KindType)},
 				edit.Args{edit.ArgNewName: "Vault"})
-			assert.ErrorIs(t, err, engine.ErrRefuse, "the error of the rename of Absent")
-			assert.ErrorIsNot(t, err, engine.ErrDecline, "the error of the rename of Absent")
+			assert.That(t, err).
+				ErrorIs(engine.ErrRefuse, "the error of the rename of Absent").
+				ErrorIsNot(engine.ErrDecline, "the error of the rename of Absent")
 		})
 
 		t.Run("refuses an ID that two declarations have", func(t *testing.T) {

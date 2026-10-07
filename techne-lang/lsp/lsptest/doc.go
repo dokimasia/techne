@@ -47,6 +47,6 @@
 //
 // # Dependency position
 //
-// Imports the standard library, core/engine, core/sema, core/source, core/trust, lang,
-// lang/lsp and go.lsp.dev/uri.
+// Imports the standard library, go.dokimi.dev/assert and its package files, core/engine,
+// core/sema, core/source, core/trust, lang, lang/lsp and go.lsp.dev/uri.
 package lsptest

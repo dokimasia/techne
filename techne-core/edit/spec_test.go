@@ -4,7 +4,6 @@
 package edit_test
 
 import (
-	"slices"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -63,7 +62,7 @@ func TestSpec(t *testing.T) {
 			for _, op := range edit.Operations() {
 				spec, _ := edit.SpecFor(op)
 				for _, key := range spec.Required {
-					assert.False(t, slices.Contains(spec.Optional, key), string(op)+" "+string(key))
+					assert.NotContains(t, spec.Optional, key, string(op)+" "+string(key))
 				}
 			}
 		})

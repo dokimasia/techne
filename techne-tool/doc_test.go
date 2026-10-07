@@ -4,7 +4,6 @@
 package tool_test
 
 import (
-	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -42,7 +41,7 @@ func TestDoc(t *testing.T) {
 		t.Run("starts with PREFER OVER for every tool", func(t *testing.T) {
 			t.Parallel()
 			for _, one := range every(t) {
-				assert.True(t, strings.HasPrefix(one.Description(), "PREFER OVER "), "the description of "+one.Name())
+				assert.HasPrefix(t, one.Description(), "PREFER OVER ", "the description of "+one.Name())
 			}
 		})
 	})

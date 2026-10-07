@@ -140,7 +140,9 @@ func TestMerge(t *testing.T) {
 				answering{name: "fx", fidelity: trust.Resolved, found: symbol("A")},
 				answering{name: "ot", language: other, fidelity: trust.Resolved, found: symbol("B")},
 			}
-			assert.Equal(t, merged(t, engines...), merged(t, engines...), "the second answer")
+			assert.Deterministic(t, func(engines []engine.Engine) (engine.Answer[sema.Symbol], error) {
+				return merged(t, engines...), nil
+			}, engines, "the answer of each call")
 		})
 
 		t.Run("asks only the language that claims a file", func(t *testing.T) {

@@ -4,15 +4,14 @@
 package treesitter_test
 
 import (
-	"regexp"
 	"testing"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/lang/treesitter"
 )
 
-// snake matches a node kind or a field name as the grammars spell them.
-var snake = regexp.MustCompile(`^[a-z]+(_[a-z]+)*$`)
+// snake is the pattern of a node kind or a field name as the grammars spell them.
+const snake = `^[a-z]+(_[a-z]+)*$`
 
 func TestNode(t *testing.T) {
 	t.Parallel()
@@ -43,17 +42,13 @@ func TestNode(t *testing.T) {
 		t.Run("is spelled in lower snake case", func(t *testing.T) {
 			t.Parallel()
 			for _, kind := range kinds {
-				assert.True(t, snake.MatchString(string(kind)), string(kind))
+				assert.Matches(t, string(kind), snake, string(kind))
 			}
 		})
 
 		t.Run("has a distinct value for each constant", func(t *testing.T) {
 			t.Parallel()
-			seen := map[treesitter.NodeKind]bool{}
-			for _, kind := range kinds {
-				assert.False(t, seen[kind], string(kind))
-				seen[kind] = true
-			}
+			assert.NoDuplicates(t, func() ([]treesitter.NodeKind, error) { return kinds, nil }, "the node kinds")
 		})
 	})
 
@@ -65,7 +60,7 @@ func TestNode(t *testing.T) {
 			for _, field := range []treesitter.FieldName{
 				treesitter.FieldNameName, treesitter.FieldNameTag, treesitter.FieldNameBody,
 			} {
-				assert.True(t, snake.MatchString(string(field)), string(field))
+				assert.Matches(t, string(field), snake, string(field))
 			}
 		})
 	})

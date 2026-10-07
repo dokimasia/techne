@@ -26,7 +26,7 @@ func TestWaited(t *testing.T) {
 			done := engine.Waiting(ctx)
 			time.Sleep(pause)
 			done()
-			assert.True(t, waited.Total() >= pause, "the total is at least the wait")
+			assert.InRange(t, waited.Total(), float64(pause), 1<<63, "the total is at least the wait")
 		})
 
 		t.Run("adds nothing without a Waited", func(t *testing.T) {
@@ -45,7 +45,7 @@ func TestWaited(t *testing.T) {
 				time.Sleep(pause)
 				done()
 			}
-			assert.True(t, waited.Total() >= 2*pause, "the total is at least both waits")
+			assert.InRange(t, waited.Total(), float64(2*pause), 1<<63, "the total is at least both waits")
 		})
 	})
 

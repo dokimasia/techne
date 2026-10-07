@@ -131,7 +131,7 @@ func TestWorkspace(t *testing.T) {
 					"Store", sema.KindStruct, 0, ""))
 			}
 			got := mapped(t, `{"max_tokens":100}`, found...)
-			assert.True(t, len(got.Items) < 40, "the units within 100 tokens")
+			assert.InRange(t, len(got.Items), -1<<63, 39, "the units within 100 tokens")
 			assert.Equal(t, truncations(got.Provenance), []string{fmt.Sprintf(
 				"%d of 40 units returned within the token budget, those with the most declarations", len(got.Items))},
 				"the notes of the truncation caveats")
@@ -180,8 +180,9 @@ func TestWorkspace(t *testing.T) {
 				found = append(found, declaring("b", fmt.Sprintf("b/%d.fx", i), "Two", sema.KindStruct, 0, ""))
 			}
 			got := mapped(t, `{}`, found...).Render()
-			assert.Contains(t, got, "\na  fixture   1 file    1 declaration\n", "the line of a")
-			assert.Contains(t, got, "\nb  fixture  10 files  10 declarations\n", "the line of b")
+			assert.That(t, got).
+				Contains("\na  fixture   1 file    1 declaration\n", "the line of a").
+				Contains("\nb  fixture  10 files  10 declarations\n", "the line of b")
 		})
 
 		t.Run("writes the reason of a failure", func(t *testing.T) {

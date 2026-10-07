@@ -39,9 +39,7 @@ func (elsewhere) Language() source.Language { return source.Language("elsewhere"
 func catalogued(t *testing.T, engines ...engine.Engine) tool.Tool {
 	t.Helper()
 	c := engine.NewCatalog()
-	for _, e := range engines {
-		assert.NoError(t, c.Add(e), "the error of Add for "+e.Name())
-	}
+	assert.Total(t, c.Add, engines, "the error of Add for each engine")
 	built, err := tool.Capabilities(c)
 	assert.NoError(t, err, "the error of Capabilities")
 	return built
@@ -100,14 +98,17 @@ func TestCapabilities(t *testing.T) {
 		t.Run("returns an empty list for an empty catalogue", func(t *testing.T) {
 			t.Parallel()
 			got := capable(t, catalogued(t), `{}`)
-			assert.NotNil(t, got, "the list of capabilities")
-			assert.Empty(t, got, "the capabilities")
+			assert.That(t, got).
+				NotNil("the list of capabilities").
+				Empty("the capabilities")
 		})
 
-		t.Run("returns the capabilities in the same order twice", func(t *testing.T) {
+		t.Run("returns the capabilities in the same order on each call", func(t *testing.T) {
 			t.Parallel()
 			built := catalogued(t, parser{}, elsewhere{})
-			assert.Equal(t, capable(t, built, `{}`), capable(t, built, `{}`), "the capabilities of the second call")
+			assert.Deterministic(t, func(input string) ([]tool.Capability, error) {
+				return capable(t, built, input), nil
+			}, `{}`, "the capabilities of each call")
 		})
 	})
 

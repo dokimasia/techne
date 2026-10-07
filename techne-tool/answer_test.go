@@ -42,8 +42,9 @@ func TestAnswer(t *testing.T) {
 		t.Run("writes text without JSON", func(t *testing.T) {
 			t.Parallel()
 			got := answered().Render()
-			assert.NotContains(t, got, `"name":`, "the render")
-			assert.Contains(t, got, "type Symbol struct", "the render")
+			assert.That(t, got).
+				NotContains(`"name":`, "the render").
+				Contains("type Symbol struct", "the render")
 		})
 
 		t.Run("writes the path of the scope once", func(t *testing.T) {
@@ -62,15 +63,17 @@ func TestAnswer(t *testing.T) {
 		t.Run("writes a member one level under its declaration", func(t *testing.T) {
 			t.Parallel()
 			got := answered().Render()
-			assert.Contains(t, got, "\n   33  type Symbol struct", "the line of Symbol")
-			assert.Contains(t, got, "\n     34  Name string", "the line of Name")
+			assert.That(t, got).
+				Contains("\n   33  type Symbol struct", "the line of Symbol").
+				Contains("\n     34  Name string", "the line of Name")
 		})
 
 		t.Run("writes every line of the documentation", func(t *testing.T) {
 			t.Parallel()
 			got := answered().Render()
-			assert.Contains(t, got, "Symbol is one declaration.", "the first line of the documentation")
-			assert.Contains(t, got, "The second line follows.", "the second line of the documentation")
+			assert.That(t, got).
+				Contains("Symbol is one declaration.", "the first line of the documentation").
+				Contains("The second line follows.", "the second line of the documentation")
 		})
 
 		t.Run("writes the source text in place of the signature", func(t *testing.T) {

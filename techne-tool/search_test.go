@@ -236,8 +236,9 @@ func TestSearch(t *testing.T) {
 		t.Run("writes no match for an empty answer", func(t *testing.T) {
 			t.Parallel()
 			got := tool.Matches{Text: "x"}.Render()
-			assert.Contains(t, got, "0 matches", "the render")
-			assert.Contains(t, got, "nothing found", "the render")
+			assert.That(t, got).
+				Contains("0 matches", "the render").
+				Contains("nothing found", "the render")
 		})
 	})
 }

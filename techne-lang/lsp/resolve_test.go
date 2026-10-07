@@ -157,7 +157,7 @@ func TestResolve(t *testing.T) {
 			ctx, waited := engine.Timing(t.Context())
 			_, err = e.Resolve(ctx, engine.Request{Scope: "a.fake"}, store())
 			assert.NoError(t, err, "Resolve")
-			assert.True(t, waited.Total() > 0, "the time that Resolve waited for the server")
+			assert.InRange(t, waited.Total(), 1, 1<<63, "the time that Resolve waited for the server")
 		})
 
 		t.Run("declines a definition that the server cancels", func(t *testing.T) {

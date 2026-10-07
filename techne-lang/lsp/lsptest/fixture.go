@@ -5,14 +5,13 @@ package lsptest
 
 import (
 	"fmt"
-	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"testing"
 	"unicode"
 	"unicode/utf8"
 
+	assertfiles "go.dokimi.dev/assert/files"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
 	"go.dokimi.dev/techne/lang"
@@ -138,19 +137,13 @@ func Declaration() lang.Declaration {
 }
 
 // Workspace writes files into a new temporary directory and returns the directory. Each key
-// is a slash-separated path relative to the directory. The test fails if a file cannot be
-// written.
+// is a slash-separated path relative to the directory. Each file gets the mode 0644, and each
+// directory 0755. The test fails if a file cannot be written.
 func Workspace(tb testing.TB, files map[string]string) string {
 	tb.Helper()
-	root := tb.TempDir()
+	tree := make(assertfiles.Tree, len(files))
 	for name, content := range files {
-		at := filepath.Join(root, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(at), 0o755); err != nil {
-			tb.Fatalf("lsptest: create the directory of %s: %v", name, err)
-		}
-		if err := os.WriteFile(at, []byte(content), 0o644); err != nil {
-			tb.Fatalf("lsptest: write %s: %v", name, err)
-		}
+		tree[name] = assertfiles.Text(content)
 	}
-	return root
+	return assertfiles.Workspace(tb, tree)
 }

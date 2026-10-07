@@ -164,9 +164,9 @@ func TestSymbol(t *testing.T) {
 			assert.NoError(t, err, "Resolve of F0 in a bundle")
 			assert.Equal(t, names(got.Items), []string{"F0"}, "the declarations that F0 denotes")
 			signature := got.Items[0].Signature
-			assert.True(t, strings.HasPrefix(signature, "func F0() int { return 0 }; func F1()"),
+			assert.HasPrefix(t, signature, "func F0() int { return 0 }; func F1()",
 				"the signature of F0 starts at its line: "+signature)
-			assert.True(t, len(signature) <= lang.LineLimit+len("…"),
+			assert.InRange(t, len(signature), -1<<63, float64(lang.LineLimit+len("…")),
 				"the signature of F0 is at most lang.LineLimit bytes and an ellipsis: "+signature)
 		})
 
@@ -185,7 +185,7 @@ func TestSymbol(t *testing.T) {
 			assert.NoError(t, err, "the second Resolve of F0 in a nested bundle")
 			assert.Equal(t, names(got.Items), []string{"F0"}, "the declarations that F0 denotes")
 			allocated := after.TotalAlloc - before.TotalAlloc
-			assert.True(t, allocated < 512<<20,
+			assert.InRange(t, allocated, 0, 512<<20-1,
 				"the bytes that the second Resolve allocates: "+strconv.FormatUint(allocated, 10))
 		})
 	})

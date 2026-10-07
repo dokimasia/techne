@@ -103,7 +103,7 @@ func TestSession(t *testing.T) {
 			assert.Contains(t, err.Error(), "initialize", "the error of Resolve")
 			assert.Contains(t, err.Error(), "the start goes on", "the error of Resolve")
 			assert.Contains(t, err.Error(), lsptest.Waiting, "the error of Resolve")
-			assert.True(t, time.Since(began) < time.Minute, "Resolve returns within a minute")
+			assert.InRange(t, time.Since(began), -1<<63, float64(time.Minute-1), "Resolve returns within a minute")
 		})
 
 		t.Run("uses a server whose handshake ends after a question stops waiting", func(t *testing.T) {

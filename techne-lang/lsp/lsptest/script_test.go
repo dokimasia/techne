@@ -6,7 +6,6 @@ package lsptest_test
 import (
 	"bufio"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -303,8 +302,7 @@ func TestScript(t *testing.T) {
 			t.Parallel()
 			p := run(t, lsptest.Dies)
 			p.send(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}`)
-			var exit *exec.ExitError
-			assert.True(t, errors.As(p.cmd.Wait(), &exit), "Wait returns an exit error")
+			exit := assert.ErrorAs[*exec.ExitError](t, p.cmd.Wait(), "Wait returns an exit error")
 			assert.Equal(t, exit.ExitCode(), 3, "the exit status of the Dies mode")
 			assert.Contains(t, p.stderr.String(), lsptest.Dying, "the stderr of the Dies mode")
 		})
@@ -432,7 +430,7 @@ func TestScript(t *testing.T) {
 			sent := time.Now()
 			p.send(t, opening(lsptest.Faulty))
 			got := p.report(t)
-			assert.True(t, time.Since(sent) >= lsptest.QuietDelay, "the delay of the report")
+			assert.InRange(t, time.Since(sent), float64(lsptest.QuietDelay), 1<<63, "the delay of the report")
 			assert.Contains(t, got, lsptest.Broken, "the report of the opened document")
 		})
 
@@ -456,7 +454,7 @@ func TestScript(t *testing.T) {
 			sent := time.Now()
 			p.send(t, closing)
 			p.report(t)
-			assert.True(t, time.Since(sent) >= lsptest.QuietClose, "the delay of the report")
+			assert.InRange(t, time.Since(sent), float64(lsptest.QuietClose), 1<<63, "the delay of the report")
 		})
 
 		t.Run("publishes an empty report of a closed document in the Quiet mode", func(t *testing.T) {
@@ -477,9 +475,10 @@ func TestScript(t *testing.T) {
 			sent := time.Now()
 			p.send(t, initialized)
 			got := strings.Join(p.check(t), "")
-			assert.True(t, time.Since(sent) >= lsptest.DiskDelay, "the delay of the check")
-			assert.Contains(t, got, lsptest.Unsound, "the report of the check")
-			assert.Contains(t, got, "checks=1", "the note of the check")
+			assert.InRange(t, time.Since(sent), float64(lsptest.DiskDelay), 1<<63, "the delay of the check")
+			assert.That(t, got).
+				Contains(lsptest.Unsound, "the report of the check").
+				Contains("checks=1", "the note of the check")
 		})
 
 		t.Run("checks the files on disk after didSave in the DiskChecks mode", func(t *testing.T) {
@@ -494,8 +493,9 @@ func TestScript(t *testing.T) {
 				0o644), "the test writes a.fake")
 			p.send(t, saving)
 			got := strings.Join(p.check(t), "")
-			assert.Contains(t, got, lsptest.Unsound, "the report of the check after the save")
-			assert.Contains(t, got, "checks=2", "the note of the check after the save")
+			assert.That(t, got).
+				Contains(lsptest.Unsound, "the report of the check after the save").
+				Contains("checks=2", "the note of the check after the save")
 		})
 
 		t.Run("begins a check on disk that never ends in the DiskStuck mode", func(t *testing.T) {

@@ -80,8 +80,7 @@ func TestVisibility(t *testing.T) {
 			t.Parallel()
 			assert.Length(t, sema.Visibilities(), len(words), "listed visibilities")
 			for _, v := range sema.Visibilities() {
-				_, pinned := words[v]
-				assert.True(t, pinned, v.String())
+				assert.Contains(t, words, v, v.String())
 			}
 		})
 	})

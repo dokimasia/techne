@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/files"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
@@ -86,12 +87,10 @@ func TestDoc(t *testing.T) {
 			t.Parallel()
 			root := lsptest.Workspace(t, sample())
 			e := lsptest.Engine(t, root, lsptest.Server(lsptest.Default))
-			_, err := renameWith(t, e)
-			assert.NoError(t, err, "Plan of a rename")
-
-			content, err := os.ReadFile(filepath.Join(root, "a.fake"))
-			assert.NoError(t, err, "the test reads a.fake")
-			assert.Equal(t, string(content), lsptest.Content, "a.fake after the plan")
+			files.Unchanged(t, os.DirFS(root), func() {
+				_, err := renameWith(t, e)
+				assert.NoError(t, err, "Plan of a rename")
+			}, "the workspace after the plan")
 		})
 	})
 }

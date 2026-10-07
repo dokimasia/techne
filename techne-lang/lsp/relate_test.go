@@ -151,9 +151,10 @@ func TestRelate(t *testing.T) {
 			assert.NoError(t, err, "Relate of the uses of F0 in a bundle")
 			assert.Equal(t, edges(got.Items), []string{"After"}, "the declarations that use F0")
 			via := got.Items[0].Via
-			assert.True(t, strings.HasPrefix(via, "…") && strings.HasSuffix(via, "return F0() }"),
-				"the line of the use of F0 ends at the use: "+via)
-			assert.True(t, len(via) <= lang.LineLimit+len("…"),
+			assert.That(t, via).
+				HasPrefix("…", "the start of the line of the use of F0").
+				HasSuffix("return F0() }", "the end of the line of the use of F0")
+			assert.InRange(t, len(via), -1<<63, float64(lang.LineLimit+len("…")),
 				"the line of the use of F0 is at most lang.LineLimit bytes and an ellipsis: "+via)
 		})
 
@@ -344,7 +345,7 @@ func TestRelate(t *testing.T) {
 			outlined, err := lsptest.Parser(root).Outline(t.Context(), engine.Request{Scope: "a.fake"})
 			assert.NoError(t, err, "the outline of a.fake")
 			at := slices.IndexFunc(outlined.Items, func(s sema.Symbol) bool { return s.Name == "Inner" })
-			assert.True(t, at >= 0, "the outline of a.fake declares Inner")
+			assert.InRange(t, at, 0, 1<<63, "the outline of a.fake declares Inner")
 			server := lsptest.Server(lsptest.Scoped)
 			server.Scoped = true
 			got, err := lsptest.Parsing(t, root, server).Relate(t.Context(),
@@ -584,7 +585,7 @@ func TestRelate(t *testing.T) {
 				declared("Store", sema.KindStruct), sema.ReferencedBy)
 			assert.NoError(t, err, "Relate of a use on line 0")
 			assert.Equal(t, got.Items[0].To.Kind, sema.KindFile, "the kind of the far end")
-			assert.True(t, slices.Contains(sema.Kinds(), got.Items[0].To.Kind), "sema.Kinds contains the kind")
+			assert.Contains(t, sema.Kinds(), got.Items[0].To.Kind, "sema.Kinds contains the kind")
 		})
 
 		t.Run("relates a use in a file outside the workspace", func(t *testing.T) {

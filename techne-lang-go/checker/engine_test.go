@@ -161,7 +161,7 @@ func carries(caveats []trust.Caveat, code trust.CaveatCode) bool {
 func at(t *testing.T, body, anchor string) source.Position {
 	t.Helper()
 	held := strings.Index(body, anchor)
-	assert.True(t, held >= 0, "the index of "+anchor)
+	assert.InRange(t, held, 0, 1<<63, "the index of "+anchor)
 	name := anchor[strings.LastIndexAny(anchor, " \t*(.")+1:]
 	return source.Position{Offset: held + len(anchor) - len(name)}
 }

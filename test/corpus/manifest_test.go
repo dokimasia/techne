@@ -58,8 +58,7 @@ func TestManifest(t *testing.T) {
 			m, err := corpus.Load("corpus.json")
 			assert.NoError(t, err, "Load of corpus.json")
 			for _, r := range m.Repositories {
-				_, declared := declarations[r.Language]
-				assert.True(t, declared, "the language of "+r.Name)
+				assert.Contains(t, declarations, r.Language, "the language of "+r.Name)
 			}
 		})
 

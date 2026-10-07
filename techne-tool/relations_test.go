@@ -6,7 +6,6 @@ package tool_test
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -147,8 +146,9 @@ func TestRelations(t *testing.T) {
 			twice.At.Start.Column = 20
 			over.edges = append(over.edges, twice)
 			got := relatedOver(t, over, store).Render()
-			assert.Contains(t, got, "a.fx:12:2", "the render of the first site")
-			assert.Contains(t, got, "a.fx:12:21", "the render of the second site")
+			assert.That(t, got).
+				Contains("a.fx:12:2", "the render of the first site").
+				Contains("a.fx:12:21", "the render of the second site")
 		})
 
 		t.Run("asks about the importers of a name that no declaration has", func(t *testing.T) {
@@ -198,10 +198,11 @@ func TestRelations(t *testing.T) {
 		t.Run("returns the first relations that fit the budget with a truncation caveat", func(t *testing.T) {
 			t.Parallel()
 			got := relatedOver(t, calls(40), `{"scope":"a.fx","name":"Store","relation":"called-by","max_tokens":100}`)
-			assert.True(t, len(got.Items) < 40, "the relations of Store within 100 tokens")
+			assert.InRange(t, len(got.Items), -1<<63, 39, "the relations of Store within 100 tokens")
 			note := fmt.Sprintf("%d of 40 relations returned within the token budget", len(got.Items))
 			assert.Equal(t, truncations(got.Provenance), []string{note}, "the notes of the truncation caveats")
-			assert.True(t, (len(got.Render())-len(". "+note))/3 <= 100, "the tokens of the render without the caveat")
+			assert.InRange(t, (len(got.Render())-len(". "+note))/3, -1<<63, 100,
+				"the tokens of the render without the caveat")
 		})
 
 		t.Run("returns one relation under a budget that fits none", func(t *testing.T) {
@@ -280,7 +281,7 @@ func TestRelations(t *testing.T) {
 		t.Run("writes the reason of a refusal", func(t *testing.T) {
 			t.Parallel()
 			got := relatedOver(t, calling(), `{"scope":"a.fx","name":"Get","relation":"calls"}`)
-			assert.True(t, strings.Contains(got.Render(), "refused"), "the render of the refusal")
+			assert.Contains(t, got.Render(), "refused", "the render of the refusal")
 		})
 	})
 }

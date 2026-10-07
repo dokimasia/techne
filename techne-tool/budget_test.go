@@ -165,7 +165,7 @@ func TestBudget(t *testing.T) {
 		t.Run("puts back the documentation of the declarations that fit", func(t *testing.T) {
 			t.Parallel()
 			got := tool.Fit(nested(200), tool.Budget{MaxTokens: 200})
-			assert.True(t, len(got.Items[0].Members) < 200, "the members of Store within 200 tokens")
+			assert.InRange(t, len(got.Items[0].Members), -1<<63, 199, "the members of Store within 200 tokens")
 			assert.Equal(t, got.Items[0].Doc, "Store keeps the items of a shop.", "the documentation of Store")
 		})
 
@@ -178,7 +178,7 @@ func TestBudget(t *testing.T) {
 		t.Run("counts the declarations that matched and that it returned", func(t *testing.T) {
 			t.Parallel()
 			got := tool.Fit(many(400), tool.Budget{MaxTokens: 300})
-			assert.True(t, len(got.Items) < 400, "the declarations within 300 tokens")
+			assert.InRange(t, len(got.Items), -1<<63, 399, "the declarations within 300 tokens")
 			assert.HasPrefix(t, truncation(got), fmt.Sprintf("400 matched, %d returned", len(got.Items)),
 				"the note of the truncation caveat")
 		})
@@ -193,7 +193,7 @@ func TestBudget(t *testing.T) {
 			t.Parallel()
 			got := tool.Fit(nested(60), tool.Budget{MaxTokens: 60})
 			assert.Length(t, got.Items, 1, "the declarations of the answer")
-			assert.True(t, len(got.Items[0].Members) < 60, "the members of Store within 60 tokens")
+			assert.InRange(t, len(got.Items[0].Members), -1<<63, 59, "the members of Store within 60 tokens")
 		})
 
 		t.Run("keeps one declaration when none fits", func(t *testing.T) {
@@ -240,7 +240,7 @@ func TestBudget(t *testing.T) {
 		t.Run("fits 35000 declarations within the budget", func(t *testing.T) {
 			t.Parallel()
 			got := tool.Fit(many(35000), tool.Budget{MaxTokens: tool.DefaultMaxTokens})
-			assert.True(t, rendered(got)/3 <= tool.DefaultMaxTokens, "the tokens of the render")
+			assert.InRange(t, rendered(got)/3, -1<<63, tool.DefaultMaxTokens, "the tokens of the render")
 			assert.HasPrefix(t, truncation(got), fmt.Sprintf("35000 matched, %d returned", len(got.Items)),
 				"the note of the truncation caveat")
 		})

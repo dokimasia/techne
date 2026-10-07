@@ -169,7 +169,7 @@ func TestDeclaration(t *testing.T) {
 			store.Doc = strings.Repeat("word ", 40) + "end."
 			got := tool.Declared([]sema.Symbol{store}, tool.Summaries, 0)[0].Summary
 			assert.HasSuffix(t, got, "word…", "the end of the summary")
-			assert.True(t, len(got) <= 160+len("…"), "the length of the summary: "+got)
+			assert.InRange(t, len(got), -1<<63, float64(160+len("…")), "the length of the summary: "+got)
 		})
 
 		t.Run("ends the summary before a list item", func(t *testing.T) {
@@ -263,8 +263,9 @@ func TestDeclaration(t *testing.T) {
 		t.Run("returns an empty list for no declarations", func(t *testing.T) {
 			t.Parallel()
 			got := tool.Declared(nil, tool.Names, 0)
-			assert.NotNil(t, got, "the list of declarations")
-			assert.Length(t, got, 0, "the declarations")
+			assert.That(t, got).
+				NotNil("the list of declarations").
+				Empty("the declarations")
 		})
 	})
 

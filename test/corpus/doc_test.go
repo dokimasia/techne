@@ -6,7 +6,6 @@ package corpus_test
 import (
 	"encoding/json"
 	"os/exec"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -23,8 +22,8 @@ var imported = []string{
 	"github.com/modelcontextprotocol/go-sdk/mcp",
 }
 
-// commit matches a full commit of git.
-var commit = regexp.MustCompile(`^[0-9a-f]{40}$`)
+// commit is the pattern of a full commit of git.
+const commit = `^[0-9a-f]{40}$`
 
 // TestDoc covers the claims of the package comment about the repositories and the imports.
 func TestDoc(t *testing.T) {
@@ -42,7 +41,7 @@ func TestDoc(t *testing.T) {
 					continue
 				}
 				assert.NotEmpty(t, r.Tag, "the tag of "+r.Name)
-				assert.True(t, commit.MatchString(r.Commit), "the commit of "+r.Name+": "+r.Commit)
+				assert.Matches(t, r.Commit, commit, "the commit of "+r.Name)
 			}
 		})
 	})

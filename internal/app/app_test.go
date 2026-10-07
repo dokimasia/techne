@@ -133,7 +133,7 @@ func TestApp(t *testing.T) {
 		t.Run("registers the language mock for the specification 1", func(t *testing.T) {
 			t.Parallel()
 			got := built(t, workspace(), "1").Languages
-			assert.True(t, slices.Contains(got, source.Language("mock")), "the languages of the server")
+			assert.Contains(t, got, source.Language("mock"), "the languages of the server")
 		})
 
 		t.Run("registers no mock language for the specification 0", func(t *testing.T) {
@@ -202,8 +202,7 @@ func TestApp(t *testing.T) {
 				"src/service.ts":   "typescript",
 			} {
 				got := call(t, s, "outline", `{"scope":"`+path+`"}`)
-				_, failed := got["error"]
-				assert.False(t, failed, "the error of the outline of "+path)
+				assert.NotContains(t, got, "error", "the error of the outline of "+path)
 				assert.NotEmpty(t, got["items"], "the items of the outline of "+path)
 				assert.Equal(t, got["scope"].(map[string]any)["language"], any(language),
 					"the language of the outline of "+path)
@@ -227,8 +226,7 @@ func TestApp(t *testing.T) {
 		t.Run("searches the workspace for a name", func(t *testing.T) {
 			t.Parallel()
 			got := call(t, built(t, workspace(), ""), "search", `{"text":"new","scope":"src","language":"go"}`)
-			_, failed := got["error"]
-			assert.False(t, failed, "the error of the search")
+			assert.NotContains(t, got, "error", "the error of the search")
 			assert.NotEmpty(t, got["items"], "the items of the search")
 		})
 
