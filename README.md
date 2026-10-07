@@ -122,6 +122,23 @@ An editor that starts techne in the project it opens can pass the trusted folder
 `"args": ["--trust", "~/Projects"]`. A call then sets `wd` to any other project under that
 folder. techne expands the `~`, because an editor passes it without a shell.
 
+## The Claude Code skill
+
+`skills/techne/SKILL.md` is a skill for Claude Code. It covers:
+
+- the tool for each question about code
+- the evidence that ends each answer, and what an empty answer proves
+- the preview and the apply of a change
+
+To install it for every project, link it into your skills directory from a checkout of this
+repository:
+
+```sh
+ln -s "$PWD/skills/techne" ~/.claude/skills/techne
+```
+
+A project can also include the skill in its own `.claude/skills/` directory.
+
 ## Development
 
 The repository uses [ergon](https://go.thesmos.sh/ergon) for the build, test, lint and release
