@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
@@ -360,79 +359,6 @@ func TestInactive(t *testing.T) {
 				sema.NewID(golang.Language, "ported", "Plan", sema.KindFunction), sema.Calls)
 			assert.NoError(t, err, "Unread of the calls of Plan")
 			assert.Empty(t, got, "the caveats")
-		})
-	})
-
-	t.Run("Unrenamed", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("returns the excluded files that name the declaration", func(t *testing.T) {
-			t.Parallel()
-			got, err := serving(t, gated()).Unrenamed(t.Context(), edit.Target{
-				Kind:   edit.TargetSpan,
-				Symbol: sema.NewID(golang.Language, "clock", "Now", sema.KindFunction),
-				Span:   source.Span{Path: "clock/clock.go"},
-			})
-			assert.NoError(t, err, "Unrenamed of Now")
-			assert.Equal(t, pathsOf(got, trust.CaveatUnrewritten),
-				[]source.Path{"clock/never.go", "use/never.go", "use/never_test.go", "via/never.go"},
-				"the files of the caveat")
-			assert.Equal(t, notes(got), []string{"the plan does not rename the declaration in 4 files that the " +
-				"build constraints exclude from the build that the plan reads, such as clock/never.go"},
-				"the notes of the caveats")
-		})
-
-		t.Run("names the one excluded file that names the declaration", func(t *testing.T) {
-			t.Parallel()
-			got, err := serving(t, gated()).Unrenamed(t.Context(), edit.Target{
-				Kind:   edit.TargetSpan,
-				Symbol: sema.NewID(golang.Language, "apart", "Apart", sema.KindFunction),
-				Span:   source.Span{Path: "apart/apart.go"},
-			})
-			assert.NoError(t, err, "Unrenamed of Apart")
-			assert.Equal(t, got, []trust.Caveat{{
-				Code: trust.CaveatUnrewritten,
-				Note: "the plan does not rename the declaration in apart/never.go, which the build constraints " +
-					"exclude from the build that the plan reads",
-				Paths: []source.Path{"apart/never.go"},
-			}}, "the caveats")
-		})
-
-		t.Run("returns a caveat without paths for a declaration in a file of another port", func(t *testing.T) {
-			t.Parallel()
-			got, err := serving(t, gated()).Unrenamed(t.Context(), edit.Target{
-				Kind:   edit.TargetSpan,
-				Symbol: sema.NewID(golang.Language, "ported", "Plan", sema.KindFunction),
-				Span:   source.Span{Path: "ported/ported_plan9.go"},
-			})
-			assert.NoError(t, err, "Unrenamed of Plan")
-			assert.Equal(t, got, []trust.Caveat{{
-				Code: trust.CaveatUnrewritten,
-				Note: "the server renames the declaration in ported/ported_plan9.go in the build of another port, " +
-					"and the build constraints can exclude other files that name it from that build",
-			}}, "the caveats")
-		})
-
-		t.Run("returns no caveat when no excluded file names the declaration", func(t *testing.T) {
-			t.Parallel()
-			got, err := serving(t, gated()).Unrenamed(t.Context(), edit.Target{
-				Kind:   edit.TargetSpan,
-				Symbol: sema.NewID(golang.Language, "use", "Use", sema.KindFunction),
-				Span:   source.Span{Path: "use/use.go"},
-			})
-			assert.NoError(t, err, "Unrenamed of Use")
-			assert.Empty(t, got, "the caveats")
-		})
-
-		t.Run("returns the error of the walk of a removed workspace", func(t *testing.T) {
-			t.Parallel()
-			_, err := removed(t).Unrenamed(t.Context(), edit.Target{
-				Kind:   edit.TargetSpan,
-				Symbol: sema.NewID(golang.Language, "clock", "Now", sema.KindFunction),
-				Span:   source.Span{Path: "clock/clock.go"},
-			})
-			assert.ErrorIs(t, err, fs.ErrNotExist, "the error of Unrenamed over a removed workspace")
-			assert.HasPrefix(t, err.Error(), walking, "the error of Unrenamed over a removed workspace")
 		})
 	})
 

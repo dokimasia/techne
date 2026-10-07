@@ -5,6 +5,7 @@ package golang
 
 import (
 	"context"
+	"strings"
 
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
@@ -22,7 +23,8 @@ import (
 // relations, the plans, the verify and the check of the server:
 //
 //   - a relation gets the caveat of [checker.Engine.Unread], and is partial with it
-//   - the plan of a rename gets the caveat of [checker.Engine.Unrenamed], and is partial with it
+//   - the plan of a rename gets the changes and the caveat of [checker.Engine.Renamed], and is
+//     partial with the caveat
 //   - a verify gets the caveat of [checker.Engine.Unverified], and is partial with it
 //   - a check gets the caveat of [checker.Engine.Unchecked], and keeps its coverage, because it
 //     checks every file of the change
@@ -57,9 +59,10 @@ func (c constrained) Relate(
 	return partly(got, left), nil
 }
 
-// Plan returns the plan of the server for op. The plan of a rename gets the caveat of
-// [checker.Engine.Unrenamed] by the rules of [constrained.Relate], and is partial with it,
-// because it leaves the uses of the declaration in the files of the caveat as they are. The
+// Plan returns the plan of the server for op. The plan of a rename gets the changes of
+// [checker.Engine.Renamed], which rename the uses of the declaration in the files that the build
+// constraints exclude from the build of the server. It gets the caveat of the excluded files
+// whose uses stay as they are by the rules of [constrained.Relate], and is partial with it. The
 // write path refuses such a plan.
 func (c constrained) Plan(
 	ctx context.Context,
@@ -72,7 +75,8 @@ func (c constrained) Plan(
 	if err != nil || got.Skipped || op != edit.RenameSymbol {
 		return got, err
 	}
-	left, _ := c.files.Unrenamed(ctx, target)
+	renamed, left, _ := c.files.Renamed(ctx, target, strings.TrimSpace(args[edit.ArgNewName]))
+	got.Items = append(got.Items, renamed...)
 	return partly(got, left), nil
 }
 

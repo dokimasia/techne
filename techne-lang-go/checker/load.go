@@ -400,7 +400,7 @@ func (e *Engine) loaded(
 				Context: ctx,
 				Mode:    loading,
 				Dir:     one.dir,
-				Env:     environ(one.alone),
+				Env:     environ(one.alone, one.port),
 				Fset:    v.fset,
 				Overlay: overlay,
 				Tests:   true,
@@ -436,12 +436,14 @@ func failures(unloaded map[source.Path]string) string {
 
 // plan is one load: the directory that the go command runs in, the patterns, and the module
 // whose failure the load reports. alone reports whether the go command loads the module with
-// GOWORK=off, without the go.work file that does not list it.
+// GOWORK=off, without the go.work file that does not list it. port is the port of the build that
+// the load reads, or the zero port for the default build.
 type plan struct {
 	dir      string
 	patterns []string
 	module   source.Path
 	alone    bool
+	port     port
 }
 
 // plans returns the loads of the modules of the workspace.
@@ -520,10 +522,17 @@ const scratchDir = "techne/go"
 // of a load with an overlay and the files that cgo generates under GOTMPDIR, and for a
 // workspace of thousands of packages they take gigabytes. The temporary directory of many
 // systems is a file system in memory.
-func environ(alone bool) []string {
+//
+// For a load of the build of another port, which at names, the environment sets GOOS and
+// GOARCH to the port and turns cgo off, as the go command builds another port by default. The
+// zero port leaves the default build.
+func environ(alone bool, at port) []string {
 	env := os.Environ()
 	if alone {
 		env = append(env, "GOWORK=off")
+	}
+	if at != (port{}) {
+		env = append(env, "GOOS="+at.goos, "GOARCH="+at.goarch, "CGO_ENABLED=0")
 	}
 	if os.Getenv("GOTMPDIR") == "" {
 		if cache, err := os.UserCacheDir(); err == nil {

@@ -6,6 +6,7 @@ package golang_test
 import (
 	"context"
 	"os"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	"go.dokimi.dev/techne/core/trust"
 	golang "go.dokimi.dev/techne/lang/go"
 	"go.dokimi.dev/techne/lang/go/checker"
+	"go.dokimi.dev/techne/lang/lsp"
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
 
@@ -118,6 +120,36 @@ func TestConstrained(t *testing.T) {
 			assert.Equal(t, got.Completeness, trust.ScopePartial, "the completeness of the plan")
 			assert.Equal(t, excludedIn(got.Caveats, trust.CaveatUnrewritten), []source.Path{excludedFile},
 				"the files of the caveat")
+		})
+
+		t.Run("adds the renames of the uses in the excluded files to the plan of gopls", func(t *testing.T) {
+			t.Parallel()
+			if _, err := exec.LookPath(golang.Server().Command[0]); err != nil {
+				t.Skip("gopls is not on PATH, so gopls plans no rename")
+			}
+			root := lsptest.Workspace(t, map[string]string{
+				"go.mod":   "module example.com/p\n\ngo 1.24\n",
+				"p.go":     "package p\n\n// Old returns one.\nfunc Old() int { return 1 }\n\nvar _ = Old()\n",
+				portedFile: "package p\n\nvar _ = Old()\n",
+			})
+			files, err := checker.New(root, golang.Declaration())
+			assert.NoError(t, err, "checker.New over "+root)
+			served, err := lsp.New(root, golang.Declaration(), golang.Server(), nil)
+			assert.NoError(t, err, "lsp.New over "+root)
+			lsptest.Cleanup(t, served)
+			got, err := golang.Constrained(served, files).(engine.Planner).Plan(
+				t.Context(),
+				engine.Request{Scope: "p.go"},
+				edit.RenameSymbol,
+				edit.Target{
+					Kind:   edit.TargetSymbol,
+					Symbol: sema.NewID(golang.Language, ".", "Old", sema.KindFunction),
+				},
+				edit.Args{edit.ArgNewName: "New"},
+			)
+			assert.NoError(t, err, "Plan of the rename of Old")
+			assert.Contains(t, changedIn(got.Items), source.Path(portedFile), "the files that the plan changes")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the plan")
 		})
 
 		t.Run("returns the plan of a move as the server returns it", func(t *testing.T) {
@@ -253,6 +285,15 @@ func unlistedOver(t *testing.T, mode lsptest.Mode) engine.Engine {
 	assert.NoError(t, os.Remove(gone), "Remove of "+gone)
 	root := lsptest.Workspace(t, constrainedFiles())
 	return golang.Constrained(lsptest.Engine(t, root, lsptest.Server(mode)), files)
+}
+
+// changedIn returns the path of each change of changes, in order.
+func changedIn(changes []edit.Change) []source.Path {
+	out := make([]source.Path, 0, len(changes))
+	for _, one := range changes {
+		out = append(out, one.Path)
+	}
+	return out
 }
 
 // excludedIn returns the paths of the caveats of code in caveats, in order.

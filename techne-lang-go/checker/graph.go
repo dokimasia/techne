@@ -95,7 +95,7 @@ func (e *Engine) graphOf(ctx context.Context, w walked, plans []plan) (*graph, e
 	}
 	for _, one := range plans {
 		args := append([]string{"list", "-e", "-f", listing}, one.patterns...)
-		out, err := goIn(ctx, one.dir, environ(one.alone), args...)
+		out, err := goIn(ctx, one.dir, environ(one.alone, one.port), args...)
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -111,7 +111,8 @@ func (e *Engine) graphOf(ctx context.Context, w walked, plans []plan) (*graph, e
 		one := plans[i]
 		// goIn returns the empty output for a listing that fails, such as the listing of a plan
 		// whose go.mod file does not parse.
-		out, _ := goIn(ctx, one.dir, environ(one.alone), append([]string{"list", "-e", "-f", listing}, dirs...)...)
+		out, _ := goIn(ctx, one.dir, environ(one.alone, one.port), append([]string{"list", "-e", "-f", listing},
+			dirs...)...)
 		g.bare[i] = entries(out)
 		for _, pkg := range g.bare[i] {
 			g.ignored[pkg.path] = pkg.ignored
@@ -292,6 +293,33 @@ func (g *graph) narrowed(plans []plan, wanted []string) ([]plan, bool) {
 		out = append(out, one)
 	}
 	return out, whole
+}
+
+// porting returns the loads of the build of the port at that read the packages in dirs, absolute
+// paths: each plan with a package in dirs, with the import paths of those packages as its
+// patterns. The packages include the bare packages in dirs, which the build of another port can
+// include.
+func (g *graph) porting(plans []plan, dirs []string, at port) []plan {
+	patterns := map[int][]string{}
+	for i := range plans {
+		for _, path := range g.listed[i] {
+			if slices.Contains(dirs, g.dirs[path]) {
+				patterns[i] = append(patterns[i], path)
+			}
+		}
+		for _, pkg := range g.bare[i] {
+			if slices.Contains(dirs, pkg.dir) {
+				patterns[i] = append(patterns[i], pkg.path)
+			}
+		}
+	}
+	var out []plan
+	for _, i := range slices.Sorted(maps.Keys(patterns)) {
+		one := plans[i]
+		one.patterns, one.port = patterns[i], at
+		out = append(out, one)
+	}
+	return out
 }
 
 // viewing returns a view of the packages that wanted selects from the graph of w, with overlay

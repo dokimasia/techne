@@ -16,7 +16,6 @@ import (
 	"path/filepath"
 	"slices"
 
-	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
@@ -35,40 +34,40 @@ const (
 		"the check reads"
 	uncheckedMany = "the build constraints exclude %d files that can use a changed package from the build that " +
 		"the check reads, such as %s"
-	unbuiltOne   = "the build constraints can exclude %s from every build that the server checks"
-	unbuiltMany  = "the build constraints can exclude %d files from every build that the server checks, such as %s"
-	unrenamedOne = "the plan does not rename the declaration in %s, which the build constraints exclude from " +
-		"the build that the plan reads"
-	unrenamedMany = "the plan does not rename the declaration in %d files that the build constraints exclude from " +
-		"the build that the plan reads, such as %s"
+	unbuiltOne  = "the build constraints can exclude %s from every build that the server checks"
+	unbuiltMany = "the build constraints can exclude %d files from every build that the server checks, such as %s"
 )
 
-// readElsewhere and renamedElsewhere are the notes of the caveats of a declaration in a file of
-// another port, as formats of the path of the file.
-const (
-	readElsewhere = "the server reads %s in the build of another port, and the build constraints can exclude " +
-		"other files from that build"
-	renamedElsewhere = "the server renames the declaration in %s in the build of another port, and the build " +
-		"constraints can exclude other files that name it from that build"
-)
+// readElsewhere is the note of the caveat of a declaration in a file of another port, as a format
+// of the path of the file.
+const readElsewhere = "the server reads %s in the build of another port, and the build constraints can " +
+	"exclude other files from that build"
 
 // port is a target of the go command: an operating system and an architecture, such as linux
-// and amd64.
+// and amd64. A load with the zero port reads the default build.
 type port struct {
 	goos, goarch string
 }
 
-// ports are the ports of the go command of Go 1.27, in the order of go tool dist list. gopls
-// tries every one of them for a file that the default port excludes. A test compares the list
-// with go tool dist list of the toolchain that runs the tests.
+// ports are the ports of the go command of Go 1.27, the ports of go tool dist list. The first
+// class ports come first, in the order of gopls, and the others follow in the order of go tool
+// dist list. gopls tries the ports in this order for a file that the default port excludes, and
+// reads the file in the build of the first that includes it. A test compares the list with go
+// tool dist list of the toolchain that runs the tests.
 var ports = []port{
+	{"darwin", "amd64"},
+	{"darwin", "arm64"},
+	{"linux", "amd64"},
+	{"linux", "arm64"},
+	{"windows", "amd64"},
+	{"linux", "arm"},
+	{"linux", "386"},
+	{"windows", "386"},
 	{"aix", "ppc64"},
 	{"android", "386"},
 	{"android", "amd64"},
 	{"android", "arm"},
 	{"android", "arm64"},
-	{"darwin", "amd64"},
-	{"darwin", "arm64"},
 	{"dragonfly", "amd64"},
 	{"freebsd", "386"},
 	{"freebsd", "amd64"},
@@ -78,10 +77,6 @@ var ports = []port{
 	{"ios", "amd64"},
 	{"ios", "arm64"},
 	{"js", "wasm"},
-	{"linux", "386"},
-	{"linux", "amd64"},
-	{"linux", "arm"},
-	{"linux", "arm64"},
 	{"linux", "loong64"},
 	{"linux", "mips"},
 	{"linux", "mips64"},
@@ -106,9 +101,32 @@ var ports = []port{
 	{"plan9", "arm"},
 	{"solaris", "amd64"},
 	{"wasip1", "wasm"},
-	{"windows", "386"},
-	{"windows", "amd64"},
 	{"windows", "arm64"},
+}
+
+// portOf returns the first port of [ports] whose build includes the Go file at the absolute path
+// full, and reports whether one does. Each build has cgo off, as the go command builds another
+// port. The order of ports puts first the build that gopls reads the file in. A file that imports
+// C is in no build with cgo off, and a file that cannot be read is in none.
+func portOf(full string) (port, bool) {
+	content, err := os.ReadFile(full)
+	//dokimi:mutate-skip ror-false,lcr-left,lcr-right,sbr-delete: the check saves a load of a port, which leaves out such a file too
+	if err != nil || slices.Contains(importsOf(full), "C") {
+		return port{}, false
+	}
+	for _, one := range ports {
+		if includes(one.context(false), full, content) {
+			return one, true
+		}
+	}
+	return port{}, false
+}
+
+// context returns the build context of go/build for the port p, with cgo on or off.
+func (p port) context(cgo bool) build.Context {
+	at := build.Default
+	at.GOOS, at.GOARCH, at.CgoEnabled = p.goos, p.goarch, cgo
+	return at
 }
 
 // Unread returns the caveat of an answer of a language server of Go, such as gopls, to the
@@ -137,29 +155,6 @@ func (e *Engine) Unread(
 		return []trust.Caveat{{Code: trust.CaveatInactiveBuild, Note: note}}, nil
 	}
 	return inactive(left), nil
-}
-
-// Unrenamed returns the caveat of a plan of a language server of Go, such as gopls, that renames
-// the declaration of target, by the rule of [Engine.unread] for the uses of the declaration and
-// with the test files. The server renames the declaration in the files of the build that it
-// reads, so the plan leaves a use in an excluded file as it is.
-//
-// The caveat is a [trust.CaveatUnrewritten] caveat that names the files of the rule, or one that
-// states that the build constraints can exclude other files that name the declaration from the
-// build of another port, when the server renames the declaration in that build. Unrenamed
-// returns no caveat when no excluded file names the declaration.
-//
-// It returns the error of the walk of the workspace and of go list.
-func (e *Engine) Unrenamed(ctx context.Context, target edit.Target) ([]trust.Caveat, error) {
-	left, elsewhere, err := e.unread(ctx, target.Span.Path, target.Symbol, sema.ReferencedBy, true)
-	switch {
-	case err != nil:
-		return nil, err
-	case elsewhere:
-		note := fmt.Sprintf(renamedElsewhere, target.Span.Path)
-		return []trust.Caveat{{Code: trust.CaveatUnrewritten, Note: note}}, nil
-	}
-	return naming(trust.CaveatUnrewritten, left, unrenamedOne, unrenamedMany), nil
 }
 
 // Unverified returns the caveat of an answer of a language server of Go, such as gopls, to a
@@ -220,13 +215,32 @@ func (e *Engine) unread(
 	if err != nil {
 		return nil, false, err
 	}
-	dir, full := e.fullPath(of.Unit()), ""
-	if declared != "" {
-		full = e.fullPath(declared)
-		dir = filepath.Dir(full)
-	}
+	left, elsewhere := e.unreadIn(g, declared, of, kind, tests)
+	return left, elsewhere, nil
+}
+
+// unreadIn returns the files and the report of [Engine.unread] from the graph g.
+func (e *Engine) unreadIn(
+	g *graph,
+	declared source.Path,
+	of sema.ID,
+	kind sema.RelationKind,
+	tests bool,
+) ([]source.Path, bool) {
+	full, dir := e.declaredIn(declared, of)
 	left := e.leftOut(g, dir, of.Base(), kind, tests)
-	return left, len(left) > 0 && built(full), nil
+	return left, len(left) > 0 && built(full)
+}
+
+// declaredIn returns the absolute path of the file at declared, the file of the declaration that
+// of identifies, and the directory of the file. For an empty declared it returns no file and the
+// directory that the unit of the ID names.
+func (e *Engine) declaredIn(declared source.Path, of sema.ID) (full, dir string) {
+	if declared == "" {
+		return "", e.fullPath(of.Unit())
+	}
+	full = e.fullPath(declared)
+	return full, filepath.Dir(full)
 }
 
 // viewed returns the view of the whole workspace that w describes, by the rule of
@@ -253,11 +267,20 @@ func (e *Engine) listedNow(ctx context.Context) (*graph, error) {
 
 // listedOf returns the graph of the workspace that w describes, by the rule of [Engine.graphOf].
 func (e *Engine) listedOf(ctx context.Context, w walked) (*graph, error) {
-	plans, _, err := e.planning(ctx, w.modules)
+	_, _, g, err := e.listedWith(ctx, w)
+	return g, err
+}
+
+// listedWith returns the loads of the workspace that w describes and the root of the Go
+// toolchain, by the rule of [Engine.planning], and the graph of the workspace, by the rule of
+// [Engine.graphOf].
+func (e *Engine) listedWith(ctx context.Context, w walked) ([]plan, string, *graph, error) {
+	plans, goroot, err := e.planning(ctx, w.modules)
 	if err != nil {
-		return nil, err
+		return nil, "", nil, err
 	}
-	return e.graphOf(ctx, w, plans)
+	g, err := e.graphOf(ctx, w, plans)
+	return plans, goroot, g, err
 }
 
 // leftOut returns the workspace paths of the files of g that the build constraints of the load
@@ -371,28 +394,29 @@ func built(full string) bool {
 	if err != nil || slices.Contains(importsOf(full), "C") {
 		return false
 	}
-	matches := func(at build.Context) bool {
-		//dokimi:mutate-skip sbr-delete: MatchFile reads the same content from the file without it, once a port
-		at.OpenFile = func(string) (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(content)), nil }
-		match, err := at.MatchFile(filepath.Dir(full), filepath.Base(full))
-		return err == nil && match
-	}
-	if matches(build.Default) {
+	if includes(build.Default, full, content) {
 		return false
 	}
 	some := false
 	for _, one := range ports {
-		on, off := build.Default, build.Default
-		on.GOOS, on.GOARCH, on.CgoEnabled = one.goos, one.goarch, true
-		off.GOOS, off.GOARCH, off.CgoEnabled = one.goos, one.goarch, false
-		switch in := matches(on); {
-		case in != matches(off):
+		switch in := includes(one.context(true), full, content); {
+		case in != includes(one.context(false), full, content):
 			return false
 		case in:
 			some = true
 		}
 	}
 	return some
+}
+
+// includes reports whether the build that at describes includes the Go file at the absolute path
+// full, whose content is content, by the build constraints that go/build evaluates. A file whose
+// header go/build cannot read is in no build.
+func includes(at build.Context, full string, content []byte) bool {
+	//dokimi:mutate-skip sbr-delete: MatchFile reads the same content from the file without it, once a port
+	at.OpenFile = func(string) (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(content)), nil }
+	match, err := at.MatchFile(filepath.Dir(full), filepath.Base(full))
+	return err == nil && match
 }
 
 // inactive returns the caveat of an answer that does not read the files at left, which the

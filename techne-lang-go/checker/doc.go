@@ -70,9 +70,12 @@
 //   - [Engine.importers] reads the imports of an excluded file from its source, so the answer
 //     about the importers of a package contains them.
 //
-// [Engine.Unread], [Engine.Unrenamed], [Engine.Unverified] and [Engine.Unchecked] return the
-// caveats of the answers of gopls. gopls reads a file of the default build in that build, and a
-// file that the default build excludes in the build of another port that includes it.
+// [Engine.Unread], [Engine.Unverified] and [Engine.Unchecked] return the caveats of the answers
+// of gopls. gopls reads a file of the default build in that build, and a file that the default
+// build excludes in the build of another port that includes it. gopls renames a declaration in
+// the default build alone. [Engine.Renamed] type-checks each excluded file that contains the name
+// of the declaration in the build of a port that includes it, and returns the changes that rename
+// its uses there, with the caveat of the files that it cannot rename.
 //
 // # Moves
 //
