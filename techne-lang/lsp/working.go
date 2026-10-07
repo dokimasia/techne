@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"go.dokimi.dev/techne/core/engine"
+	"go.dokimi.dev/techne/core/source"
 	"go.lsp.dev/protocol"
 )
 
@@ -69,10 +70,17 @@ const quiet = 300 * time.Millisecond
 //
 // A server that has not finished loading returns empty answers in the same form as complete
 // ones. Every job counts as loading, because the protocol does not say which jobs change
-// answers. The exception is a check of the files on disk, a job whose token starts with the
-// [Server.DiskCheck] of the server: it changes the diagnostics of the files alone.
-// [working.settle] does not wait for such a check, and [working.checked] does. working is safe
-// for concurrent use.
+// answers. [working.settle] does not wait for these jobs, which change the diagnostics of the
+// files alone:
+//
+//   - A check of the files on disk, a job whose token starts with the [Server.DiskCheck] of the
+//     server. [working.checked] waits for it.
+//   - A diagnosis, a job whose title starts with the [Server.Diagnosis] of the server.
+//     [working.diagnosed] waits for it.
+//
+// A server can create the token of a job before it begins the job, and the title of the job
+// arrives with its begin. A created job counts as loading until its begin arrives with the
+// title of a diagnosis. working is safe for concurrent use.
 type working struct {
 	mu   sync.Mutex
 	open map[string]bool
@@ -87,21 +95,31 @@ type working struct {
 	// ran is the begin time of the latest check on disk that ended, and saved the time of the
 	// latest textDocument/didSave that the client sent.
 	ran, saved time.Time
-	// turned is closed and replaced when a check on disk ends.
+
+	// diagnosis is the prefix of the title of a diagnosis, or empty.
+	diagnosis string
+	// diagnosing are the tokens of the open diagnoses.
+	diagnosing map[string]bool
+
+	// turned is closed and replaced when a check on disk or a diagnosis ends.
 	turned chan struct{}
 }
 
 // newWorking returns an idle tracker without recorded activity, whose checks on disk have
-// tokens that start with disk. An empty disk tracks no check on disk.
-func newWorking(disk string) *working {
+// tokens that start with disk, and whose diagnoses have titles that start with diagnosis. With
+// an empty disk the tracker does not track checks on disk, and with an empty diagnosis it does
+// not track diagnoses.
+func newWorking(disk, diagnosis string) *working {
 	idle := make(chan struct{})
 	close(idle)
 	return &working{
-		open:   map[string]bool{},
-		idle:   idle,
-		disk:   disk,
-		checks: map[string]time.Time{},
-		turned: make(chan struct{}),
+		open:       map[string]bool{},
+		idle:       idle,
+		disk:       disk,
+		checks:     map[string]time.Time{},
+		diagnosis:  diagnosis,
+		diagnosing: map[string]bool{},
+		turned:     make(chan struct{}),
 	}
 }
 
@@ -123,24 +141,51 @@ func (w *working) began(token string) {
 	w.last = time.Now()
 }
 
+// begun records the begin of the job token, whose title is title. A job whose title starts with
+// the prefix of a diagnosis is a diagnosis: begun moves its token from the loading jobs, where
+// the create request of the token put it, to the open diagnoses. [working.began] records every
+// other job.
+func (w *working) begun(token, title string) {
+	if w.diagnosis == "" || !strings.HasPrefix(title, w.diagnosis) {
+		w.began(token)
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.open[token] {
+		w.drop(token)
+	}
+	w.diagnosing[token] = true
+}
+
 // ended records that the job token ended. An end of a job that never began is ignored.
 func (w *working) ended(token string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if began, open := w.checks[token]; open {
+	began, checked := w.checks[token]
+	switch {
+	case checked:
 		delete(w.checks, token)
 		if began.After(w.ran) {
 			w.ran = began
 		}
-		close(w.turned)
-		w.turned = make(chan struct{})
+	case w.diagnosing[token]:
+		delete(w.diagnosing, token)
+	case w.open[token]:
+		w.drop(token)
+		w.last = time.Now()
+		return
+	default:
 		return
 	}
-	if !w.open[token] {
-		return
-	}
+	close(w.turned)
+	w.turned = make(chan struct{})
+}
+
+// drop removes token from the loading jobs, and closes idle when no loading job is left. The
+// caller has locked mu, and token is a loading job.
+func (w *working) drop(token string) {
 	delete(w.open, token)
-	w.last = time.Now()
 	if len(w.open) == 0 {
 		close(w.idle)
 	}
@@ -244,14 +289,27 @@ func (w *working) settle(ctx context.Context, within time.Duration) bool {
 // within or until ctx ends, and reports whether one has. Before the first save, any check that
 // ended counts, such as the check that a server runs after it loads the workspace.
 func (w *working) checked(ctx context.Context, within time.Duration) bool {
+	return w.until(ctx, within, func() bool { return w.ran.After(w.saved) })
+}
+
+// diagnosed waits until no diagnosis is open, for at most within or until ctx ends, and reports
+// whether none is.
+func (w *working) diagnosed(ctx context.Context, within time.Duration) bool {
+	return w.until(ctx, within, func() bool { return len(w.diagnosing) == 0 })
+}
+
+// until waits until done reports true, for at most within or until ctx ends, and reports
+// whether it did. It calls done with mu locked: once at the start, and again each time a check
+// on disk or a diagnosis ends.
+func (w *working) until(ctx context.Context, within time.Duration, done func() bool) bool {
 	defer engine.Waiting(ctx)()
 	deadline := time.NewTimer(within)
 	defer deadline.Stop()
 	for {
 		w.mu.Lock()
-		done, turned := w.ran.After(w.saved), w.turned
+		finished, turned := done(), w.turned
 		w.mu.Unlock()
-		if done {
+		if finished {
 			return true
 		}
 		select {
@@ -279,19 +337,32 @@ func (e *Engine) settle(ctx context.Context, held *session) bool {
 	return held.working.settle(ctx, e.loading())
 }
 
+// diagnosed waits for the diagnoses of a server that declares [Server.Diagnosis], and reports
+// whether every diagnosis ended. It fences the stream of the session with a request about the
+// file at p, after which the session has recorded the begin of the diagnosis of every buffer
+// that the question sent, and then waits up to [Engine.loading] until no diagnosis is open. It
+// reports false when ctx ends first, and true at once for a server without the declaration.
+func (e *Engine) diagnosed(ctx context.Context, held *session, p source.Path) bool {
+	if e.server.Diagnosis == "" {
+		return true
+	}
+	return e.fence(ctx, held, e.fullPath(p)) == nil && held.working.diagnosed(ctx, e.loading())
+}
+
 // progressed records a job of params that begins or ends. The token is compared as text,
-// whichever of the two token types of the protocol it arrives as. A value that is not an
-// object with a kind is ignored.
+// whichever of the two token types of the protocol it arrives as, and the title of a begin tells
+// a diagnosis from the other jobs. A value that is not an object with a kind is ignored.
 func (w *working) progressed(params *protocol.ProgressParams) {
 	var value struct {
-		Kind string `json:"kind"`
+		Kind  string `json:"kind"`
+		Title string `json:"title"`
 	}
 	if err := json.Unmarshal(params.Value, &value); err != nil {
 		return
 	}
 	switch value.Kind {
 	case progressBegin:
-		w.began(tokened(params.Token))
+		w.begun(tokened(params.Token), value.Title)
 	case progressEnd:
 		w.ended(tokened(params.Token))
 	}

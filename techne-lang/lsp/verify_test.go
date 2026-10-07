@@ -20,6 +20,10 @@ import (
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
 
+// diagnosingNote is a part of the note of the caveat of a verification whose diagnosis did not
+// end, pinned as the engine words it.
+const diagnosingNote = "did not finish diagnosing the files"
+
 func TestVerify(t *testing.T) {
 	t.Parallel()
 
@@ -194,6 +198,80 @@ func TestVerify(t *testing.T) {
 			assert.True(t, hasCaveat(got.Caveats, trust.CaveatPartialCheck), "the answer has a partial-check caveat")
 		})
 
+		t.Run("waits for the diagnosis of each changed file", func(t *testing.T) {
+			t.Parallel()
+			e, root := rooted(t, lsptest.Diagnoses,
+				map[string]string{"a.fake": lsptest.Content, "b.fake": lsptest.Content})
+			_, err := e.Verify(t.Context(), engine.Request{Scope: "."}, nil)
+			assert.NoError(t, err, "Verify waits for the load of the server")
+			rewrite(t, root, "a.fake", lsptest.Faulty)
+			rewrite(t, root, "b.fake", lsptest.Faulty)
+
+			got, err := e.Verify(t.Context(), engine.Request{Scope: "."}, nil)
+			assert.NoError(t, err, "Verify of the changed files")
+			assert.Equal(t, mentions(got.Items, lsptest.Broken), 2, "the findings of a.fake and b.fake")
+		})
+
+		t.Run("returns a total answer after every diagnosis ends", func(t *testing.T) {
+			t.Parallel()
+			e, root := rooted(t, lsptest.Diagnoses, sample())
+			_, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify waits for the load of the server")
+			rewrite(t, root, "a.fake", lsptest.Faulty)
+
+			got, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify of the changed file")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the answer")
+		})
+
+		t.Run("returns a total answer for a scope whose only file is a test that the request leaves out",
+			func(t *testing.T) {
+				t.Parallel()
+				got, err := serving(t, lsptest.DiagnosisStuck, map[string]string{lsptest.Test: lsptest.Content}).
+					Verify(t.Context(), engine.Request{Scope: lsptest.Test}, nil)
+				assert.NoError(t, err, "Verify of a test file without tests")
+				assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the answer")
+			})
+
+		t.Run("sends a server without a diagnosis no request after the files", func(t *testing.T) {
+			t.Parallel()
+			log := filepath.Join(t.TempDir(), "requests")
+			_, err := serving(t, lsptest.Default, sample(), lsptest.RecordRequests(log)).
+				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify with a server without a diagnosis")
+			assert.Equal(t, requested(t, log, "textDocument/documentSymbol"), 0, "the requests for symbols")
+		})
+
+		t.Run("returns a partial answer while a diagnosis runs", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.DiagnosisStuck, sample()).
+				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify with a diagnosis that never ends")
+			assert.Equal(t, got.Completeness, trust.ScopePartial, "the completeness of the answer")
+			assert.True(t, undiagnosed(got.Caveats), "the answer has the caveat of a diagnosis that did not end")
+		})
+
+		t.Run("adds the caveat of an unfinished diagnosis when the question ends before the diagnosis",
+			func(t *testing.T) {
+				t.Parallel()
+				server := lsptest.Server(lsptest.Diagnoses)
+				server.Answering = 200 * time.Millisecond
+				got, err := lsptest.Engine(t, lsptest.Workspace(t, sample()), server).
+					Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+				assert.NoError(t, err, "Verify whose question ends while the server loads")
+				assert.True(t, undiagnosed(got.Caveats), "the answer has the caveat of a diagnosis that did not end")
+			})
+
+		t.Run("adds the caveat of an unfinished diagnosis when the question ends during it", func(t *testing.T) {
+			t.Parallel()
+			server := lsptest.Server(lsptest.DiagnosisStuck)
+			server.Answering = 600 * time.Millisecond
+			got, err := lsptest.Engine(t, lsptest.Workspace(t, sample()), server).
+				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify whose question ends during a diagnosis")
+			assert.True(t, undiagnosed(got.Caveats), "the answer has the caveat of a diagnosis that did not end")
+		})
+
 		t.Run("adds a partial-check caveat for a server that leaves checks out", func(t *testing.T) {
 			t.Parallel()
 			server := lsptest.Server(lsptest.Compiles)
@@ -214,6 +292,14 @@ func TestVerify(t *testing.T) {
 			assert.Equal(t, got.Completeness, trust.ScopePartial, "the completeness of the answer")
 			assert.True(t, unreadIn(got.Caveats, "big.fake"), "the unread caveat names big.fake")
 		})
+	})
+}
+
+// undiagnosed reports whether caveats contain the caveat of a verification whose diagnosis did
+// not end.
+func undiagnosed(caveats []trust.Caveat) bool {
+	return slices.ContainsFunc(caveats, func(one trust.Caveat) bool {
+		return one.Code == trust.CaveatIndexWarming && strings.Contains(one.Note, diagnosingNote)
 	})
 }
 

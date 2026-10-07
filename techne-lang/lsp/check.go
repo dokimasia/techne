@@ -42,7 +42,8 @@ var unchecked = trust.Caveat{
 // the server still reads the file on disk. Check takes these steps:
 //
 //  1. Show the server each file of files as an unsaved buffer.
-//  2. Wait for the server to settle.
+//  2. Wait for the server to settle. For a server that declares [Server.Diagnosis], send it a
+//     request after the buffers, and wait for every diagnosis to end.
 //  3. Collect the diagnostics of each file that the change does not delete.
 //  4. Send the server the content on disk again, also when a step fails.
 //
@@ -57,6 +58,7 @@ var unchecked = trust.Caveat{
 //
 //   - files contain no path of the language that the change does not delete.
 //   - The server has not settled.
+//   - A diagnosis did not end within [Server.Loading].
 //   - The server reported nothing about a file.
 //   - The server did not answer within [Server.Answering].
 func (e *Engine) Check(ctx context.Context, files map[source.Path][]byte) (engine.Result[edit.Finding], error) {
@@ -105,6 +107,10 @@ func (e *Engine) checking(ctx context.Context, files map[source.Path][]byte) (en
 	if !e.settle(ctx, held) {
 		return engine.Result[edit.Finding]{}, fmt.Errorf(
 			"%w: %s is still loading the workspace", engine.ErrDecline, e.server.Name)
+	}
+	if !e.diagnosed(ctx, held, mine[len(mine)-1]) {
+		return engine.Result[edit.Finding]{}, fmt.Errorf(
+			"%w: %s did not finish diagnosing the change", engine.ErrDecline, e.server.Name)
 	}
 
 	by := time.Now().Add(cmp.Or(e.server.Checking, checking))

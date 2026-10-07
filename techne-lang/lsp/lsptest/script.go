@@ -42,8 +42,27 @@ const extractKind = "refactor.extract"
 // performed is the command that the Commands mode performs an extraction with.
 const performed = "fake.refactor"
 
-// progressToken is the work-done progress token of the Loading, Created and Stuck modes.
+// progressToken is the work-done progress token of the loading job of the Loading, Created,
+// Stuck and Diagnoses modes.
 const progressToken = "loading"
+
+// diagnosisToken starts the work-done progress token of each diagnosis of the Diagnoses and
+// DiagnosisStuck modes, and the number of the diagnosis ends it.
+const diagnosisToken = "lsptest/diagnosis/"
+
+// diagnosisBegin is the value of the begin of a diagnosis of the Diagnoses and DiagnosisStuck
+// modes.
+const diagnosisBegin = `{"kind":"begin","title":"` + DiagnosisPrefix + ` changed files"}`
+
+// burstToken starts the work-done progress token of each job of the Burst mode, and the number
+// of the job ends it.
+const burstToken = "lsptest/burst/"
+
+// The values of the begin of a loading job and of the end of any job.
+const (
+	loadBegin = `{"kind":"begin","title":"Loading"}`
+	jobEnd    = `{"kind":"end"}`
+)
 
 // The error codes of LSP 3.17 with which the Cancels mode responds: RequestCancelled for a
 // request that the server cancelled, and ContentModified for a request whose result a change
@@ -62,6 +81,7 @@ const (
 	idIndentation   = 9005
 	idProgress      = 9100
 	idPerform       = 9200
+	idDiagnosis     = 9300
 )
 
 // The ranges in [Content] and [Emoji] that the responses of the script contain, as the protocol
@@ -139,10 +159,11 @@ type script struct {
 	mode Mode
 	in   *bufio.Reader
 
-	// sending guards out, loaded, reported, opens, analysed and checks. In the Loading mode a
-	// timer goroutine writes the end of the progress job, in the Quiet and Loads modes a
-	// goroutine publishes the report of an open, and in the DiskChecks mode a goroutine runs
-	// each check on disk.
+	// sending guards out, loaded, reported, opens, analysed, checks and diagnoses. In the Loading
+	// and Diagnoses modes a timer goroutine writes the end of the loading job, in the Burst mode a
+	// goroutine runs its jobs, in the Quiet and Loads modes a goroutine publishes the report of an
+	// open, in the DiskChecks mode a goroutine runs each check on disk, and in the Diagnoses mode
+	// a goroutine ends each diagnosis.
 	sending sync.Mutex
 	out     io.Writer
 	loaded  bool
@@ -152,8 +173,9 @@ type script struct {
 	reported map[string]string
 	opens    map[string]int
 	analysed map[string]bool
-	// checks counts the checks on disk of the DiskChecks mode.
-	checks int
+	// checks counts the checks on disk of the DiskChecks mode, and diagnoses the diagnoses of the
+	// Diagnoses mode.
+	checks, diagnoses int
 
 	// root is the workspace URI of initialize. seen is the document URI of the latest
 	// request with a text document.
@@ -286,6 +308,9 @@ func (s *script) handle(m message) (int, bool) {
 			go s.diskCheck()
 		case DiskStuck:
 			s.send(progressOf(DiskToken, `{"kind":"begin","title":"check"}`))
+		case DiagnosisStuck:
+			s.send(created(idDiagnosis, diagnosisToken+"0"))
+			s.send(progressOf(diagnosisToken+"0", diagnosisBegin))
 		}
 	case "textDocument/didSave":
 		if s.mode == DiskChecks {
@@ -369,7 +394,8 @@ func emptied(method string) string {
 }
 
 // initialize responds to the handshake. Before the response it sends a log message and a
-// registration, and the Asks, Loading, Created and Stuck modes send their own requests.
+// registration, and the Asks, Loading, Created, Stuck and Diagnoses modes send their own
+// requests.
 func (s *script) initialize(m message) (int, bool) {
 	s.client = m.Params
 	s.root = s.canonical(stringAt(m.Params, "rootUri"))
@@ -401,18 +427,20 @@ func (s *script) initialize(m message) (int, bool) {
 		s.replies["edit"] = s.ask(idApplyEdit, `"workspace/applyEdit","params":{"edit":{"changes":{}}}`)
 		s.replies["indentation"] = s.ask(idIndentation, s.indenting())
 	}
-	if s.mode == Loading || s.mode == Stuck || s.mode == Created {
-		s.send(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"window/workDoneProgress/create",`+
-			`"params":{"token":%q}}`, idProgress, progressToken))
+	if s.mode == Loading || s.mode == Stuck || s.mode == Created || s.mode == Diagnoses {
+		s.send(created(idProgress, progressToken))
 	}
 	switch s.mode {
-	case Loading, Stuck:
-		s.send(progressed(`{"kind":"begin","title":"Loading"}`))
-		if s.mode == Loading {
+	case Loading, Stuck, Diagnoses:
+		s.send(progressed(loadBegin))
+		if s.mode != Stuck {
 			go s.load(0)
 		}
 	case Created:
 		go s.load(CreateTime)
+	case Burst:
+		s.send(progressOf(burstToken+"1", loadBegin))
+		go s.burst()
 	case Orphans:
 		orphan()
 	}
@@ -456,6 +484,38 @@ func progressOf(token, value string) string {
 		token, value)
 }
 
+// created is the window/workDoneProgress/create request id of the job token. The script does
+// not wait for the reply, which its reader drops as a message without a method.
+func created(id int, token string) string {
+	return fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"window/workDoneProgress/create",`+
+		`"params":{"token":%q}}`, id, token)
+}
+
+// diagnosis runs one diagnosis of the Diagnoses mode for the document doc, by the rule of
+// [Diagnoses]. It waits [DiagnosisDelay] in the reader of the script. It then begins the job
+// with a create request and a begin, and publishes the empty report of doc. A goroutine
+// publishes the report of the buffer and ends the job [DiagnosisTime] later.
+func (s *script) diagnosis(doc string) {
+	time.Sleep(DiagnosisDelay)
+	report := reportOf(s.holding[doc])
+	s.sending.Lock()
+	defer s.sending.Unlock()
+	//dokimi:mutate-skip uoi-incdec: a count down also gives each diagnosis a token and an id of its own
+	s.diagnoses++
+	token := diagnosisToken + strconv.Itoa(s.diagnoses)
+	//dokimi:mutate-skip aor: the id of a create request is any id that no other request of the script has
+	write(s.out, created(idDiagnosis+s.diagnoses, token))
+	write(s.out, progressOf(token, diagnosisBegin))
+	write(s.out, published(doc, "[]"))
+	go func() {
+		time.Sleep(DiagnosisTime)
+		s.sending.Lock()
+		defer s.sending.Unlock()
+		write(s.out, published(doc, report))
+		write(s.out, progressOf(token, jobEnd))
+	}()
+}
+
 // diskCheck runs one check on disk of the DiskChecks mode after [DiskDelay]: the begin of the
 // job [DiskToken], the interim report and the report of each file with the [Extension] suffix
 // under the workspace root as the file is on disk, and the end of the job.
@@ -475,33 +535,48 @@ func (s *script) diskCheck() {
 		write(s.out, published(doc, "["+interim+"]"))
 		write(s.out, published(doc, "["+strings.Join(reported, ",")+"]"))
 	}
-	write(s.out, progressOf(DiskToken, `{"kind":"end"}`))
+	write(s.out, progressOf(DiskToken, jobEnd))
 }
 
-// load runs the Loading job of the Loading and Created modes: after waiting for begun, it
-// begins the job unless begun is zero, which states that the job has begun, and it ends the job
-// [LoadTime] later.
+// load runs the Loading job of the Loading, Created and Diagnoses modes: after waiting for
+// begun, it begins the job unless begun is zero, which states that the job has begun, and it
+// ends the job [LoadTime] later.
 func (s *script) load(begun time.Duration) {
 	if begun > 0 {
 		time.Sleep(begun)
-		s.send(progressed(`{"kind":"begin","title":"Loading"}`))
+		s.send(progressed(loadBegin))
 	}
 	time.Sleep(LoadTime)
 	s.sending.Lock()
 	defer s.sending.Unlock()
-	write(s.out, progressed(`{"kind":"end"}`))
+	write(s.out, progressed(jobEnd))
 	s.loaded = true
 }
 
-// isLoaded reports whether the Loading mode has ended its progress job.
+// burst ends the first job of the Burst mode [BurstJob] after initialize, and then runs the
+// second job: it begins the job [BurstGap] after that end and ends it [BurstJob] later.
+func (s *script) burst() {
+	time.Sleep(BurstJob)
+	s.send(progressOf(burstToken+"1", jobEnd))
+	time.Sleep(BurstGap)
+	s.send(progressOf(burstToken+"2", loadBegin))
+	time.Sleep(BurstJob)
+	s.sending.Lock()
+	defer s.sending.Unlock()
+	write(s.out, progressOf(burstToken+"2", jobEnd))
+	s.loaded = true
+}
+
+// isLoaded reports whether the Loading, Created or Burst mode has ended its last loading job.
 func (s *script) isLoaded() bool {
 	s.sending.Lock()
 	defer s.sending.Unlock()
 	return s.loaded
 }
 
-// opened keeps the buffer and the version of a didOpen notification. The Pushes, PushesOne and
-// Quiet modes publish diagnostics for the file.
+// opened keeps the buffer and the version of a didOpen notification. The Pushes, PushesOne,
+// DiagnosisStuck, Quiet and Loads modes publish diagnostics for the file, and the Diagnoses mode
+// diagnoses it.
 func (s *script) opened(params json.RawMessage) {
 	var held struct {
 		TextDocument struct {
@@ -521,7 +596,8 @@ func (s *script) opened(params json.RawMessage) {
 			faults = problems
 		}
 		s.publish(s.seen, faults)
-	case s.mode == Pushes && s.declares("capabilities", "textDocument", "publishDiagnostics"):
+	case (s.mode == Pushes || s.mode == DiagnosisStuck) &&
+		s.declares("capabilities", "textDocument", "publishDiagnostics"):
 		s.publish(s.seen, problems)
 	case s.mode == Quiet || s.mode == Loads:
 		s.sending.Lock()
@@ -530,6 +606,8 @@ func (s *script) opened(params json.RawMessage) {
 		opened := s.opens[s.seen]
 		s.sending.Unlock()
 		go s.delayed(s.seen, opened)
+	case s.mode == Diagnoses:
+		s.diagnosis(s.seen)
 	}
 }
 
@@ -584,7 +662,8 @@ func (s *script) quietClose(doc string) {
 }
 
 // changed keeps the buffer and the version of a didChange notification. Every change replaces
-// the whole document. The Watches mode stops agreeing with the disk.
+// the whole document. The Watches mode stops agreeing with the disk, the Quiet mode publishes
+// the report of the change, and the Diagnoses mode diagnoses the document.
 func (s *script) changed(params json.RawMessage) {
 	var held struct {
 		TextDocument struct {
@@ -604,6 +683,8 @@ func (s *script) changed(params json.RawMessage) {
 		s.synced = false
 	case Quiet:
 		s.quietChange(s.seen)
+	case Diagnoses:
+		s.diagnosis(s.seen)
 	}
 }
 
@@ -716,7 +797,7 @@ func (s *script) capabilities() string {
 		fields = append(fields, `"callHierarchyProvider":true`)
 	}
 	switch s.mode {
-	case Pushes, Ungated, SilentMove, Opened, Short, Quiet, Loads:
+	case Pushes, Ungated, SilentMove, Opened, Short, Quiet, Loads, Diagnoses, DiagnosisStuck:
 	default:
 		fields = append(fields, fmt.Sprintf(
 			`"diagnosticProvider":{"interFileDependencies":true,"workspaceDiagnostics":%t}`,
@@ -893,7 +974,7 @@ func (s *script) references() string {
 			return "[]"
 		}
 		return "[" + location(other, at) + "]"
-	case (s.mode == Loading || s.mode == Stuck || s.mode == Created) && !s.isLoaded():
+	case (s.mode == Loading || s.mode == Stuck || s.mode == Created || s.mode == Burst) && !s.isLoaded():
 		return "[]"
 	case s.mode == Receivers || s.mode == Impls || s.mode == Aims || s.mode == Shorthand:
 		return "[]"

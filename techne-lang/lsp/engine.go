@@ -601,9 +601,9 @@ func (e *Engine) sync(
 //
 // The server publishes an empty report when it closes the file. That report describes no
 // content, and reopen drops it before the open. The first report that the engine keeps for the
-// file then describes content. A textDocument/documentSymbol request after the close fences the
-// report. The server sends the report before its reply, and the stream of the session keeps the
-// report before it reads the reply. A server without diagnostics of the file sends no report.
+// file then describes content. The request of [Engine.fence] after the close fences the report:
+// the server sends the report before its reply, and the stream of the session keeps the report
+// before it reads the reply. A server without diagnostics of the file does not send a report.
 func (e *Engine) reopen(ctx context.Context, held *session, full string, content []byte, version int32) error {
 	of := uri.File(full)
 	if err := held.asks.DidClose(ctx, &protocol.DidCloseTextDocumentParams{
@@ -611,12 +611,9 @@ func (e *Engine) reopen(ctx context.Context, held *session, full string, content
 	}); err != nil {
 		return fmt.Errorf("lsp: %s: didClose %s: %w", e.server.Name, full, err)
 	}
-	// An error reply fences the report too, so only a context that ended stops the replacement.
-	var fenced json.RawMessage
-	if err := protocol.Call(ctx, held.conn, protocol.MethodTextDocumentDocumentSymbol,
-		&protocol.DocumentSymbolParams{TextDocument: protocol.TextDocumentIdentifier{URI: of}},
-		&fenced); err != nil && ctx.Err() != nil {
-		return fmt.Errorf("lsp: %s: fence the close of %s: %w", e.server.Name, full, ctx.Err())
+	//dokimi:mutate-skip ror-false: a fence fails only when ctx ended, and the open after it still reaches the server
+	if err := e.fence(ctx, held, full); err != nil {
+		return err
 	}
 	held.reports.forget(of)
 
@@ -629,6 +626,23 @@ func (e *Engine) reopen(ctx context.Context, held *session, full string, content
 		},
 	}); err != nil {
 		return fmt.Errorf("lsp: %s: didOpen %s: %w", e.server.Name, full, err)
+	}
+	return nil
+}
+
+// fence sends textDocument/documentSymbol for the file at full, and returns when the server has
+// replied. A server that handles its messages in order replies after every message that the
+// client sent before the request. The stream of the session records each message of the server
+// before it reads the reply, so on return the session has recorded every message that the
+// server sent before its reply. fence also returns on an error reply, and returns an error only
+// when ctx ends. The wait adds to the [engine.Waited] of ctx.
+func (e *Engine) fence(ctx context.Context, held *session, full string) error {
+	var fenced json.RawMessage
+	_ = protocol.Call(ctx, timed{Conn: held.conn}, protocol.MethodTextDocumentDocumentSymbol,
+		&protocol.DocumentSymbolParams{TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(full)}},
+		&fenced)
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("lsp: %s: fence %s: %w", e.server.Name, full, err)
 	}
 	return nil
 }

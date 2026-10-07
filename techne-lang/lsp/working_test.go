@@ -54,6 +54,33 @@ func TestWorking(t *testing.T) {
 			assert.False(t, hasCaveat(got.Caveats, trust.CaveatIndexWarming), "the answer has a warming caveat")
 		})
 
+		t.Run("waits for a job that begins BurstGap after another job ends", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.Burst, sample()).Relate(t.Context(),
+				engine.Request{Scope: "a.fake"}, declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate with a server that loads in a burst of jobs")
+			assert.Equal(t, edges(got.Items), []string{"Get", "After"}, "the declarations that use Store")
+		})
+
+		t.Run("waits for a loading job of a server that declares a diagnosis", func(t *testing.T) {
+			t.Parallel()
+			server := lsptest.Server(lsptest.Loading)
+			server.Diagnosis = lsptest.DiagnosisPrefix
+			got, err := lsptest.Engine(t, lsptest.Workspace(t, sample()), server).Relate(t.Context(),
+				engine.Request{Scope: "a.fake"}, declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate with a loading server that declares a diagnosis")
+			assert.Equal(t, edges(got.Items), []string{"Get", "After"}, "the declarations that use Store")
+		})
+
+		t.Run("returns a total answer while a diagnosis runs", func(t *testing.T) {
+			t.Parallel()
+			got, err := serving(t, lsptest.DiagnosisStuck, sample()).Relate(t.Context(),
+				engine.Request{Scope: "a.fake"}, declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate with a diagnosis that never ends")
+			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the answer")
+			assert.False(t, hasCaveat(got.Caveats, trust.CaveatIndexWarming), "the answer has a warming caveat")
+		})
+
 		t.Run("returns a partial answer from a server that never settles", func(t *testing.T) {
 			t.Parallel()
 			got, err := serving(t, lsptest.Stuck, sample()).Relate(t.Context(),

@@ -17,15 +17,18 @@ import (
 	"time"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
 	"go.lsp.dev/uri"
 )
 
-// publishing is the method of the notification with the diagnostics of a document, and
-// progressing the method of the notification of a work-done progress job.
+// publishing is the method of the notification with the diagnostics of a document, progressing
+// the method of the notification of a work-done progress job, and creating the method of the
+// request that creates the token of a job.
 const (
 	publishing  = "textDocument/publishDiagnostics"
 	progressing = "$/progress"
+	creating    = "window/workDoneProgress/create"
 )
 
 // The kinds of work-done progress value that begin and end a job.
@@ -75,7 +78,8 @@ func (p *process) send(t *testing.T, body string) {
 }
 
 // frame is one message of the scripted server: a reply to a request of the test, a
-// notification with the diagnostics of a document, or a notification of a progress job.
+// notification with the diagnostics of a document, a request that creates the token of a
+// progress job, or a notification of a progress job.
 type frame struct {
 	ID     *int            `json:"id"`
 	Method string          `json:"method"`
@@ -84,7 +88,8 @@ type frame struct {
 		Diagnostics json.RawMessage `json:"diagnostics"`
 		Token       string          `json:"token"`
 		Value       struct {
-			Kind string `json:"kind"`
+			Kind  string `json:"kind"`
+			Title string `json:"title"`
 		} `json:"value"`
 	} `json:"params"`
 }
@@ -128,9 +133,9 @@ func (p *process) reply(t *testing.T, id int) json.RawMessage {
 	}
 }
 
-// reports reads frames until the reply to the request id, and returns the diagnostics of each
-// report before the reply, in order.
-func (p *process) reports(t *testing.T, id int) []string {
+// reports reads frames until the reply to the request [asked], and returns the diagnostics of
+// each report before the reply, in order.
+func (p *process) reports(t *testing.T) []string {
 	t.Helper()
 	var out []string
 	for {
@@ -138,7 +143,7 @@ func (p *process) reports(t *testing.T, id int) []string {
 		switch {
 		case m.Method == publishing:
 			out = append(out, string(m.Params.Diagnostics))
-		case m.Method == "" && m.ID != nil && *m.ID == id:
+		case m.Method == "" && m.ID != nil && *m.ID == asked:
 			return out
 		}
 	}
@@ -172,15 +177,18 @@ func (p *process) check(t *testing.T) []string {
 	}
 }
 
-// jobs reads frames until the reply to the request id, and returns the kinds of the
-// notifications of the check on disk before the reply, in order.
-func (p *process) jobs(t *testing.T, id int) []string {
+// progress reads frames until the reply to the request id, and returns, in order, the method of
+// each request before the reply that creates the token of a job, and the kind of each
+// notification of a job before the reply.
+func (p *process) progress(t *testing.T, id int) []string {
 	t.Helper()
 	var out []string
 	for {
 		m := p.next(t)
 		switch {
-		case m.of(beginning), m.of(ending):
+		case m.Method == creating:
+			out = append(out, m.Method)
+		case m.Method == progressing:
 			out = append(out, m.Params.Value.Kind)
 		case m.Method == "" && m.ID != nil && *m.ID == id:
 			return out
@@ -188,11 +196,35 @@ func (p *process) jobs(t *testing.T, id int) []string {
 	}
 }
 
+// diagnosed reads frames until the end of the first diagnosis, a job whose title starts with
+// [lsptest.DiagnosisPrefix], and returns the diagnostics of each report after the begin of the
+// diagnosis, in order. It reads on while the server ends no diagnosis.
+func (p *process) diagnosed(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	for token := ""; ; {
+		m := p.next(t)
+		switch {
+		case token == "" && m.Method == progressing && m.Params.Value.Kind == beginning &&
+			strings.HasPrefix(m.Params.Value.Title, lsptest.DiagnosisPrefix):
+			token = m.Params.Token
+		case token != "" && m.Method == progressing && m.Params.Value.Kind == ending && m.Params.Token == token:
+			return out
+		case token != "" && m.Method == publishing:
+			out = append(out, string(m.Params.Diagnostics))
+		}
+	}
+}
+
 // opening is the didOpen notification of a.fake with text, in the root of [process.initialize].
-func opening(text string) string {
+func opening(text string) string { return openingOf("a.fake", text) }
+
+// openingOf is the didOpen notification of the file name with text, in the root of
+// [process.initialize].
+func openingOf(name, text string) string {
 	quoted, _ := json.Marshal(text)
 	return fmt.Sprintf(`{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":`+
-		`{"uri":"file:///tmp/a.fake","languageId":"fake","version":1,"text":%s}}}`, quoted)
+		`{"uri":"file:///tmp/%s","languageId":"fake","version":1,"text":%s}}}`, name, quoted)
 }
 
 // changing is the didChange notification that replaces the buffer of a.fake with text under
@@ -214,6 +246,12 @@ const (
 		`{"textDocument":{"uri":"file:///tmp/a.fake"}}}`
 	asked = 2
 )
+
+// referencing is the textDocument/references request at the name Store of a.fake, with the id
+// [asked].
+const referencing = `{"jsonrpc":"2.0","id":2,"method":"textDocument/references","params":` +
+	`{"textDocument":{"uri":"file:///tmp/a.fake"},"position":{"line":2,"character":5},` +
+	`"context":{"includeDeclaration":false}}}`
 
 // defining returns the textDocument/definition request of a.fake at a character of line 2, the
 // line of the imports of [importing] and [naming], with the id [asked].
@@ -237,6 +275,10 @@ func (p *process) located(t *testing.T) []string {
 	return out
 }
 
+// loadMargin is how long a test waits past [lsptest.LoadTime] before it reads whether the loading
+// job ended, so the end of a job that ends at LoadTime arrives before the reply of a later request.
+const loadMargin = 500 * time.Millisecond
+
 // initialized is the notification that follows the reply to initialize. saving is the didSave
 // notification of a.fake.
 const (
@@ -251,17 +293,27 @@ func (p *process) initialize(t *testing.T) map[string]any {
 	return p.initializeAt(t, "/tmp")
 }
 
-// initializeAt sends initialize with the root at the absolute path root and returns the
-// capabilities of the reply.
+// initializeAt sends initialize with the root at the absolute path root and the capabilities
+// [publishes], by the rule of [initializing], and returns the capabilities of the reply.
 func (p *process) initializeAt(t *testing.T, root string) map[string]any {
 	t.Helper()
-	p.send(t, fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":"file://%s",`+
-		`"capabilities":{}}}`, root))
+	p.send(t, initializing(root, publishes))
 	var result struct {
 		Capabilities map[string]any `json:"capabilities"`
 	}
 	assert.NoError(t, json.Unmarshal(p.reply(t, 1), &result), "the reply to initialize")
 	return result.Capabilities
+}
+
+// publishes are the client capabilities that declare textDocument.publishDiagnostics, as techne
+// declares it, and no other capability.
+const publishes = `{"textDocument":{"publishDiagnostics":{}}}`
+
+// initializing is the initialize request with the id 1, the root at the absolute path root, and
+// capabilities, an object of client capabilities written as JSON.
+func initializing(root, capabilities string) string {
+	return fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":"file://%s",`+
+		`"capabilities":%s}}`, root, capabilities)
 }
 
 // placed writes content to a.fake in a new directory and returns the directory.
@@ -442,7 +494,7 @@ func TestScript(t *testing.T) {
 			assert.Equal(t, p.report(t), "[]", "the report of the opened document")
 			p.send(t, changing(lsptest.Content+"\n", 2))
 			p.send(t, asking)
-			assert.Empty(t, p.reports(t, asked), "the reports of the change")
+			assert.Empty(t, p.reports(t), "the reports of the change")
 		})
 
 		t.Run("publishes the report of a closed document after QuietClose in the Quiet mode", func(t *testing.T) {
@@ -465,7 +517,7 @@ func TestScript(t *testing.T) {
 			p.report(t)
 			p.send(t, closing)
 			p.send(t, asking)
-			assert.Equal(t, p.reports(t, asked), []string{"[]"}, "the reports of the close")
+			assert.Equal(t, p.reports(t), []string{"[]"}, "the reports of the close")
 		})
 
 		t.Run("checks the files on disk after initialized in the DiskChecks mode", func(t *testing.T) {
@@ -504,7 +556,249 @@ func TestScript(t *testing.T) {
 			p.initializeAt(t, placed(t, lsptest.Content))
 			p.send(t, initialized)
 			p.send(t, asking)
-			assert.Equal(t, p.jobs(t, asked), []string{beginning}, "the notifications of the check before the reply")
+			assert.Equal(t, p.progress(t, asked), []string{beginning}, "the messages of jobs before the reply")
 		})
+
+		t.Run("publishes an empty report and then the report of the buffer in the Diagnoses mode",
+			func(t *testing.T) {
+				t.Parallel()
+				p := run(t, lsptest.Diagnoses)
+				p.initialize(t)
+				p.send(t, opening(lsptest.Faulty))
+				got := p.diagnosed(t)
+				assert.Length(t, got, 2, "the reports of the diagnosis")
+				expect.Equal(t, got[0], "[]", "the first report of the diagnosis")
+				expect.Contains(t, got[1], lsptest.Broken, "the second report of the diagnosis")
+			})
+
+		t.Run("ends a diagnosis DiagnosisDelay and DiagnosisTime after a change in the Diagnoses mode",
+			func(t *testing.T) {
+				t.Parallel()
+				p := run(t, lsptest.Diagnoses)
+				p.initialize(t)
+				sent := time.Now()
+				p.send(t, opening(lsptest.Content))
+				p.diagnosed(t)
+				assert.InRange(t, time.Since(sent), float64(lsptest.DiagnosisDelay+lsptest.DiagnosisTime), 1<<63,
+					"the time of the diagnosis")
+			})
+
+		t.Run("begins the diagnosis of a change before the reply to a later request in the Diagnoses mode",
+			func(t *testing.T) {
+				t.Parallel()
+				p := run(t, lsptest.Diagnoses)
+				p.initialize(t)
+				p.send(t, changing(lsptest.Content, 2))
+				p.send(t, asking)
+				assert.Equal(
+					t,
+					p.progress(t, asked),
+					[]string{creating, beginning},
+					"the messages of jobs before the reply",
+				)
+			})
+
+		t.Run("begins a diagnosis that never ends in the DiagnosisStuck mode", func(t *testing.T) {
+			t.Parallel()
+			p := run(t, lsptest.DiagnosisStuck)
+			p.initialize(t)
+			p.send(t, initialized)
+			p.send(t, asking)
+			assert.Equal(
+				t,
+				p.progress(t, asked),
+				[]string{creating, beginning},
+				"the messages of jobs before the reply",
+			)
+		})
+
+		t.Run("replies to a request after a diagnosis ends in the Diagnoses mode", func(t *testing.T) {
+			t.Parallel()
+			p := run(t, lsptest.Diagnoses)
+			p.initialize(t)
+			p.send(t, opening(lsptest.Content))
+			p.diagnosed(t)
+			p.send(t, asking)
+			assert.NotEmpty(t, p.reply(t, asked), "the reply to documentSymbol")
+		})
+
+		{
+			tests := []struct {
+				name string
+				give lsptest.Mode
+				want []string
+			}{
+				{"sends no job message during initialize in the Default mode", lsptest.Default, nil},
+				{
+					"creates and begins the loading job during initialize in the Loading mode", lsptest.Loading,
+					[]string{creating, beginning},
+				},
+				{
+					"creates and begins the loading job during initialize in the Stuck mode", lsptest.Stuck,
+					[]string{creating, beginning},
+				},
+				{"creates the loading job during initialize in the Created mode", lsptest.Created, []string{creating}},
+				{
+					"creates and begins the loading job during initialize in the Diagnoses mode", lsptest.Diagnoses,
+					[]string{creating, beginning},
+				},
+				{"begins its first job during initialize in the Burst mode", lsptest.Burst, []string{beginning}},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					p := run(t, tt.give)
+					p.send(t, initializing("/tmp", publishes))
+					assert.Equal(t, p.progress(t, 1), tt.want, "the messages of jobs before the reply to initialize")
+				})
+			}
+		}
+
+		{
+			tests := []struct {
+				name string
+				give lsptest.Mode
+				want []string
+			}{
+				{
+					"ends the loading job LoadTime after initialize in the Loading mode", lsptest.Loading,
+					[]string{ending},
+				},
+				{
+					"ends the loading job LoadTime after initialize in the Diagnoses mode", lsptest.Diagnoses,
+					[]string{ending},
+				},
+				{"keeps the loading job open past LoadTime in the Stuck mode", lsptest.Stuck, nil},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					p := run(t, tt.give)
+					p.initialize(t)
+					time.Sleep(lsptest.LoadTime + loadMargin)
+					p.send(t, asking)
+					assert.Equal(t, p.progress(t, asked), tt.want, "the messages of jobs before the reply")
+				})
+			}
+		}
+
+		t.Run("ends its first job and begins and ends its second after initialize in the Burst mode",
+			func(t *testing.T) {
+				t.Parallel()
+				p := run(t, lsptest.Burst)
+				p.initialize(t)
+				time.Sleep(2*lsptest.BurstJob + lsptest.BurstGap + loadMargin)
+				p.send(t, asking)
+				assert.Equal(t, p.progress(t, asked), []string{ending, beginning, ending},
+					"the messages of jobs before the reply")
+			})
+
+		{
+			tests := []struct {
+				name string
+				give lsptest.Mode
+				want int
+			}{
+				{
+					"responds to references with no location before its job ends in the Loading mode",
+					lsptest.Loading, 0,
+				},
+				{"responds to references with no location while its job runs in the Stuck mode", lsptest.Stuck, 0},
+				{
+					"responds to references with no location before its job ends in the Created mode",
+					lsptest.Created, 0,
+				},
+				{
+					"responds to references with no location before its second job ends in the Burst mode",
+					lsptest.Burst, 0,
+				},
+				{"responds to references with the uses of Store in the Default mode", lsptest.Default, 2},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					p := run(t, tt.give)
+					p.initialize(t)
+					p.send(t, opening(lsptest.Content))
+					p.send(t, referencing)
+					assert.Length(t, p.located(t), tt.want, "the locations of the reply to references")
+				})
+			}
+		}
+
+		t.Run("begins its job CreateTime after initialize in the Created mode", func(t *testing.T) {
+			t.Parallel()
+			p := run(t, lsptest.Created)
+			p.initialize(t)
+			time.Sleep(lsptest.CreateTime + loadMargin)
+			p.send(t, asking)
+			assert.Equal(t, p.progress(t, asked), []string{beginning}, "the messages of jobs before the reply")
+		})
+
+		t.Run("responds to references with the uses of Store after its job ends in the Loading mode",
+			func(t *testing.T) {
+				t.Parallel()
+				p := run(t, lsptest.Loading)
+				p.initialize(t)
+				p.send(t, opening(lsptest.Content))
+				time.Sleep(lsptest.LoadTime + loadMargin)
+				p.send(t, referencing)
+				assert.Length(t, p.located(t), 2, "the locations of the reply to references")
+			})
+
+		t.Run("responds to references with the use in its buffer of b.fake in the Scoped mode", func(t *testing.T) {
+			t.Parallel()
+			p := run(t, lsptest.Scoped)
+			p.initialize(t)
+			p.send(t, opening(lsptest.Content))
+			p.send(t, openingOf("b.fake", "var _ Store\n"))
+			p.send(t, referencing)
+			assert.Equal(t, p.located(t), []string{"file:///tmp/b.fake"}, "the files of the reply to references")
+		})
+
+		t.Run("responds to references with the uses of Store after its second job ends in the Burst mode",
+			func(t *testing.T) {
+				t.Parallel()
+				p := run(t, lsptest.Burst)
+				p.initialize(t)
+				p.send(t, opening(lsptest.Content))
+				time.Sleep(2*lsptest.BurstJob + lsptest.BurstGap + loadMargin)
+				p.send(t, referencing)
+				assert.Length(t, p.located(t), 2, "the locations of the reply to references")
+			})
+
+		t.Run("publishes no report to a client without publishDiagnostics in the Pushes mode",
+			func(t *testing.T) {
+				t.Parallel()
+				p := run(t, lsptest.Pushes)
+				p.send(t, initializing("/tmp", "{}"))
+				p.reply(t, 1)
+				p.send(t, opening(lsptest.Faulty))
+				p.send(t, asking)
+				assert.Empty(t, p.reports(t), "the reports before the reply to documentSymbol")
+			})
+
+		{
+			tests := []struct {
+				name string
+				give lsptest.Mode
+				want int
+			}{
+				{"publishes no report of an opened document in the Default mode", lsptest.Default, 0},
+				{"publishes a report of an opened document in the Pushes mode", lsptest.Pushes, 1},
+				{"publishes a report of an opened document in the PushesOne mode", lsptest.PushesOne, 1},
+				{"publishes a report of an opened document in the DiagnosisStuck mode", lsptest.DiagnosisStuck, 1},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					p := run(t, tt.give)
+					p.initialize(t)
+					p.send(t, opening(lsptest.Faulty))
+					p.send(t, asking)
+					assert.Length(t, p.reports(t), tt.want, "the reports before the reply to documentSymbol")
+				})
+			}
+		}
 	})
 }

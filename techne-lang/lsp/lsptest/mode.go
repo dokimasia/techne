@@ -133,6 +133,12 @@ const (
 	// textDocument/references as the Loading mode does.
 	Created Mode = "created"
 
+	// Burst reports two loading jobs after initialize, as rust-analyzer loads a workspace in a
+	// burst of short jobs. Each job runs for [BurstJob], and the second begins [BurstGap] after
+	// the first ends. It responds to textDocument/references with an empty list until the second
+	// job ends.
+	Burst Mode = "burst"
+
 	// Hangs never responds to textDocument/references, as metals did for 5 minutes while it
 	// compiled a build.
 	Hangs Mode = "hangs"
@@ -226,6 +232,25 @@ const (
 	// DiskStuck responds as the DiskChecks mode does, and begins a check on disk after
 	// initialized that never ends.
 	DiskStuck Mode = "disk-stuck"
+
+	// Diagnoses advertises no pull diagnostics, and reports the job of the Loading mode after
+	// initialize, as gopls reports the load of its workspace. It diagnoses each document that the
+	// client opens or changes as gopls does with the setting verboseWorkDoneProgress, also while
+	// the job of the load runs:
+	//
+	//   - It handles the notification [DiagnosisDelay] after it reads it, and does not read another
+	//     message in that time, as a server that handles its messages in order.
+	//   - It creates and begins a work-done progress job whose title starts with
+	//     [DiagnosisPrefix], and publishes an empty report of the document, as gopls publishes
+	//     the report of a file when another build of the file ends first.
+	//   - [DiagnosisTime] later it publishes the report of the buffer, with an error at each
+	//     occurrence of [Broken], and ends the job.
+	Diagnoses Mode = "diagnoses"
+
+	// DiagnosisStuck advertises no pull diagnostics, and publishes the [Default] diagnostics for
+	// each document that the client opens, as the Pushes mode does. It begins a diagnosis after
+	// initialized that never ends.
+	DiagnosisStuck Mode = "diagnosis-stuck"
 
 	// Unbound diagnoses as the Compiles mode does, and responds to textDocument/definition
 	// with null, as a server does for a name that an error leaves unbound.
@@ -362,6 +387,14 @@ const LateStart = 1500 * time.Millisecond
 // LoadTime is how long the Loading mode takes to end its progress job.
 const LoadTime = 2 * time.Second
 
+// BurstJob is how long each job of the Burst mode runs, and BurstGap how long the Burst mode waits
+// between its two jobs. A question waits 300 ms for the server to go quiet, longer than
+// BurstGap, so a question that counts the end of a job as activity waits for the second job.
+const (
+	BurstJob = 400 * time.Millisecond
+	BurstGap = 100 * time.Millisecond
+)
+
 // CreateTime is how long the Created mode waits between the create request of its job and the
 // begin of the job. It is longer than the 500 ms for which the handshake waits for a first job
 // and the 300 ms for which a question waits for the server to go quiet, so a client that does
@@ -396,6 +429,19 @@ const (
 	DiskPrefix = "lsptest/disk/"
 	DiskToken  = DiskPrefix + "0"
 )
+
+// DiagnosisDelay is how long the Diagnoses mode takes to handle a notification that opens or
+// changes a document: longer than the 300 ms for which a question waits for the server to go
+// quiet. A question that does not send a request before its wait for the diagnosis reads the
+// empty report.
+const DiagnosisDelay = 400 * time.Millisecond
+
+// DiagnosisTime is how long a diagnosis of the Diagnoses mode runs after it begins.
+const DiagnosisTime = 300 * time.Millisecond
+
+// DiagnosisPrefix starts the title of each diagnosis of the Diagnoses and DiagnosisStuck modes,
+// as diagnosing starts the title of each diagnosis of gopls.
+const DiagnosisPrefix = "diagnosing"
 
 // Dying is the line that the Dies and DiesLate modes write to stderr before they exit.
 const Dying = "lsptest: the scripted server exits during initialize"

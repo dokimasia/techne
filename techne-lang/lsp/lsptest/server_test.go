@@ -5,6 +5,7 @@ package lsptest_test
 
 import (
 	"testing"
+	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
@@ -48,6 +49,24 @@ func TestServer(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, lsptest.Server(lsptest.Loading).Loading, 3*lsptest.LoadTime,
 				"the loading time of the Loading mode")
+		})
+
+		t.Run("declares the diagnosis of DiagnosisPrefix for the Diagnoses mode", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, lsptest.Server(lsptest.Diagnoses).Diagnosis, lsptest.DiagnosisPrefix,
+				"the diagnosis of the Diagnoses mode")
+		})
+
+		t.Run("declares the diagnosis of DiagnosisPrefix for the DiagnosisStuck mode", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, lsptest.Server(lsptest.DiagnosisStuck).Diagnosis, lsptest.DiagnosisPrefix,
+				"the diagnosis of the DiagnosisStuck mode")
+		})
+
+		t.Run("declares a loading time of one second for the DiagnosisStuck mode", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, lsptest.Server(lsptest.DiagnosisStuck).Loading, time.Second,
+				"the loading time of the DiagnosisStuck mode")
 		})
 
 		t.Run("declares an extraction for the Extracts mode", func(t *testing.T) {

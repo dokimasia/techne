@@ -28,11 +28,16 @@ import (
 // [trust.CaveatPartialCheck] caveat. A server that declares [Server.Unchecked] without a check
 // on disk adds the same caveat.
 //
-// The result is partial when the server had not settled, when a file received no report, or
-// when the scope contains a file larger than [lang.Largest], and a caveat names the reason.
-// A file that received no report is a file the server did not analyse, so its absence of
-// findings is no evidence. For a scope without a file of the language the result is skipped.
-// A server that does not answer within [Server.Answering] returns [engine.ErrDecline].
+// For a server that declares [Server.Diagnosis], Verify sends a request after the files, and
+// then waits up to [Server.Loading] for every diagnosis to end. The reports that it reads then
+// describe the content of the files.
+//
+// The result is partial when the server had not settled, when a diagnosis had not ended, when
+// the server did not report on a file, or when the scope contains a file larger than
+// [lang.Largest], and a caveat states the reason. A file without a report is a file that the
+// server did not analyse, so its absence of findings is no evidence. For a scope without a file
+// of the language the result is skipped. A server that does not answer within
+// [Server.Answering] returns [engine.ErrDecline].
 func (e *Engine) Verify(ctx context.Context, req engine.Request, suites []string) (engine.Result[edit.Finding], error) {
 	out, err := e.verifying(ctx, req, suites)
 	return out, e.unanswered(ctx, err)
@@ -78,6 +83,7 @@ func (e *Engine) verifying(
 	}
 	ready := e.settle(ctx, held)
 	checked := e.server.DiskCheck == "" || held.working.checked(ctx, e.loading())
+	diagnosed := len(docs) == 0 || e.diagnosed(ctx, held, docs[len(docs)-1].path)
 
 	by := time.Now().Add(reporting)
 	var out []edit.Finding
@@ -94,11 +100,18 @@ func (e *Engine) verifying(
 	}
 
 	covered, caveats := settled(ready)
-	if waited || len(files.Unread) > 0 {
+	if waited || !diagnosed || len(files.Unread) > 0 {
 		covered = trust.ScopePartial
 	}
 	if waited {
 		caveats = append(caveats, unreported)
+	}
+	if !diagnosed {
+		caveats = append(caveats, trust.Caveat{
+			Code: trust.CaveatIndexWarming,
+			Note: e.server.Name + " did not finish diagnosing the files, so they may have findings that " +
+				"the answer lacks",
+		})
 	}
 	caveats = append(caveats, e.shortfall(checked)...)
 	return engine.Result[edit.Finding]{

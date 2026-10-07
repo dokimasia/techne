@@ -113,7 +113,10 @@
 // for 300 milliseconds, for at most [Server.Loading]. An answer from a server that has not
 // settled is partial. An empty answer from a server whose diagnostics do not show that it
 // analysed the file is partial. A check on disk changes the diagnostics of the files alone, so
-// only [Engine.Verify] waits for it.
+// only [Engine.Verify] waits for it. The diagnosis of a server that declares [Server.Diagnosis]
+// changes the diagnostics alone as well. [Engine.Verify] and [Engine.Check] send the server a
+// request after their buffers, to which the server replies after it has begun the diagnosis of
+// each buffer, and then wait for every diagnosis to end.
 //
 // A question waits 2 seconds for a server without pull diagnostics to publish the diagnostics
 // of its files. [Engine.Check] checks a change before the write and waits up to

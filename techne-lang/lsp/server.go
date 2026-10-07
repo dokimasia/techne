@@ -90,6 +90,19 @@ type Server struct {
 	// its findings contain those of the check. It then has no [trust.CaveatPartialCheck] caveat.
 	DiskCheck string
 
+	// Diagnosis is the start of the title of the work-done progress job in which the server
+	// diagnoses a change of its buffers and files, such as diagnosing for gopls with the setting
+	// verboseWorkDoneProgress, or empty for a server without one. gopls begins the job in its
+	// handler of each notification that changes a file, and ends it after it has published the
+	// diagnostics of the change from every build that contains the file.
+	//
+	// A question does not wait for a diagnosis when it waits for the server to settle. A
+	// verification and a check send the server a request after their buffers, and then wait up
+	// to [Server.Loading] for every diagnosis to end. A server that handles its messages in
+	// order, as gopls does, begins the diagnosis of each buffer before it replies to the request,
+	// so the reports that they read describe the buffers that they sent.
+	Diagnosis string
+
 	// Answering is how long a question waits for the reply of the server, from the moment the
 	// server runs. Zero waits one minute. A question that waits the whole time returns
 	// [engine.ErrDecline], so the next engine serves it, and the server receives a

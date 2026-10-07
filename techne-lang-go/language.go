@@ -78,10 +78,25 @@ const (
 	serves = "serve"
 )
 
+// The setting with which gopls reports each diagnosis of a change as a work-done
+// progress job, and the start of the title of that job, which gopls writes as
+// diagnosing and the cause, such as diagnosing opened files.
+const (
+	verbose    = "verboseWorkDoneProgress"
+	diagnosing = "diagnosing"
+)
+
 // Server returns the declaration of gopls, the language server of the Go
 // team. gopls offers to extract a function and a method, each with its own
 // kind of code action, so the declaration selects the function by its
 // kind.
+//
+// gopls publishes the diagnostics of a file each time it finishes a build that
+// contains the file, and a report from before the last of those builds can
+// leave out the findings of the others. With the setting
+// verboseWorkDoneProgress, gopls reports each diagnosis as a
+// [lsp.Server.Diagnosis], so a verification and a check read the report of
+// every build.
 func Server() lsp.Server {
 	return lsp.Server{
 		Name:       server,
@@ -92,6 +107,8 @@ func Server() lsp.Server {
 		// gopls answers the type hierarchy with the interfaces that a type implements, and the
 		// type checker of package checker answers what a type embeds.
 		Unrelated: []sema.RelationKind{sema.Embeds, sema.EmbeddedBy},
+		Settings:  map[string]any{verbose: true},
+		Diagnosis: diagnosing,
 	}
 }
 

@@ -96,7 +96,8 @@ func Delaying(delay time.Duration) Option {
 // The ResolvesLate mode is declared as [lsp.Server.Imports] with a [lsp.Server.Resolving] of
 // three times [LateStart]. The DiskChecks and DiskStuck modes are declared with the check on
 // disk of [DiskPrefix] and with [Unchecked], and the DiskStuck mode with a loading time of one
-// second.
+// second. The Diagnoses and DiagnosisStuck modes are declared with the diagnosis of
+// [DiagnosisPrefix], and the DiagnosisStuck mode with a loading time of one second.
 func Server(mode Mode, options ...Option) lsp.Server {
 	server := lsp.Server{
 		Name:       Name,
@@ -131,6 +132,10 @@ func Server(mode Mode, options ...Option) lsp.Server {
 		server.DiskCheck, server.Unchecked = DiskPrefix, Unchecked
 	case DiskStuck:
 		server.DiskCheck, server.Unchecked, server.Loading = DiskPrefix, Unchecked, time.Second
+	case Diagnoses:
+		server.Diagnosis = DiagnosisPrefix
+	case DiagnosisStuck:
+		server.Diagnosis, server.Loading = DiagnosisPrefix, time.Second
 	}
 	for _, option := range options {
 		option(&server)

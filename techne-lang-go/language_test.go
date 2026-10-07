@@ -99,6 +99,17 @@ func TestLanguage(t *testing.T) {
 			assert.Equal(t, golang.Server().Extracts, lsp.Refactor{Kind: "refactor.extract.function"},
 				"the extraction of gopls")
 		})
+
+		t.Run("asks gopls to report each diagnosis as a progress job", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, golang.Server().Settings["verboseWorkDoneProgress"], any(true),
+				"the setting verboseWorkDoneProgress of gopls")
+		})
+
+		t.Run("names a diagnosis of gopls by the start of its title", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, golang.Server().Diagnosis, "diagnosing", "the diagnosis of gopls")
+		})
 	})
 
 	t.Run("Grammar", func(t *testing.T) {

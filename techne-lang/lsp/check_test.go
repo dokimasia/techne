@@ -167,6 +167,24 @@ func TestCheck(t *testing.T) {
 			assert.Contains(t, err.Error(), "loading", "the error of Check")
 		})
 
+		t.Run("waits for the diagnosis of the change", func(t *testing.T) {
+			t.Parallel()
+			e := serving(t, lsptest.Diagnoses, sample())
+			_, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify waits for the load of the server")
+
+			got, err := e.Check(t.Context(), faulty)
+			assert.NoError(t, err, "Check with a server that diagnoses each change")
+			assert.Length(t, got.Items, 1, "the findings of faulty content")
+		})
+
+		t.Run("declines while a diagnosis runs", func(t *testing.T) {
+			t.Parallel()
+			_, err := serving(t, lsptest.DiagnosisStuck, sample()).Check(t.Context(), faulty)
+			assert.ErrorIs(t, err, engine.ErrDecline, "the error of Check")
+			assert.Contains(t, err.Error(), "did not finish diagnosing the change", "the error of Check")
+		})
+
 		t.Run("returns an error in a file that depends on the change", func(t *testing.T) {
 			t.Parallel()
 			renamed := strings.Replace(lsptest.Content, "type Store", "type Vault", 1)

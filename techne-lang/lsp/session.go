@@ -87,7 +87,7 @@ func start(ctx context.Context, declared Server, root string) (*session, error) 
 		started:  time.Now(),
 		opened:   map[string]sent{},
 		reports:  newReports(declared.DiskCheck != ""),
-		working:  newWorking(declared.DiskCheck),
+		working:  newWorking(declared.DiskCheck, declared.Diagnosis),
 		offering: &asking{},
 	}
 
