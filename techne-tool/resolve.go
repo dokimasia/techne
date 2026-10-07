@@ -21,7 +21,7 @@ type ResolveInput struct {
 	Detail    Detail       `json:"detail,omitempty"             jsonschema:"signatures by default"`
 	Include   []Include    `json:"include,omitempty"            jsonschema:"bindings to add"`
 	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"answer ceiling in tokens, 6000 by default"`
-	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence wanted; a weaker answer is marked degraded"`
+	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence wanted; the answer states its own fidelity"`
 }
 
 // Resolve returns the tool that reports the declarations that the name at a position

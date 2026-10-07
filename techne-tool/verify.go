@@ -22,7 +22,7 @@ type VerifyInput struct {
 	Suites    []string     `json:"suites,omitempty"             jsonschema:"checks to run, in the words of the language"`
 	Language  string       `json:"language,omitempty"           jsonschema:"a language to ask instead of the scope's"`
 	MaxIssues int          `json:"max_issues,omitempty"         jsonschema:"most issues to return, all by default"`
-	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence wanted; a weaker answer is marked degraded"`
+	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence wanted; the answer states its own fidelity"`
 }
 
 // VerifyOutput is the output of the verify tool.

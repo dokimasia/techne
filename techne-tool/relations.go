@@ -28,7 +28,7 @@ type RelationsInput struct {
 	Language  string       `json:"language,omitempty"           jsonschema:"a language to ask instead of the scope's"`
 	Limit     int          `json:"limit,omitempty"              jsonschema:"most relations to return, 50 by default"`
 	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"answer ceiling in tokens, 6000 by default"`
-	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence wanted; a weaker answer is marked degraded"`
+	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence wanted; the answer states its own fidelity"`
 }
 
 // RelationsOutput is the output of the relations tool. It states the declaration and the

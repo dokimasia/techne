@@ -28,7 +28,7 @@ type SearchInput struct {
 	Include   []Include    `json:"include,omitempty"            jsonschema:"bindings to add"`
 	Tests     bool         `json:"tests,omitempty"              jsonschema:"include test files"`
 	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"answer ceiling in tokens, 6000 by default"`
-	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence wanted; a weaker answer is marked degraded"`
+	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence wanted; the answer states its own fidelity"`
 }
 
 // Matches is the output of the search tool.
