@@ -291,6 +291,19 @@ func TestInactive(t *testing.T) {
 			assert.Equal(t, unreadIn(got), []source.Path{"apart/never.go"}, "the files of the caveat")
 		})
 
+		t.Run("returns an excluded file of a directory whose files the build constraints all exclude",
+			func(t *testing.T) {
+				t.Parallel()
+				files := gated()
+				files["remote/remote_plan9.go"] = "package remote\n\nimport \"example.com/p/clock\"\n\nvar _ = clock.Now\n"
+				got, err := serving(t, files).Unread(t.Context(), engine.Request{Scope: "clock"},
+					sema.NewID(golang.Language, "clock", "Now", sema.KindFunction), sema.ReferencedBy)
+				assert.NoError(t, err, "Unread of the uses of Now")
+				assert.Equal(t, unreadIn(got),
+					[]source.Path{"clock/never.go", "remote/remote_plan9.go", "use/never.go", "via/never.go"},
+					"the files of the caveat")
+			})
+
 		t.Run("returns a caveat without paths for a declaration in a file of another port", func(t *testing.T) {
 			t.Parallel()
 			req := engine.Request{Scope: "ported", Declared: source.Span{Path: "ported/ported_plan9.go"}}

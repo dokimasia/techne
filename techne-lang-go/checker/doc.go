@@ -54,9 +54,12 @@
 // # Build constraints
 //
 // The go command loads one build of each package: the Go files that the build constraints select
-// for the operating system, the architecture and the tags of the environment. A file that the
-// build constraints exclude, such as a file of another operating system, has no syntax and no
-// types in the load, and an answer states the files that it does not read:
+// for the operating system, the architecture and the tags of the environment. A pattern that ends
+// in /... leaves out a directory whose Go files the build constraints all exclude, such as the
+// directory of a package of windows alone. The engine lists each such directory of the walk by
+// its path, so its files count as excluded files too. A file that the build constraints exclude,
+// such as a file of another operating system, has no syntax and no types in the load, and an
+// answer states the files that it does not read:
 //
 //   - A relation is partial when an excluded file can contain one, and a caveat names the files.
 //     A file can contain a use of a declaration when it names the declaration. The file must

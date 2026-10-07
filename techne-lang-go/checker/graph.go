@@ -4,9 +4,7 @@
 package checker
 
 import (
-	"bufio"
 	"context"
-	"fmt"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -22,7 +20,37 @@ import (
 const listing = `{{.ImportPath}}	{{.Dir}}	{{join .Imports " "}} {{join .TestImports " "}} ` +
 	`{{join .XTestImports " "}}	{{join .IgnoredGoFiles "\t"}}`
 
-// graph is the packages of the workspace and what each imports, from one go list of each plan.
+// entry is the line of one package in the output of go list with the template listing: the
+// import path, the directory, the import paths that the package and its tests import, and the
+// absolute paths of the Go files of the package that the build constraints exclude. The pattern
+// of a directory outside the main modules of the go command gives a line without a directory
+// and without files.
+type entry struct {
+	path, dir string
+	imports   []string
+	ignored   []string
+}
+
+// entries returns the packages of out, the output of go list with the template listing, in the
+// order of its lines.
+func entries(out string) []entry {
+	var found []entry
+	for line := range strings.Lines(out) {
+		path, rest, _ := strings.Cut(strings.TrimSuffix(line, "\n"), "\t")
+		dir, rest, _ := strings.Cut(rest, "\t")
+		imported, ignored, _ := strings.Cut(rest, "\t")
+		pkg := entry{path: path, dir: dir, imports: strings.Fields(imported)}
+		for name := range strings.SplitSeq(ignored, "\t") {
+			if name != "" {
+				pkg.ignored = append(pkg.ignored, filepath.Join(dir, name))
+			}
+		}
+		found = append(found, pkg)
+	}
+	return found
+}
+
+// graph is the packages of the workspace and what each imports, from the go list of each plan.
 // It is the part of a load that names packages, without their syntax and their types.
 type graph struct {
 	// stamp is the stamp of the walk that the graph describes.
@@ -32,18 +60,26 @@ type graph struct {
 	dirs    map[string]string
 	imports map[string][]string
 	// ignored are the absolute paths of the Go files that the build constraints exclude from
-	// each package, by import path.
+	// each package, by import path, the bare packages included.
 	ignored map[string][]string
 	// listed are the import paths that each plan lists, by the index of the plan. unlisted
 	// reports that go list failed for the plan, whose load then reports the failure.
 	listed   [][]string
 	unlisted []bool
+	// bare are the packages of each plan whose Go files the build constraints all exclude from
+	// the default build, such as a package of windows alone, by the index of the plan. A pattern
+	// that ends in /... leaves out the directory of such a package, so the graph lists the
+	// directory by its path. ignored contains the files of a bare package, and the other fields
+	// leave it out.
+	bare [][]entry
 }
 
 // graphOf returns the graph of the workspace that w describes, from the cached graph when its
 // stamp is the stamp of w. It lists the packages of each plan, with the go command in the
 // directory and the environment of the plan. A plan whose listing fails, such as a module whose
-// go.mod file does not parse, lists no package and is unlisted.
+// go.mod file does not parse, is unlisted, and the graph contains none of its packages. It then
+// lists the directories that [Engine.missing] returns, which are the directories of the bare
+// packages.
 func (e *Engine) graphOf(ctx context.Context, w walked, plans []plan) (*graph, error) {
 	e.listing.Lock()
 	defer e.listing.Unlock()
@@ -55,6 +91,7 @@ func (e *Engine) graphOf(ctx context.Context, w walked, plans []plan) (*graph, e
 		dirs:    map[string]string{},
 		imports: map[string][]string{},
 		ignored: map[string][]string{},
+		bare:    make([][]entry, len(plans)),
 	}
 	for _, one := range plans {
 		args := append([]string{"list", "-e", "-f", listing}, one.patterns...)
@@ -64,27 +101,56 @@ func (e *Engine) graphOf(ctx context.Context, w walked, plans []plan) (*graph, e
 		}
 		g.unlisted = append(g.unlisted, err != nil)
 		var listed []string
-		lines := bufio.NewScanner(strings.NewReader(out))
-		lines.Buffer(make([]byte, 0, 1<<16), 1<<24)
-		for lines.Scan() {
-			path, rest, _ := strings.Cut(lines.Text(), "\t")
-			dir, rest, _ := strings.Cut(rest, "\t")
-			imported, ignored, _ := strings.Cut(rest, "\t")
-			g.dirs[path], g.imports[path] = dir, strings.Fields(imported)
-			for name := range strings.SplitSeq(ignored, "\t") {
-				if name != "" {
-					g.ignored[path] = append(g.ignored[path], filepath.Join(dir, name))
-				}
-			}
-			listed = append(listed, path)
-		}
-		if err := lines.Err(); err != nil {
-			return nil, fmt.Errorf("checker: read go list: %w", err)
+		for _, pkg := range entries(out) {
+			g.dirs[pkg.path], g.imports[pkg.path], g.ignored[pkg.path] = pkg.dir, pkg.imports, pkg.ignored
+			listed = append(listed, pkg.path)
 		}
 		g.listed = append(g.listed, listed)
 	}
+	for i, dirs := range e.missing(w, g, plans) {
+		one := plans[i]
+		// goIn returns the empty output for a listing that fails, such as the listing of a plan
+		// whose go.mod file does not parse.
+		out, _ := goIn(ctx, one.dir, environ(one.alone), append([]string{"list", "-e", "-f", listing}, dirs...)...)
+		g.bare[i] = entries(out)
+		for _, pkg := range g.bare[i] {
+			g.ignored[pkg.path] = pkg.ignored
+		}
+	}
+	//dokimi:mutate-skip ror-false,sbr-delete: only a context that ends during a listing reaches this, which no test can time
+	if ctx.Err() != nil {
+		//dokimi:mutate-skip sbr-zero: only a context that ends during a listing reaches this, which no test can time
+		return nil, ctx.Err()
+	}
 	e.graph = g
 	return g, nil
+}
+
+// missing returns the directories of the Go files of w that no package of g is in, by the index
+// of the plans whose directories contain them. A directory is a pattern of go list relative to
+// the directory of the plan. go list leaves such a directory out of a pattern that ends in /...,
+// because the build constraints exclude every Go file in it. A pattern of the directory alone
+// lists it. The listing of a plan whose main modules do not contain the directory gives a line
+// without a directory.
+func (e *Engine) missing(w walked, g *graph, plans []plan) map[int][]string {
+	listed := slices.Sorted(maps.Values(g.dirs))
+	dirs := map[string]bool{}
+	for _, p := range w.files {
+		dir := filepath.Dir(e.fullPath(p))
+		if _, found := slices.BinarySearch(listed, dir); !found {
+			dirs[dir] = true
+		}
+	}
+	out := map[int][]string{}
+	for _, dir := range slices.Sorted(maps.Keys(dirs)) {
+		for i, one := range plans {
+			if below(dir, one.dir) {
+				relative, _ := filepath.Rel(one.dir, dir)
+				out[i] = append(out[i], "./"+filepath.ToSlash(relative))
+			}
+		}
+	}
+	return out
 }
 
 // affected returns the import paths of the packages that a change of the files at full, absolute
