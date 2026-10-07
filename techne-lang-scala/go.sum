@@ -38,8 +38,8 @@ github.com/tree-sitter/tree-sitter-rust v0.23.2 h1:6AtoooCW5GqNrRpfnvl0iUhxTAZEo
 github.com/tree-sitter/tree-sitter-rust v0.23.2/go.mod h1:hfeGWic9BAfgTrc7Xf6FaOAguCFJRo3RBbs7QJ6D7MI=
 github.com/tree-sitter/tree-sitter-scala v0.26.2 h1:ue3zsxnZzKvCAlBqOxIecqgI+NZjjdvrY+hQ8OA3K0Q=
 github.com/tree-sitter/tree-sitter-scala v0.26.2/go.mod h1:BmDV0f9rgsnGuG9QtKXQZnqJvECyR9fM8wVg984ulBo=
-go.dokimi.dev/assert v0.0.0-20261006224851-603d74892a28 h1:B1WuOo6BC+vZq1D8vnQkm+ZJ2r/9+z9iFxeJa6JjWjM=
-go.dokimi.dev/assert v0.0.0-20261006224851-603d74892a28/go.mod h1:Mr2lGt+AMXUIuqxAk7aGgGpTbdvFjuCd1qmUt0r091k=
+go.dokimi.dev/assert v0.0.0-20261007133442-6f235714117b h1:sXlKSw/O7L2olNwVtbx0gsCpc0lxe/cLFV5Fbpco/04=
+go.dokimi.dev/assert v0.0.0-20261007133442-6f235714117b/go.mod h1:Mr2lGt+AMXUIuqxAk7aGgGpTbdvFjuCd1qmUt0r091k=
 go.lsp.dev/jsonrpc2 v1.0.1 h1:JZAchpm6RcOuwEOnZ7kF3kA1EpEjdJZ/6rMSfOF3+F4=
 go.lsp.dev/jsonrpc2 v1.0.1/go.mod h1:WN+TesqrPumBmUdsuWyn9DHq3zl4i85L/qG0NLdj8qg=
 go.lsp.dev/protocol v1.0.1 h1:kLWUIk1v/deXxo1D0VO4avjZnfeuZ82mouJgJd/NbdU=

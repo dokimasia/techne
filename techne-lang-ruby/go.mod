@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tree-sitter/tree-sitter-ruby v0.23.1
-	go.dokimi.dev/assert v0.0.0-20261006224851-603d74892a28
+	go.dokimi.dev/assert v0.0.0-20261007133442-6f235714117b
 	go.dokimi.dev/techne/core v0.0.0
 	go.dokimi.dev/techne/lang v0.0.0
 )
