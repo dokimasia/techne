@@ -13,12 +13,13 @@ import (
 )
 
 // Index returns the declarations of one file, as Outline returns them for
-// that file. It returns a result with Skipped set for a file of another
-// language, and the error of [lang.Readable] for a file that the workspace
-// excludes or that is larger than [lang.Largest].
+// that file, with the coverage and the caveats of that outline. It returns a
+// result with Skipped set for a file of another language, and the error of
+// [lang.Readable] for a file that the workspace excludes or that is larger
+// than [lang.Largest].
 func (e *Engine) Index(ctx context.Context, p source.Path) (engine.Result[sema.Symbol], error) {
 	if !lang.Claims(string(p), e.declared.Extensions) {
-		return result[sema.Symbol](nil, lang.Files{}, matchedText), nil
+		return result[sema.Symbol](nil, lang.Files{}, nil, matchedText), nil
 	}
 	if err := ctx.Err(); err != nil {
 		return engine.Result[sema.Symbol]{}, err
@@ -27,11 +28,15 @@ func (e *Engine) Index(ctx context.Context, p source.Path) (engine.Result[sema.S
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, err
 	}
-	declared, _, err := e.declarations(p, content, nil)
+	declared, _, faulty, err := e.declarations(p, content, nil)
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, err
 	}
-	return result(declared, lang.Files{Read: []source.Path{p}}, matchedText), nil
+	var unparsed []source.Path
+	if faulty {
+		unparsed = []source.Path{p}
+	}
+	return result(declared, lang.Files{Read: []source.Path{p}}, unparsed, matchedText), nil
 }
 
 // Granularity returns [engine.InvalidateFile]. A parser reads one file at a

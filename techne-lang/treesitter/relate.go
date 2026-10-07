@@ -60,7 +60,7 @@ func (e *Engine) Relate(
 		return engine.Result[sema.Relation]{}, err
 	}
 	if len(files.Read) == 0 && len(files.Unread) == 0 {
-		return result[sema.Relation](nil, files, matchedImport), nil
+		return result[sema.Relation](nil, files, nil, matchedImport), nil
 	}
 	if kind != sema.Imports && kind != sema.ImportedBy {
 		return engine.Result[sema.Relation]{}, fmt.Errorf(
@@ -77,7 +77,7 @@ func (e *Engine) Relate(
 
 	name := of.Name()
 	selected := func(d named) bool { return d.kind == sema.KindImport || d.qualified == name }
-	found, err := parse(ctx, e, files.Read, selected,
+	found, unparsed, err := parse(ctx, e, files.Read, selected,
 		func(p source.Path, content []byte, declared []sema.Symbol) []sema.Relation {
 			return e.edges(declared, content, p, name, kind)
 		})
@@ -86,7 +86,7 @@ func (e *Engine) Relate(
 	}
 	out := slices.Concat(found...)
 	slices.SortFunc(out, ordered)
-	return result(out, files, matchedImport), nil
+	return result(out, files, unparsed, matchedImport), nil
 }
 
 // edges returns the import relations of kind in one file.

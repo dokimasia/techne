@@ -54,7 +54,7 @@ func (e *Engine) Search(ctx context.Context, req engine.Request, q engine.Query)
 			q.Include.Keeps(d.kind, d.local) &&
 			(len(words) > 0 || rank(compared(d.name, d.qualified, q.Text), q.Text) != noMatch)
 	}
-	found, err := parse(ctx, e, files.Read, wanted, declaredIn)
+	found, unparsed, err := parse(ctx, e, files.Read, wanted, declaredIn)
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, err
 	}
@@ -93,7 +93,7 @@ func (e *Engine) Search(ctx context.Context, req engine.Request, q engine.Query)
 	for i, m := range matches {
 		items[i] = m.symbol
 	}
-	out := result(items, files, matchedText)
+	out := result(items, files, unparsed, matchedText)
 	if len(items) < total {
 		out.Caveats = append(out.Caveats, trust.Caveat{
 			Code: trust.CaveatTruncated,

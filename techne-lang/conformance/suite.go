@@ -109,6 +109,7 @@ func Run(t *testing.T, s Suite) {
 	if s.Unclaimed != "" {
 		fsys[s.Unclaimed] = &fstest.MapFile{Data: []byte("not this language\n")}
 	}
+	spoiled, broken := damaged(fsys, s)
 
 	t.Run("Register", func(t *testing.T) {
 		t.Parallel()
@@ -382,13 +383,7 @@ func Run(t *testing.T, s Suite) {
 
 		t.Run("reports a file larger than Largest as unread", func(t *testing.T) {
 			t.Parallel()
-			var unread []source.Path
-			for _, c := range large.Caveats {
-				if c.Code == trust.CaveatUnread {
-					unread = append(unread, c.Paths...)
-				}
-			}
-			assert.Equal(t, unread, []source.Path{source.Path(oversized(s))}, "unread")
+			assert.Equal(t, unreadIn(large.Caveats), []source.Path{source.Path(oversized(s))}, "unread")
 			assert.Equal(t, large.Completeness, trust.ScopePartial, "completeness")
 		})
 
@@ -396,6 +391,25 @@ func Run(t *testing.T, s Suite) {
 			t.Parallel()
 			alone := outline(t, build(t, grown, s), source.Path(oversized(s)))
 			assert.False(t, alone.Skipped, "Skipped")
+		})
+
+		t.Run("reports a file that does not parse in full as unread", func(t *testing.T) {
+			t.Parallel()
+			got := outline(t, build(t, spoiled, s), ".")
+			assert.Equal(t, unreadIn(got.Caveats), []source.Path{broken}, "unread")
+			assert.Equal(t, got.Completeness, trust.ScopePartial, "completeness")
+			assert.Contains(t, unreadNote(got.Caveats), string(broken), "the note of the unread caveat")
+		})
+
+		t.Run("names the number of files that do not parse in full and the first of them", func(t *testing.T) {
+			t.Parallel()
+			garbled := maps.Clone(spoiled)
+			garbled["garbled"+s.Declaration.Extensions[0]] = &fstest.MapFile{Data: []byte(garbage)}
+			got := outline(t, build(t, garbled, s), ".")
+			unread := unreadIn(got.Caveats)
+			assert.Length(t, unread, 2, "unread")
+			assert.Contains(t, unreadNote(got.Caveats), fmt.Sprintf("2 files in full, such as %s,", unread[0]),
+				"the note of the unread caveat")
 		})
 	})
 
@@ -637,7 +651,7 @@ func Run(t *testing.T, s Suite) {
 
 		t.Run("returns no items for a name no declaration has", func(t *testing.T) {
 			t.Parallel()
-			got := search(t, e, engine.Query{Text: "aNameNoModuleWouldDeclare", Private: true})
+			got := search(t, e, engine.Query{Text: undeclared, Private: true})
 			assert.Empty(t, got.Items, "items")
 			assert.False(t, engine.Publish(got, e, engine.RoleSearch, trust.None).Provenance.SupportsNegativeClaim(),
 				"negative claim")
@@ -662,7 +676,7 @@ func Run(t *testing.T, s Suite) {
 			}, "caveats")
 		})
 
-		missing := engine.Query{Text: "aNameNoModuleWouldDeclare", Private: true}
+		missing := engine.Query{Text: undeclared, Private: true}
 		first := slices.Sorted(maps.Keys(s.Files))[0]
 
 		t.Run("skips an unchanged file without a match in a second search", func(t *testing.T) {
@@ -698,6 +712,25 @@ func Run(t *testing.T, s Suite) {
 			search(t, searched, missing)
 			assert.Equal(t, counted.opened(first), before+1, "the reads of "+first)
 		})
+
+		t.Run("reports a file that does not parse in full as unread", func(t *testing.T) {
+			t.Parallel()
+			got := search(t, build(t, spoiled, s), missing)
+			assert.Equal(t, unreadIn(got.Caveats), []source.Path{broken}, "unread")
+			assert.Equal(t, got.Completeness, trust.ScopePartial, "completeness")
+		})
+
+		t.Run("reports a file that does not parse in full as unread in a second search that skips it",
+			func(t *testing.T) {
+				t.Parallel()
+				counted := &counting{FS: maps.Clone(spoiled), opens: map[string]int{}}
+				searched := build(t, counted, s)
+				search(t, searched, missing)
+				before := sources(counted, s)
+				got := search(t, searched, missing)
+				assert.Equal(t, sources(counted, s), before, "the reads of the fixture files")
+				assert.Equal(t, unreadIn(got.Caveats), []source.Path{broken}, "unread")
+			})
 	})
 
 	t.Run("Relate", func(t *testing.T) {
@@ -813,6 +846,16 @@ func Run(t *testing.T, s Suite) {
 			assert.Equal(t, sortedList(farNames(got.Items)), sortedList(importsIn(declared, subject.Span.Path)),
 				"the imports of "+string(subject.Span.Path))
 		})
+
+		t.Run("reports a file that does not parse in full as unread", func(t *testing.T) {
+			t.Parallel()
+			of := sema.NewID(s.Declaration.Language, engine.Root, unrelated, sema.KindImport)
+			over := build(t, spoiled, s)
+			got, err := over.Relate(t.Context(), engine.Request{Scope: engine.Root}, of, sema.ImportedBy)
+			assert.NoError(t, err, "Relate of the files that import "+unrelated)
+			assert.Equal(t, unreadIn(got.Caveats), []source.Path{broken}, "unread")
+			assert.Equal(t, got.Completeness, trust.ScopePartial, "completeness")
+		})
 	})
 
 	t.Run("Plan", func(t *testing.T) {
@@ -832,6 +875,17 @@ func Run(t *testing.T, s Suite) {
 				documenting(t, e, files, s, before, sym)
 			}
 		})
+
+		t.Run("returns ErrDecline that names a file that does not parse in full for a symbol it does not find",
+			func(t *testing.T) {
+				t.Parallel()
+				absent := sema.NewID(s.Declaration.Language, engine.Root, undeclared, sema.KindFunction)
+				_, err := build(t, spoiled, s).Plan(t.Context(), engine.Request{Scope: engine.Root},
+					edit.DocumentSymbol, edit.Target{Kind: edit.TargetSymbol, Symbol: absent},
+					edit.Args{edit.ArgDoc: written})
+				assert.ErrorIs(t, err, engine.ErrDecline, "Plan of "+string(absent))
+				assert.Contains(t, err.Error(), string(broken), "the reason of the decline")
+			})
 	})
 
 	t.Run("Check", func(t *testing.T) {
@@ -882,6 +936,15 @@ func Run(t *testing.T, s Suite) {
 			assert.False(t, got.Skipped, "Skipped of the index of "+string(first))
 			assert.Equal(t, summarise(got.Items), summarise(outline(t, e, first).Items),
 				"the declarations of "+string(first))
+			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the coverage of the index of "+string(first))
+		})
+
+		t.Run("reports a file that does not parse in full as unread", func(t *testing.T) {
+			t.Parallel()
+			got, err := build(t, spoiled, s).Index(t.Context(), broken)
+			assert.NoError(t, err, "Index of "+string(broken))
+			assert.Equal(t, unreadIn(got.Caveats), []source.Path{broken}, "unread")
+			assert.Equal(t, got.Completeness, trust.ScopePartial, "completeness")
 		})
 
 		t.Run("skips a file of another language", func(t *testing.T) {
@@ -928,6 +991,41 @@ func enlarged(fsys fstest.MapFS, s Suite) fstest.MapFS {
 func oversized(s Suite) string {
 	return "toobig" + s.Declaration.Extensions[0]
 }
+
+// damaged returns fsys with [garbage] appended to the first fixture file in
+// path order, which no grammar then parses in full, and the path of that file.
+func damaged(fsys fstest.MapFS, s Suite) (fstest.MapFS, source.Path) {
+	first := slices.Sorted(maps.Keys(s.Files))[0]
+	out := maps.Clone(fsys)
+	out[first] = &fstest.MapFile{Data: []byte(s.Files[first] + garbage)}
+	return out, source.Path(first)
+}
+
+// unreadIn returns the paths of the [trust.CaveatUnread] caveats of caveats, in
+// their order.
+func unreadIn(caveats []trust.Caveat) []source.Path {
+	var out []source.Path
+	for _, c := range caveats {
+		if c.Code == trust.CaveatUnread {
+			out = append(out, c.Paths...)
+		}
+	}
+	return out
+}
+
+// unreadNote returns the note of the first [trust.CaveatUnread] caveat of caveats, or the
+// empty string for none.
+func unreadNote(caveats []trust.Caveat) string {
+	for _, c := range caveats {
+		if c.Code == trust.CaveatUnread {
+			return c.Note
+		}
+	}
+	return ""
+}
+
+// undeclared is a name that no fixture declares.
+const undeclared = "aNameNoModuleWouldDeclare"
 
 // anyFile returns the content of the first fixture file in path order.
 func anyFile(s Suite) string {

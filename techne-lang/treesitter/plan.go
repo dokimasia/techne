@@ -75,7 +75,8 @@ func (e *Engine) Plan(
 // site looks the ID up in the scope of req, and returns [engine.ErrDecline]
 // when no declaration has the ID and [engine.ErrRefuse] when more than one
 // has it. The refusal lists their positions, so the caller can point at one
-// by span.
+// by span. The decline names the files of the scope that site did not read
+// in full, because the declaration can be in one of them.
 func (e *Engine) site(ctx context.Context, req engine.Request, target edit.Target) (source.Path, int, error) {
 	if target.Kind == edit.TargetSpan {
 		return target.Span.Path, target.Span.Start.Offset, nil
@@ -86,7 +87,7 @@ func (e *Engine) site(ctx context.Context, req engine.Request, target edit.Targe
 		return "", 0, err
 	}
 	name := target.Symbol.Name()
-	per, err := parse(ctx, e, files.Read, func(d named) bool { return d.qualified == name }, declaredIn)
+	per, unparsed, err := parse(ctx, e, files.Read, func(d named) bool { return d.qualified == name }, declaredIn)
 	if err != nil {
 		return "", 0, err
 	}
@@ -99,6 +100,10 @@ func (e *Engine) site(ctx context.Context, req engine.Request, target edit.Targe
 		if len(files.Unread) > 0 {
 			return "", 0, fmt.Errorf("%w: %s was not looked up in %s, which is larger than %d bytes",
 				engine.ErrDecline, target.Symbol, joined(files.Unread), lang.Largest)
+		}
+		if len(unparsed) > 0 {
+			return "", 0, fmt.Errorf("%w: %s was not looked up in the parts of %s that the grammar does not parse",
+				engine.ErrDecline, target.Symbol, joined(unparsed))
 		}
 		return "", 0, fmt.Errorf("%w: %q declares no %s", engine.ErrDecline, req.Scope, target.Symbol)
 	default:

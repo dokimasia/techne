@@ -22,8 +22,9 @@ import (
 //
 // It returns a refused [Failure] when an engine refuses the outline, with its reason, and when
 // the name addresses no declaration or more than one. It returns an unsupported Failure when no
-// engine outlines the scope. A name that addresses nothing in a scope with a file larger than
-// an engine reads is refused with the name of that file, because the declaration can be in it.
+// engine outlines the scope. A name that addresses nothing in a scope with a file that an engine
+// did not read in full is refused with the name of that file and the note of its caveat, because
+// the declaration can be in it.
 func addressed(
 	ctx context.Context,
 	reads Outliner,
@@ -59,24 +60,24 @@ func addressed(
 		if unread, skipped := passedOver(answered.Provenance); skipped {
 			return sema.Symbol{}, &Failure{
 				Code: trust.Refused.String(),
-				Reason: fmt.Sprintf(
-					"%q was not read in full: %s is larger than an engine reads, "+
-						"so %q was not looked for there",
-					scope, unread, name),
+				Reason: fmt.Sprintf("%q was not read in full, so %q was not looked for in %s",
+					scope, name, unread),
 			}
 		}
 	}
 	return found, failure
 }
 
-// passedOver returns the files of the unread caveat of p, and reports whether p has one.
+// passedOver returns the files of each unread caveat of p with the note of the caveat, as
+// "big.fx: larger than 4194304 bytes, so not parsed", and reports whether p has one.
 func passedOver(p trust.Provenance) (string, bool) {
+	var out []string
 	for _, one := range p.Caveats {
 		if one.Code == trust.CaveatUnread {
-			return strings.Join(paths(one.Paths), ", "), true
+			out = append(out, strings.Join(paths(one.Paths), ", ")+": "+one.Note)
 		}
 	}
-	return "", false
+	return strings.Join(out, "; "), len(out) > 0
 }
 
 // paths returns each path of list as a string.

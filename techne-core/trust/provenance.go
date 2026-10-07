@@ -58,9 +58,10 @@ const (
 	// caller can act on, such as a path that does not exist. The note states
 	// the reason.
 	CaveatRefused CaveatCode = "refused"
-	// CaveatUnread means an engine did not read the files in Caveat.Paths:
-	// each exceeds the size an engine reads, or the .gitignore files of the
-	// workspace exclude it.
+	// CaveatUnread means an engine did not read all of the files in
+	// Caveat.Paths: each exceeds the size an engine reads, the .gitignore
+	// files of the workspace exclude it, or the grammar of the engine does
+	// not parse it in full.
 	CaveatUnread CaveatCode = "unread"
 	// CaveatDependents means a gate checked the changed files but not the
 	// files that depend on them.

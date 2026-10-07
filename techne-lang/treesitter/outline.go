@@ -23,22 +23,41 @@ import (
 // matchedText is the note of the caveat of every outline and search.
 const matchedText = "a parser matched text, so a name that crosses a file is matched by spelling"
 
+// unparsedLoss is the end of the note of [unparsedNote]. The grammar recovers from a parse error
+// with an error node, and the tags query matches no declaration in the text that the error node
+// covers.
+const unparsedLoss = "so a declaration in a part that does not parse is missing"
+
+// unparsedNote returns the note of the caveat that names the files of unparsed, whose tree
+// contains a parse error: the file, or the number of files and the first of them, because the
+// text of an answer states the note of a caveat without its paths. unparsed has at least one
+// file.
+func unparsedNote(unparsed []source.Path) string {
+	if len(unparsed) == 1 {
+		return fmt.Sprintf("the grammar does not parse %s in full, %s", unparsed[0], unparsedLoss)
+	}
+	return fmt.Sprintf("the grammar does not parse %d files in full, such as %s, %s",
+		len(unparsed), unparsed[0], unparsedLoss)
+}
+
 // Outline returns the declarations in the files of a scope.
 //
 // A directory scope includes every file of the language under it, and a
 // file scope of another language returns a result with Skipped set. The
-// coverage is total, except that a file larger than [lang.Largest] is not
-// parsed: a caveat names it and the coverage is partial.
+// coverage is total, except for a file larger than [lang.Largest], which is
+// not parsed, and a file that the grammar does not parse in full, whose
+// declarations in a part that does not parse are missing. A caveat names
+// each such file, and the coverage is partial.
 func (e *Engine) Outline(ctx context.Context, req engine.Request) (engine.Result[sema.Symbol], error) {
 	files, err := e.walk(req)
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, err
 	}
-	found, err := parse(ctx, e, files.Read, nil, declaredIn)
+	found, unparsed, err := parse(ctx, e, files.Read, nil, declaredIn)
 	if err != nil {
 		return engine.Result[sema.Symbol]{}, err
 	}
-	return result(slices.Concat(found...), files, matchedText), nil
+	return result(slices.Concat(found...), files, unparsed, matchedText), nil
 }
 
 // walk returns the files of the scope of req, without the files the
@@ -69,11 +88,13 @@ type named struct {
 }
 
 // scan is the record of one parse of a file: the size and the modification
-// time of the file, and each distinct declaration the parse matched.
+// time of the file, each distinct declaration the parse matched, and whether
+// the tree of the file contains a parse error.
 type scan struct {
 	size     int64
 	modified time.Time
 	declared []named
+	faulty   bool
 }
 
 // selects reports whether selected keeps a declaration of s.
@@ -98,36 +119,39 @@ func (s *scans) fresh(p source.Path, info fs.FileInfo) (scan, bool) {
 }
 
 // record keeps the declarations of the file at p, parsed at the size and the
-// modification time of info.
-func (s *scans) record(p source.Path, info fs.FileInfo, declared []named) {
+// modification time of info, and whether its tree contains a parse error.
+func (s *scans) record(p source.Path, info fs.FileInfo, declared []named, faulty bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.files[p] = scan{size: info.Size(), modified: info.ModTime(), declared: declared}
+	s.files[p] = scan{size: info.Size(), modified: info.ModTime(), declared: declared, faulty: faulty}
 }
 
 // parse reads and parses files in parallel, at most one file per CPU, and
-// returns what visit returns for each file, in the order of files. visit
-// runs on a worker goroutine. parse returns the first error in the order of
-// files, and ctx.Err() when ctx is done before every file started.
+// returns what visit returns for each file, in the order of files, and the
+// files whose tree contains a parse error, in the same order. visit runs on a
+// worker goroutine. parse returns the first error in the order of files, and
+// ctx.Err() when ctx is done before every file started.
 //
 // For a selected keep, parse does not read a file that the engine scanned at
 // its current size and modification time when selected keeps none of its
-// declarations. visit then receives nil content and no declarations.
+// declarations. visit then receives nil content and no declarations, and the
+// file has a parse error when its scan had one.
 func parse[T any](
 	ctx context.Context,
 	e *Engine,
 	files []source.Path,
 	selected keep,
 	visit func(p source.Path, content []byte, declared []sema.Symbol) T,
-) ([]T, error) {
+) ([]T, []source.Path, error) {
 	out := make([]T, len(files))
+	faulty := make([]bool, len(files))
 	failed := make([]error, len(files))
 	room := make(chan struct{}, max(runtime.NumCPU(), 1))
 	var wait sync.WaitGroup
 	for at, p := range files {
 		if err := ctx.Err(); err != nil {
 			wait.Wait()
-			return nil, err
+			return nil, nil, err
 		}
 		room <- struct{}{}
 		wait.Go(func() {
@@ -135,7 +159,7 @@ func parse[T any](
 			info, unstated := fs.Stat(e.fsys, string(p))
 			if unstated == nil && selected != nil {
 				if kept, fresh := e.scans.fresh(p, info); fresh && !kept.selects(selected) {
-					out[at] = visit(p, nil, nil)
+					out[at], faulty[at] = visit(p, nil, nil), kept.faulty
 					return
 				}
 			}
@@ -144,24 +168,30 @@ func parse[T any](
 				failed[at] = fmt.Errorf("treesitter: read %s: %w", p, err)
 				return
 			}
-			declared, all, err := e.declarations(p, content, selected)
+			declared, all, broken, err := e.declarations(p, content, selected)
 			if err != nil {
 				failed[at] = err
 				return
 			}
 			if unstated == nil {
-				e.scans.record(p, info, all)
+				e.scans.record(p, info, all, broken)
 			}
-			out[at] = visit(p, content, declared)
+			out[at], faulty[at] = visit(p, content, declared), broken
 		})
 	}
 	wait.Wait()
 	for _, err := range failed {
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return out, nil
+	var unparsed []source.Path
+	for at, p := range files {
+		if faulty[at] {
+			unparsed = append(unparsed, p)
+		}
+	}
+	return out, unparsed, nil
 }
 
 // declaredIn returns the declarations of one file. It is the visit function
@@ -169,10 +199,12 @@ func parse[T any](
 func declaredIn(_ source.Path, _ []byte, declared []sema.Symbol) []sema.Symbol { return declared }
 
 // result returns items with the evidence of a walk: Skipped when the scope
-// contains no file of the language, a CaveatDynamic caveat with note, and a
-// CaveatUnread caveat with partial coverage when the walk found files larger
-// than [lang.Largest].
-func result[T any](items []T, files lang.Files, note string) engine.Result[T] {
+// contains no file of the language, and a CaveatDynamic caveat with note. The
+// coverage is partial with a CaveatUnread caveat that names the files larger
+// than [lang.Largest] when the walk found any, and with another that names
+// the files of unparsed, whose tree contains a parse error, when there are
+// any.
+func result[T any](items []T, files lang.Files, unparsed []source.Path, note string) engine.Result[T] {
 	caveats := []trust.Caveat{{Code: trust.CaveatDynamic, Note: note}}
 	covered := trust.ScopeTotal
 	if len(files.Unread) > 0 {
@@ -181,6 +213,14 @@ func result[T any](items []T, files lang.Files, note string) engine.Result[T] {
 			Code:  trust.CaveatUnread,
 			Note:  fmt.Sprintf("larger than %d bytes, so not parsed", lang.Largest),
 			Paths: files.Unread,
+		})
+	}
+	if len(unparsed) > 0 {
+		covered = trust.ScopePartial
+		caveats = append(caveats, trust.Caveat{
+			Code:  trust.CaveatUnread,
+			Note:  unparsedNote(unparsed),
+			Paths: unparsed,
 		})
 	}
 	return engine.Result[T]{
@@ -241,17 +281,17 @@ func qualify(found []declaration, containers []int) []string {
 }
 
 // declarations parses one file and returns its declarations, in the order
-// the query matched them, and each distinct declaration of the file as a keep
-// reads it.
+// the query matched them, each distinct declaration of the file as a keep
+// reads it, and whether the tree of the file contains a parse error.
 //
 // It matches every declaration, links each to its container, qualifies its
 // name and computes its visibility first. It then reads the metadata of the
 // declarations that selected keeps, so a caller that returns few
 // declarations reads the metadata of few.
-func (e *Engine) declarations(p source.Path, content []byte, selected keep) ([]sema.Symbol, []named, error) {
+func (e *Engine) declarations(p source.Path, content []byte, selected keep) ([]sema.Symbol, []named, bool, error) {
 	tree, grammar, err := e.parsed(p, content)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	defer tree.Close()
 
@@ -301,7 +341,7 @@ func (e *Engine) declarations(p source.Path, content []byte, selected keep) ([]s
 		}
 		out = append(out, symbol)
 	}
-	return out, all, nil
+	return out, all, tree.RootNode().HasError(), nil
 }
 
 // parsed returns the tree of content, parsed with the grammar of the file

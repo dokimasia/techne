@@ -148,6 +148,15 @@ func TestAddress(t *testing.T) {
 			assert.Contains(t, got.Error.Reason, "big.fx", "the reason of the failure")
 		})
 
+		t.Run("states why the unread file of a scope was not read for a name that nothing declares",
+			func(t *testing.T) {
+				t.Parallel()
+				over := addressable()
+				over.engine.found = nil
+				got := addressedOver(t, unreadOver(over), &recorder{}, `{"scope":"a.fx","name":"Store","doc":"x"}`)
+				assert.Contains(t, got.Error.Reason, unreadNote, "the reason of the failure")
+			})
+
 		t.Run("refuses a scope that the read service refuses with its reason", func(t *testing.T) {
 			t.Parallel()
 			got := addressedOver(t, refusedOver(addressable(), "gone.fx does not exist"), &recorder{},
@@ -251,13 +260,16 @@ func stems() []sema.Symbol {
 // unreadOver returns over with an unread caveat that names big.fx on each outline.
 func unreadOver(over *reads) tool.Outliner { return unread{over} }
 
+// unreadNote is the note of the unread caveat of [unread].
+const unreadNote = "larger than an engine reads"
+
 // unread is a read service whose outline has an unread caveat for big.fx.
 type unread struct{ *reads }
 
 func (u unread) Outline(ctx context.Context, req engine.Request) (engine.Answer[sema.Symbol], error) {
 	answered, err := u.reads.Outline(ctx, req)
 	answered.Provenance.Caveats = append(answered.Provenance.Caveats, trust.Caveat{
-		Code: trust.CaveatUnread, Note: "larger than an engine reads", Paths: []source.Path{"big.fx"},
+		Code: trust.CaveatUnread, Note: unreadNote, Paths: []source.Path{"big.fx"},
 	})
 	return answered, err
 }
