@@ -27,8 +27,10 @@ import (
 //
 // The type checker runs one analysis and no suite, so Verify declines a request that names a
 // suite, by the rule of [engine.Unrun]. Verify returns a skipped result for a scope without a Go
-// file. A module in the scope that
-// fails to load makes the answer partial, and a caveat lists it with its error.
+// file. A module in the scope that fails to load makes the answer partial, and a caveat lists
+// it with its error. A Go file in the scope that the build constraints of the load exclude,
+// such as a file of another operating system, makes the answer partial too, and a caveat names
+// it, because the type checker does not check it.
 func (e *Engine) Verify(
 	ctx context.Context,
 	req engine.Request,
@@ -45,7 +47,9 @@ func (e *Engine) Verify(
 	if unrun := engine.Unrun(e.Name(), nil, suites); unrun != nil {
 		return engine.Result[edit.Finding]{}, unrun
 	}
+	var listed *graph
 	v, err := e.viewing(ctx, w, nil, func(g *graph) []string {
+		listed = g
 		return g.under(e.root, scope, lang.Claims(string(scope), e.declared.Extensions))
 	})
 	if err != nil {
@@ -59,6 +63,9 @@ func (e *Engine) Verify(
 		}
 	}
 	covered, missing := v.partial(scope)
+	if left := inactive(e.within(e.kept(listed.excluded(), req.Tests), scope)); len(left) > 0 {
+		covered, missing = trust.ScopePartial, append(missing, left...)
+	}
 	return engine.Result[edit.Finding]{
 		Items:        e.faults(v, sources{}, func(p source.Path) bool { return within[p] }),
 		Completeness: covered,
@@ -78,18 +85,21 @@ func (e *Engine) Verify(
 // workspace is the answer when there is one. Check declines when files contain no Go file, and
 // when a package of the workspace does not compile a Go file of files, so that the next engine
 // checks the change. A module that fails to load adds a caveat, because the packages in it that
-// import a changed package are not checked.
+// import a changed package are not checked. So does a Go file that the build constraints of the
+// load exclude and that can use a changed package, by the rule of [graph.reaching], because the
+// type checker does not check it.
 func (e *Engine) Check(
 	ctx context.Context,
 	files map[source.Path][]byte,
 ) (engine.Result[edit.Finding], error) {
 	overlay := map[string][]byte{}
-	var written []source.Path
+	var changed, written []source.Path
 	unchanged := true
 	for _, p := range slices.Sorted(maps.Keys(files)) {
 		if !lang.Claims(string(p), e.declared.Extensions) {
 			continue
 		}
+		changed = append(changed, p)
 		full := e.fullPath(p)
 		content := files[p]
 		if content == nil {
@@ -115,7 +125,9 @@ func (e *Engine) Check(
 	if unchanged {
 		shown = nil
 	}
+	var listed *graph
 	v, err := e.viewing(ctx, w, shown, func(g *graph) []string {
+		listed = g
 		return g.affected(slices.Collect(maps.Keys(overlay)))
 	})
 	if err != nil {
@@ -142,6 +154,7 @@ func (e *Engine) Check(
 			Paths: slices.Sorted(maps.Keys(v.unloaded)),
 		})
 	}
+	caveats = append(caveats, unchecked(e.dependents(listed, changed))...)
 	return engine.Result[edit.Finding]{
 		Items:        e.faults(v, overlay, func(source.Path) bool { return true }),
 		Completeness: trust.ScopeTotal,

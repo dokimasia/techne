@@ -114,6 +114,17 @@ func TestImport(t *testing.T) {
 			assert.Equal(t, places(got.Items), []string{"x/a_test.go:2", "x/b.go:2"}, "the sites of the imports")
 		})
 
+		t.Run("returns each import once for a package with a test file", func(t *testing.T) {
+			t.Parallel()
+			got, err := importersIn(t, "example.com/p/clock", map[string]string{
+				"x/a.go":      "package x\n",
+				"x/b.go":      "package x\n\nimport \"example.com/p/clock\"\n\nvar _ = clock.Now\n",
+				"x/b_test.go": "package x\n\nimport \"testing\"\n\nfunc TestB(t *testing.T) {}\n",
+			})
+			assert.NoError(t, err, "Relate of the importers of example.com/p/clock")
+			assert.Equal(t, places(got.Items), []string{"x/b.go:2"}, "the sites of the imports")
+		})
+
 		t.Run("returns the line of an import in a file with a line directive", func(t *testing.T) {
 			t.Parallel()
 			got, err := importersIn(t, "example.com/p/clock", map[string]string{

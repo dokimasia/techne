@@ -80,8 +80,8 @@ func (*Engine) Available(context.Context) error {
 	return nil
 }
 
-// Close drops the cached view, which is the only state that the engine keeps between
-// questions.
+// Close drops the cached view and the cached import graph, which are the only state that the
+// engine keeps between questions.
 func (e *Engine) Close(context.Context) error {
 	e.forget()
 	return nil

@@ -5,6 +5,7 @@ package checker
 
 import (
 	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
@@ -23,26 +24,41 @@ import (
 
 // importers returns the import lines of the workspace that import the package that req and of
 // name, by the rule of [Engine.imported]: one relation of [sema.ImportedBy] for each line, from
-// the importing file, at the path of the import. It reads each source file of the view as
-// [Engine.importsIn] does. A line of a test file counts when req includes tests. A file of any
-// module can import the package, so the answer is as complete as the load of the whole
-// workspace.
-func (e *Engine) importers(v *view, req engine.Request, of sema.ID) (engine.Result[sema.Relation], error) {
+// the importing file, at the path of the import. It reads each source file of the view, and
+// each Go file that the build constraints of the load exclude, as [Engine.importsIn] does, so
+// an import of a file of another operating system counts. A line of a test file counts when req
+// includes tests. A file of any module can import the package, so the answer is as complete as
+// the load of the whole workspace.
+func (e *Engine) importers(
+	v *view,
+	g *graph,
+	req engine.Request,
+	of sema.ID,
+) (engine.Result[sema.Relation], error) {
 	target, err := e.imported(v, req, of)
 	if err != nil {
 		return engine.Result[sema.Relation]{}, err
 	}
 	var out []sema.Relation
-	for _, pkg := range v.held() {
-		for _, file := range pkg.GoFiles {
-			if req.Tests || !e.declared.IsTest(string(e.pathOf(file))) {
-				out = append(out, e.importsIn(file, target)...)
-			}
+	for _, file := range slices.Concat(v.sourceFiles(), g.excluded()) {
+		if req.Tests || !e.declared.IsTest(string(e.pathOf(file))) {
+			out = append(out, e.importsIn(file, target)...)
 		}
 	}
 	slices.SortFunc(out, order)
 	covered, missing := v.partial(engine.Root)
 	return engine.Result[sema.Relation]{Items: out, Completeness: covered, Caveats: missing}, nil
+}
+
+// sourceFiles returns the absolute paths of the source files of the packages of v. Each file is
+// in one held package, because [view.held] holds the test variant of a package in place of the
+// package.
+func (v *view) sourceFiles() []string {
+	var out []string
+	for _, pkg := range v.held() {
+		out = append(out, pkg.GoFiles...)
+	}
+	return out
 }
 
 // importsIn returns a relation of [sema.ImportedBy] for each import of the Go file at the
@@ -52,9 +68,7 @@ func (e *Engine) importers(v *view, req engine.Request, of sema.ID) (engine.Resu
 // and it imports unsafe in place of C. A file whose imports do not parse returns the imports
 // before the error, and a file that cannot be read returns none.
 func (e *Engine) importsIn(full, target string) []sema.Relation {
-	content, _ := os.ReadFile(full)
-	fset := token.NewFileSet()
-	parsed, _ := parser.ParseFile(fset, full, content, parser.ImportsOnly)
+	content, fset, parsed := importLines(full)
 	p := e.pathOf(full)
 	var out []sema.Relation
 	for _, spec := range parsed.Imports {
@@ -73,6 +87,32 @@ func (e *Engine) importsIn(full, target string) []sema.Relation {
 		})
 	}
 	return out
+}
+
+// importsOf returns the import paths that the Go file at the absolute path full imports, by the
+// rules of [importLines]. The path of an import that does not unquote, such as an unterminated
+// one, is the empty path, which no package has.
+func importsOf(full string) []string {
+	_, _, parsed := importLines(full)
+	out := make([]string, 0, len(parsed.Imports))
+	for _, spec := range parsed.Imports {
+		written, _ := strconv.Unquote(spec.Path.Value)
+		out = append(out, written)
+	}
+	return out
+}
+
+// importLines returns the content of the Go file at the absolute path full, the file set of its
+// parse, and the syntax of its package clause and its imports. It parses the file as it is on
+// disk and stops after the imports. A file whose imports do not parse has the imports before
+// the error, and a file that cannot be read has no content and no imports.
+func importLines(full string) ([]byte, *token.FileSet, *ast.File) {
+	fset := token.NewFileSet()
+	content, _ := os.ReadFile(full)
+	// ParseFile parses content from memory, also the empty content of a file that cannot be
+	// read, and returns the syntax before the first error.
+	parsed, _ := parser.ParseFile(fset, full, content, parser.ImportsOnly)
+	return content, fset, parsed
 }
 
 // imported returns the import path of the package that an imported-by request names, by the

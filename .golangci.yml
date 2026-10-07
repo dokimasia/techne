@@ -171,6 +171,11 @@ linters:
             # excludes and prints a file that it rewrites.
             - go/format
             - go/parser
+            # The build constraints of go/build, with which the checker decides whether a build
+            # of another port includes a file that the load excludes, as gopls decides it, and the
+            # scanner of Go, with which it finds the excluded files that name a declaration.
+            - go/build$
+            - go/scanner
             # The import edits of goimports and its printer, with which a move adds, deletes and
             # rewrites the imports of the files that it changes and prints them in the groups of
             # goimports.

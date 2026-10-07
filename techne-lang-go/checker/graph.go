@@ -15,9 +15,12 @@ import (
 	"go.dokimi.dev/techne/core/source"
 )
 
-// listing is the template of go list that writes one package per line: the import path, the
-// directory, and the packages that the package and its tests import, separated by tabs.
-const listing = `{{.ImportPath}}	{{.Dir}}	{{join .Imports " "}} {{join .TestImports " "}} {{join .XTestImports " "}}`
+// listing is the template of go list that writes one package per line, with tabs between the
+// fields: the import path, the directory, the packages that the package and its tests import,
+// and then each Go file of the directory that the build constraints exclude, such as a file of
+// another operating system.
+const listing = `{{.ImportPath}}	{{.Dir}}	{{join .Imports " "}} {{join .TestImports " "}} ` +
+	`{{join .XTestImports " "}}	{{join .IgnoredGoFiles "\t"}}`
 
 // graph is the packages of the workspace and what each imports, from one go list of each plan.
 // It is the part of a load that names packages, without their syntax and their types.
@@ -28,6 +31,9 @@ type graph struct {
 	// import, by import path.
 	dirs    map[string]string
 	imports map[string][]string
+	// ignored are the absolute paths of the Go files that the build constraints exclude from
+	// each package, by import path.
+	ignored map[string][]string
 	// listed are the import paths that each plan lists, by the index of the plan. unlisted
 	// reports that go list failed for the plan, whose load then reports the failure.
 	listed   [][]string
@@ -44,7 +50,12 @@ func (e *Engine) graphOf(ctx context.Context, w walked, plans []plan) (*graph, e
 	if e.graph != nil && e.graph.stamp == w.stamp {
 		return e.graph, nil
 	}
-	g := &graph{stamp: w.stamp, dirs: map[string]string{}, imports: map[string][]string{}}
+	g := &graph{
+		stamp:   w.stamp,
+		dirs:    map[string]string{},
+		imports: map[string][]string{},
+		ignored: map[string][]string{},
+	}
 	for _, one := range plans {
 		args := append([]string{"list", "-e", "-f", listing}, one.patterns...)
 		out, err := goIn(ctx, one.dir, environ(one.alone), args...)
@@ -57,11 +68,14 @@ func (e *Engine) graphOf(ctx context.Context, w walked, plans []plan) (*graph, e
 		lines.Buffer(make([]byte, 0, 1<<16), 1<<24)
 		for lines.Scan() {
 			path, rest, _ := strings.Cut(lines.Text(), "\t")
-			dir, imported, _ := strings.Cut(rest, "\t")
-			if path == "" || dir == "" {
-				continue
-			}
+			dir, rest, _ := strings.Cut(rest, "\t")
+			imported, ignored, _ := strings.Cut(rest, "\t")
 			g.dirs[path], g.imports[path] = dir, strings.Fields(imported)
+			for name := range strings.SplitSeq(ignored, "\t") {
+				if name != "" {
+					g.ignored[path] = append(g.ignored[path], filepath.Join(dir, name))
+				}
+			}
 			listed = append(listed, path)
 		}
 		if err := lines.Err(); err != nil {
@@ -78,10 +92,33 @@ func (e *Engine) graphOf(ctx context.Context, w walked, plans []plan) (*graph, e
 // of them, directly or through another package of the workspace. A test that imports a package
 // is part of the package that it tests.
 func (g *graph) affected(full []string) []string {
-	changed := map[string]bool{}
-	for _, one := range full {
-		changed[filepath.Dir(one)] = true
+	return slices.Sorted(maps.Keys(g.importing(g.housing(dirsOf(full)))))
+}
+
+// housing returns the import paths of the packages in dirs, absolute paths.
+func (g *graph) housing(dirs []string) []string {
+	var out []string
+	for path, dir := range g.dirs {
+		if slices.Contains(dirs, dir) {
+			out = append(out, path)
+		}
 	}
+	return out
+}
+
+// dirsOf returns the directory of each file of full, absolute paths, in order.
+func dirsOf(full []string) []string {
+	out := make([]string, 0, len(full))
+	for _, one := range full {
+		out = append(out, filepath.Dir(one))
+	}
+	return out
+}
+
+// importing returns the import paths of seeds and of each package of the workspace that imports
+// one of them, directly or through another package of the workspace. A test that imports a
+// package is part of the package that it tests.
+func (g *graph) importing(seeds []string) map[string]bool {
 	importers := map[string][]string{}
 	for path, imported := range g.imports {
 		for _, one := range imported {
@@ -89,12 +126,9 @@ func (g *graph) affected(full []string) []string {
 		}
 	}
 	reached := map[string]bool{}
-	var queue []string
-	for path, dir := range g.dirs {
-		if changed[dir] {
-			reached[path] = true
-			queue = append(queue, path)
-		}
+	queue := slices.Clone(seeds)
+	for _, path := range seeds {
+		reached[path] = true
 	}
 	for len(queue) > 0 {
 		path := queue[0]
@@ -106,7 +140,46 @@ func (g *graph) affected(full []string) []string {
 			}
 		}
 	}
-	return slices.Sorted(maps.Keys(reached))
+	return reached
+}
+
+// excluded returns the absolute paths of the Go files that the build constraints exclude from
+// the packages of the workspace, such as a file of another operating system, each once, sorted.
+// The type checker reads none of them.
+func (g *graph) excluded() []string {
+	var out []string
+	for _, files := range g.ignored {
+		out = append(out, files...)
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// reaching returns the files of excluded, absolute paths, that can use a declaration of the
+// packages at seeds. The dependent packages are the packages of seeds and each package that
+// imports one of them, by the rule of [graph.importing]. A file can use the declaration when it
+// is in the directory of a dependent package or imports one:
+//
+//   - a file names a declaration of another package only through an import of that package
+//   - a file uses a method or a field of a type of another package through a value, which an
+//     expression of its own package or of a package that it imports can have
+//
+// dirs are the directories of the packages of seeds, which a package that go list does not
+// list, such as an external test package, has too.
+func (g *graph) reaching(excluded, seeds, dirs []string) []string {
+	reached := g.importing(seeds)
+	near := slices.Clone(dirs)
+	for path := range reached {
+		near = append(near, g.dirs[path])
+	}
+	var out []string
+	for _, full := range excluded {
+		if slices.Contains(near, filepath.Dir(full)) ||
+			slices.ContainsFunc(importsOf(full), func(path string) bool { return reached[path] }) {
+			out = append(out, full)
+		}
+	}
+	return out
 }
 
 // under returns the import paths of the packages of scope, a workspace path under root: the

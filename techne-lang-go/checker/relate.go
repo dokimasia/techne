@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/types"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -41,7 +42,10 @@ import (
 // scope has, and refuses an ID that two or more declarations have.
 //
 // An error of the program of the declaration lowers the answer when it is on a line that
-// writes the name of the declaration outside every site of the answer.
+// writes the name of the declaration outside every site of the answer. A Go file that the build
+// constraints of the load exclude, such as a file of another operating system, makes the answer
+// partial when it can contain a relation of the kind, by the rule of [Engine.leftOut], and a
+// caveat names it, because the type checker does not read it.
 func (e *Engine) Relate(
 	ctx context.Context,
 	req engine.Request,
@@ -60,12 +64,12 @@ func (e *Engine) Relate(
 	if !w.claims(scope) {
 		return engine.Result[sema.Relation]{Skipped: true, Completeness: trust.ScopeTotal}, nil
 	}
-	v, err := e.current(ctx, w)
+	v, g, err := e.viewed(ctx, w)
 	if err != nil {
 		return engine.Result[sema.Relation]{}, fmt.Errorf("%w: %w", engine.ErrDecline, err)
 	}
 	if kind == sema.ImportedBy {
-		return e.importers(v, req, of)
+		return e.importers(v, g, req, of)
 	}
 
 	subject, pkg, err := e.object(v, req, of)
@@ -77,6 +81,9 @@ func (e *Engine) Relate(
 		reason := ""
 		if covered != trust.ScopeTotal {
 			reason = ", and " + missing[0].Note
+		}
+		if left := inactive(e.within(e.kept(g.excluded(), req.Tests), scope)); len(left) > 0 {
+			reason += ", and " + left[0].Note
 		}
 		return engine.Result[sema.Relation]{}, fmt.Errorf("%w: checker: no declaration in %s matches %s%s",
 			engine.ErrDecline, scope, of, reason)
@@ -105,6 +112,10 @@ func (e *Engine) Relate(
 	}
 	tier, caveats := e.lowered(v, declared.Span.Path, lang.Writing(subject.Name(), lang.Spanned(sites...)))
 	covered, missing := v.partial(scope)
+	named, _ := v.placed(subject.Pos())
+	if left := inactive(e.leftOut(g, filepath.Dir(named), subject.Name(), kind, req.Tests)); len(left) > 0 {
+		covered, missing = trust.ScopePartial, append(missing, left...)
+	}
 	return engine.Result[sema.Relation]{
 		Items:        out,
 		Completeness: covered,

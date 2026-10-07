@@ -98,25 +98,26 @@ func Server() lsp.Server {
 // Register adds Go to r and its engines to c: the tree-sitter engine, and
 // for a workspace on disk gopls and the type checker of package checker.
 // The type checker serves the roles that need types on a machine without
-// gopls, because it runs the go command that builds the workspace.
+// gopls, because it runs the go command that builds the workspace, and it
+// adds the evidence of the build constraints to the answers of gopls, by the
+// rule of [Constrained]. A workspace in memory has no type checker, because
+// the checker runs the go command in the root directory.
 func Register(w lang.Workspace, r *lang.Registry, c *engine.Catalog) error {
-	checked, err := checking(w)
-	if err != nil {
-		return err
-	}
-	return engines.Register(w, r, c, Declaration(), Grammar(), Server(), checked...)
-}
-
-// checking returns the type checker of a workspace on disk. It returns no
-// engine for a workspace in memory, because the checker runs the go command
-// in the root directory.
-func checking(w lang.Workspace) ([]engine.Engine, error) {
 	if !w.OnDisk() {
-		return nil, nil
+		return engines.Register(w, r, c, Declaration(), Grammar(), Server())
 	}
 	checked, err := checker.New(w.Root, Declaration())
 	if err != nil {
-		return nil, fmt.Errorf("go: %w", err)
+		return fmt.Errorf("go: %w", err)
 	}
-	return []engine.Engine{checked}, nil
+	built, err := engines.For(w, Declaration(), Grammar(), Server(), checked)
+	if err != nil {
+		return err
+	}
+	for i, one := range built {
+		if served, is := one.(*lsp.Engine); is {
+			built[i] = Constrained(served, checked)
+		}
+	}
+	return r.Register(c, Declaration(), built...)
 }

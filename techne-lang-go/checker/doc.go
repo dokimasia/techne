@@ -51,6 +51,26 @@
 // rule of [go.dokimi.dev/techne/lang.Lowered]. Only an error on a line that can hide a use of
 // the name that the answer is about lowers it to indexed.
 //
+// # Build constraints
+//
+// The go command loads one build of each package: the Go files that the build constraints select
+// for the operating system, the architecture and the tags of the environment. A file that the
+// build constraints exclude, such as a file of another operating system, has no syntax and no
+// types in the load, and an answer states the files that it does not read:
+//
+//   - A relation is partial when an excluded file can contain one, and a caveat names the files.
+//     A file can contain a use of a declaration when it names the declaration. The file must
+//     also be in the directory of a dependent package or import one. The dependent packages are
+//     the package of the declaration and each package that imports a dependent package.
+//   - A verify is partial when its scope contains an excluded file, and a caveat names the files.
+//   - A check has a caveat that names the excluded files that can use a changed package.
+//   - [Engine.importers] reads the imports of an excluded file from its source, so the answer
+//     about the importers of a package contains them.
+//
+// [Engine.Unread], [Engine.Unrenamed], [Engine.Unverified] and [Engine.Unchecked] return the
+// caveats of the answers of gopls. gopls reads a file of the default build in that build, and a
+// file that the default build excludes in the build of another port that includes it.
+//
 // # Moves
 //
 // [Engine.Plan] moves a file into the package of another directory and rewrites the uses of the
@@ -87,6 +107,7 @@
 // Imports the standard library, core/diag, core/edit, core/engine, core/sema, core/source,
 // core/trust, lang, golang.org/x/tools/go/packages, golang.org/x/tools/go/ast/astutil and
 // golang.org/x/tools/imports. The loader runs the go command, so the files of a package and its
-// build constraints are the ones that the go command selects. A move edits imports with astutil
+// build constraints are the ones that the go command selects. go/build decides whether the
+// build of another port includes a file, as gopls decides it. A move edits imports with astutil
 // and prints a file with the printer of goimports, which does not add or delete an import.
 package checker

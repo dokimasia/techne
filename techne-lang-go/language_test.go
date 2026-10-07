@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -135,6 +136,26 @@ func TestLanguage(t *testing.T) {
 			assert.Contains(t, engines(t, c), "go/types", "the engines of a workspace on disk")
 		})
 
+		t.Run("serves gopls through Constrained for a workspace on disk", func(t *testing.T) {
+			t.Parallel()
+			if _, err := exec.LookPath(golang.Server().Command[0]); err != nil {
+				t.Skip("gopls is not on PATH, so the catalogue serves no engine of it")
+			}
+			root := t.TempDir()
+			c := engine.NewCatalog()
+			assert.NoError(t, golang.Register(lang.Workspace{FS: os.DirFS(root), Root: root}, lang.NewRegistry(), c),
+				"Register of a workspace on disk")
+			var served []engine.Engine
+			for _, one := range c.For(t.Context(), golang.Language, engine.RoleRelate) {
+				if one.Name() == golang.Server().Name {
+					served = append(served, one)
+				}
+			}
+			assert.Length(t, served, 1, "the engines of gopls")
+			_, bare := served[0].(*lsp.Engine)
+			assert.False(t, bare, "the engine of gopls is the engine of the server alone")
+		})
+
 		t.Run("leaves out the type checker for a workspace in memory", func(t *testing.T) {
 			t.Parallel()
 			c := engine.NewCatalog()
@@ -150,6 +171,15 @@ func TestLanguage(t *testing.T) {
 			err := golang.Register(lang.Workspace{FS: fstest.MapFS{}, Root: file},
 				lang.NewRegistry(), engine.NewCatalog())
 			assert.HasError(t, err, "Register of a root that is a file")
+			assert.Contains(t, err.Error(), "checker: go workspace root "+file+" is not a directory",
+				"the error of Register")
+		})
+
+		t.Run("returns the error of the parser for a workspace on disk without a filesystem", func(t *testing.T) {
+			t.Parallel()
+			err := golang.Register(lang.Workspace{Root: t.TempDir()}, lang.NewRegistry(), engine.NewCatalog())
+			assert.HasError(t, err, "Register of a workspace without a filesystem")
+			assert.Contains(t, err.Error(), "no filesystem to read from", "the error of Register")
 		})
 	})
 }

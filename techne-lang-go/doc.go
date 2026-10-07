@@ -8,13 +8,14 @@
 //   - its tree-sitter grammar and tags query
 //   - gopls, its language server
 //
-// A composition root calls [Register], which adds Go to a registry and its
-// engines to a catalogue. For a workspace on disk, Register also adds the
-// type checker of package checker.
+// A composition root calls [Register], which adds Go to a registry and its engines to a
+// catalogue. For a workspace on disk, Register also adds the type checker of package checker,
+// and serves gopls through [Constrained], which adds the evidence of the build constraints of
+// the workspace to the answers of gopls.
 //
 // # Dependency position
 //
-// Imports the standard library, core/engine, core/sema, core/source, lang,
-// lang/engines, lang/lsp, lang/treesitter, lang/go/checker and the
-// tree-sitter grammar of Go. It does not import another language module.
+// Imports the standard library, core/edit, core/engine, core/sema, core/source, core/trust,
+// lang, lang/engines, lang/lsp, lang/treesitter, lang/go/checker and the tree-sitter grammar of
+// Go. It does not import another language module.
 package golang
