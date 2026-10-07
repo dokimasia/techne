@@ -528,7 +528,9 @@ func (e *Engine) save(ctx context.Context, held *session, full string, at stamp)
 // nothing for a buffer with the same content. For a buffer with other content it sends
 // textDocument/didChange with the whole content, or for a [Server.Quiet] server the close and
 // the open of [Engine.reopen]. A replaced buffer drops the diagnostics that [reports.forget]
-// drops. An open drops the diagnostics that [reports.reopening] drops. The stamp is the zero
+// drops. An open drops the diagnostics that [reports.reopening] drops. sync records the buffer
+// of a failed replacement of a [Server.Quiet] server as released, by [reports.release], so the
+// next open drops the report that the server publishes for the close. The stamp is the zero
 // stamp for content that is not on disk.
 func (e *Engine) sync(
 	ctx context.Context,
@@ -550,6 +552,7 @@ func (e *Engine) sync(
 	case open && e.server.Quiet:
 		if err := e.reopen(ctx, held, full, content, was.version+1); err != nil {
 			delete(held.opened, full)
+			held.reports.release(uri.File(full))
 			return false, err
 		}
 		held.working.touched()

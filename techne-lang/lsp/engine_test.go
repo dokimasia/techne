@@ -4,6 +4,7 @@
 package lsp_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"maps"
@@ -90,6 +91,10 @@ func cutShort(caveats []trust.Caveat) bool {
 		return one.Code == trust.CaveatIndexWarming && strings.Contains(one.Note, preloadNote)
 	})
 }
+
+// reopenMargin is how long a test waits past the report of an open of a quiet server before it
+// reads the report.
+const reopenMargin = 300 * time.Millisecond
 
 // moduleContent is [lsptest.Content] followed by an export, which makes a file of TypeScript a
 // module.
@@ -414,6 +419,25 @@ func TestEngine(t *testing.T) {
 			recorded, err := os.ReadFile(log)
 			assert.NoError(t, err, "the test reads "+log)
 			assert.NotContains(t, string(recorded), protocol.MethodTextDocumentDidSave, "the messages of the server")
+		})
+
+		t.Run("reads a file again after a question ends while a quiet server replaces its buffer", func(t *testing.T) {
+			t.Parallel()
+			e, root := rooted(t, lsptest.Quiet, sample())
+			_, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify opens a.fake")
+			rewrite(t, root, "a.fake", lsptest.Faulty)
+
+			// The question ends before the server replies to the fence of the close of a.fake, which
+			// the server reads QuietClose after the close.
+			cut, cancel := context.WithTimeout(t.Context(), lsptest.QuietClose/2)
+			defer cancel()
+			_, _ = e.Verify(cut, engine.Request{Scope: "a.fake"}, nil)
+			time.Sleep(lsptest.QuietClose + lsptest.QuietDelay + reopenMargin)
+
+			got, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "Verify after the question that ended")
+			assert.Equal(t, mentions(got.Items, lsptest.Broken), 1, "the findings of a.fake")
 		})
 	})
 
