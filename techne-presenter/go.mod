@@ -3,13 +3,12 @@ module go.dokimi.dev/techne/presenter
 go 1.27.0
 
 require (
-	github.com/modelcontextprotocol/go-sdk v1.7.0
-	go.dokimi.dev/assert v0.0.0-20260901105745-9c4b8bd0fc5f
+	github.com/modelcontextprotocol/go-sdk v1.8.0
+	go.dokimi.dev/assert v0.0.0-20261006224851-603d74892a28
 	go.dokimi.dev/techne/tool v0.0.0
 )
 
 require (
-	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/segmentio/asm v1.1.3 // indirect
 	github.com/segmentio/encoding v0.5.4 // indirect
