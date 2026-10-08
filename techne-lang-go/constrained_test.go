@@ -34,6 +34,43 @@ const (
 	portedFile   = "p_plan9.go"
 )
 
+// pipeline declares the method runs, whose doc comment also writes runs as a verb, and
+// renamedPipeline is pipeline after the rename of runs to runEach.
+const (
+	pipeline = `package p
+
+// Pipeline is a list of steps.
+type Pipeline struct{ steps []func() }
+
+// runs calls each step, runs no step twice, and returns how many steps it runs.
+func (p *Pipeline) runs() int {
+	for _, step := range p.steps {
+		step()
+	}
+	return len(p.steps)
+}
+
+// Run runs the steps.
+func (p *Pipeline) Run() int { return p.runs() }
+`
+	renamedPipeline = `package p
+
+// Pipeline is a list of steps.
+type Pipeline struct{ steps []func() }
+
+// runEach calls each step, runs no step twice, and returns how many steps it runs.
+func (p *Pipeline) runEach() int {
+	for _, step := range p.steps {
+		step()
+	}
+	return len(p.steps)
+}
+
+// Run runs the steps.
+func (p *Pipeline) Run() int { return p.runEach() }
+`
+)
+
 // constrainedFiles returns a module whose root package declares P, with the files excludedFile,
 // which names Store, and portedFile, which uses P alone, and the file a.fake that the scripted
 // server describes.
@@ -150,6 +187,37 @@ func TestConstrained(t *testing.T) {
 			assert.NoError(t, err, "Plan of the rename of Old")
 			assert.Contains(t, changedIn(got.Items), source.Path(portedFile), "the files that the plan changes")
 			assert.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the plan")
+		})
+
+		t.Run("keeps the words of the doc comment that the plan of gopls also renames", func(t *testing.T) {
+			t.Parallel()
+			if _, err := exec.LookPath(golang.Server().Command[0]); err != nil {
+				t.Skip("gopls is not on PATH, so gopls plans no rename")
+			}
+			root := lsptest.Workspace(t, map[string]string{
+				"go.mod": "module example.com/p\n\ngo 1.24\n",
+				"p.go":   pipeline,
+			})
+			files, err := checker.New(root, golang.Declaration())
+			assert.NoError(t, err, "checker.New over "+root)
+			served, err := lsp.New(root, golang.Declaration(), golang.Server(), nil)
+			assert.NoError(t, err, "lsp.New over "+root)
+			lsptest.Cleanup(t, served)
+			got, err := golang.Constrained(served, files).(engine.Planner).Plan(
+				t.Context(),
+				engine.Request{Scope: "p.go"},
+				edit.RenameSymbol,
+				edit.Target{
+					Kind:   edit.TargetSymbol,
+					Symbol: sema.NewID(golang.Language, ".", "Pipeline.runs", sema.KindMethod),
+				},
+				edit.Args{edit.ArgNewName: "runEach"},
+			)
+			assert.NoError(t, err, "Plan of the rename of Pipeline.runs")
+			assert.Length(t, got.Items, 1, "the changes of the rename")
+			renamed, err := edit.Apply([]byte(pipeline), got.Items[0].Edits)
+			assert.NoError(t, err, "Apply of the plan")
+			assert.Equal(t, string(renamed), renamedPipeline, "the file after the rename")
 		})
 
 		t.Run("returns the plan of a move as the server returns it", func(t *testing.T) {

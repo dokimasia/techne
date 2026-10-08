@@ -23,8 +23,8 @@ import (
 // relations, the plans, the verify and the check of the server:
 //
 //   - a relation gets the caveat of [checker.Engine.Unread], and is partial with it
-//   - the plan of a rename gets the changes and the caveat of [checker.Engine.Renamed], and is
-//     partial with the caveat
+//   - the plan of a rename keeps the edits that [checker.Engine.Referenced] keeps, gets the
+//     changes and the caveat of [checker.Engine.Renamed], and is partial with the caveat
 //   - a verify gets the caveat of [checker.Engine.Unverified], and is partial with it
 //   - a check gets the caveat of [checker.Engine.Unchecked], and keeps its coverage, because it
 //     checks every file of the change
@@ -59,11 +59,12 @@ func (c constrained) Relate(
 	return partly(got, left), nil
 }
 
-// Plan returns the plan of the server for op. The plan of a rename gets the changes of
-// [checker.Engine.Renamed], which rename the uses of the declaration in the files that the build
-// constraints exclude from the build of the server. It gets the caveat of the excluded files
-// whose uses stay as they are by the rules of [constrained.Relate], and is partial with it. The
-// write path refuses such a plan.
+// Plan returns the plan of the server for op. The plan of a rename keeps the edits of the server
+// that [checker.Engine.Referenced] keeps, which leaves the other words of a comment as they
+// are. It gets the changes of [checker.Engine.Renamed], which rename the uses of the
+// declaration in the files that the build constraints exclude from the build of the server. It
+// gets the caveat of the excluded files whose uses it leaves as they are by the rules of
+// [constrained.Relate], and is partial with it. The write path refuses such a plan.
 func (c constrained) Plan(
 	ctx context.Context,
 	req engine.Request,
@@ -76,7 +77,7 @@ func (c constrained) Plan(
 		return got, err
 	}
 	renamed, left, _ := c.files.Renamed(ctx, target, strings.TrimSpace(args[edit.ArgNewName]))
-	got.Items = append(got.Items, renamed...)
+	got.Items = append(c.files.Referenced(got.Items), renamed...)
 	return partly(got, left), nil
 }
 

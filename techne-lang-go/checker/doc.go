@@ -77,6 +77,17 @@
 // of the declaration in the build of a port that includes it, and returns the changes that rename
 // its uses there, with the caveat of the files that it cannot rename.
 //
+// # Renames
+//
+// gopls renames each word of the doc comment of a renamed declaration that equals the old name,
+// also a word of its text. [Engine.Referenced] keeps the edits of the plan of gopls that rewrite
+// a reference, and leaves out every other edit in a comment. A reference is one of these:
+//
+//   - a name of the code
+//   - the last name of a doc link
+//   - the word that starts the doc comment of the declaration, which the Go convention makes
+//     its name
+//
 // # Moves
 //
 // [Engine.Plan] moves a file into the package of another directory and rewrites the uses of the
