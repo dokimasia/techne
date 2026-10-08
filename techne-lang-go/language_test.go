@@ -15,9 +15,11 @@ import (
 	"testing/fstest"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 	assertfiles "go.dokimi.dev/assert/files"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
+	"go.dokimi.dev/techne/core/trust"
 	"go.dokimi.dev/techne/lang"
 	golang "go.dokimi.dev/techne/lang/go"
 	"go.dokimi.dev/techne/lang/lsp"
@@ -163,6 +165,31 @@ func TestLanguage(t *testing.T) {
 				}
 			}
 			assert.Equal(t, methods, []string{"Store.Get", "Cache.Get"}, "the qualified names of the methods")
+		})
+
+		t.Run("outlines the declarations after a method with type parameters", func(t *testing.T) {
+			t.Parallel()
+			fsys := fstest.MapFS{"generic.go": {Data: []byte("package generic\n\n" +
+				"type Box[T any] struct{ v T }\n\n" +
+				"func (b Box[T]) Map[U any](f func(T) U) Box[U] { return Box[U]{f(b.v)} }\n\n" +
+				"func After() {}\n")}}
+			e, err := treesitter.New(fsys, golang.Declaration(), golang.Grammar())
+			assert.NoError(t, err, "New of the Go engine")
+			t.Cleanup(e.Close)
+			got, err := e.Outline(t.Context(), engine.Request{Scope: "generic.go"})
+			assert.NoError(t, err, "Outline of generic.go")
+			var methods, functions []string
+			for _, one := range got.Items {
+				switch one.Kind {
+				case sema.KindMethod:
+					methods = append(methods, one.ID.Name())
+				case sema.KindFunction:
+					functions = append(functions, one.ID.Name())
+				}
+			}
+			expect.Equal(t, methods, []string{"Box.Map"}, "the methods of generic.go")
+			expect.Equal(t, functions, []string{"After"}, "the functions of generic.go")
+			expect.Equal(t, got.Completeness, trust.ScopeTotal, "the completeness of the outline")
 		})
 	})
 

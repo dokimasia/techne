@@ -84,3 +84,6 @@ replace go.dokimi.dev/techne/presenter => ./techne-presenter
 replace go.dokimi.dev/techne/service => ./techne-service
 
 replace go.dokimi.dev/techne/tool => ./techne-tool
+
+// The fork of the Go grammar parses a method with type parameters.
+replace github.com/tree-sitter/tree-sitter-go => github.com/dokimasia/tree-sitter-go v0.0.0-20261008091630-10115b8fc25d
