@@ -43,8 +43,11 @@ type Reported struct {
 	Message  string `json:"message"`
 	Path     string `json:"path"`
 	Line     int    `json:"line"`
-	At       string `json:"at,omitempty"`
-	Fix      []Fix  `json:"fix,omitempty"`
+	// Column is the column of the issue in bytes, counted from one, which tells apart two issues
+	// with one message on one line, as two uses of one undefined name are.
+	Column int    `json:"column"`
+	At     string `json:"at,omitempty"`
+	Fix    []Fix  `json:"fix,omitempty"`
 }
 
 // Fix is one range that a remedy writes: its file, the line on which it starts, counted from
@@ -74,7 +77,7 @@ func (o VerifyOutput) Render() string {
 	}
 	fmt.Fprintf(&b, "%s — %s\n", about, plural(len(o.Items), "issue", "issues"))
 	for _, one := range o.Items {
-		fmt.Fprintf(&b, "\n%s:%d  %s", one.Path, one.Line, one.Severity)
+		fmt.Fprintf(&b, "\n%s:%d:%d  %s", one.Path, one.Line, one.Column, one.Severity)
 		if one.Code != "" {
 			fmt.Fprintf(&b, "  %s", coded(one.Source, one.Code))
 		}
@@ -165,6 +168,7 @@ func reportedIn(found []edit.Finding, limit int) []Reported {
 			Message:  one.Diagnostic.Message,
 			Path:     string(one.Diagnostic.Span.Path),
 			Line:     one.Diagnostic.Span.Start.Line + 1,
+			Column:   one.Diagnostic.Span.Start.Column + 1,
 			At:       one.Diagnostic.Snippet,
 			Fix:      fixes(one.Fix),
 		})
@@ -188,5 +192,5 @@ func fixes(changes []edit.Change) []Fix {
 }
 
 const verifyDescription = "PREFER OVER running the build or the linter in a shell. " +
-	"It runs the checks of a language over a scope and returns each issue with its line and, " +
-	"where one is obvious, its fix."
+	"It runs the checks of a language over a scope and returns each issue with its line and its " +
+	"column and, where one is obvious, its fix."

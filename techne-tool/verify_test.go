@@ -23,7 +23,7 @@ func gating() *reads {
 			Diagnostic: diag.Diagnostic{
 				Severity: diag.SeverityWarning, Code: "stringsseq", Source: "modernize",
 				Message: "prefer FieldsSeq",
-				Span:    source.Span{Path: "a.fx", Start: source.Position{Line: 227}},
+				Span:    source.Span{Path: "a.fx", Start: source.Position{Line: 227, Column: 18}},
 				Snippet: "for part := range strings.Fields(x) {",
 			},
 			Fix: []edit.Change{{
@@ -96,6 +96,12 @@ func TestVerify(t *testing.T) {
 			assert.Equal(t, got.Items[0].Line, 228, "the line")
 		})
 
+		t.Run("returns the column of an issue counted from one", func(t *testing.T) {
+			t.Parallel()
+			got := verified(t, `{"scope":"a.fx"}`)
+			assert.Equal(t, got.Items[0].Column, 19, "the column")
+		})
+
 		t.Run("returns the text of the one obvious fix", func(t *testing.T) {
 			t.Parallel()
 			got := verified(t, `{"scope":"a.fx"}`)
@@ -142,9 +148,20 @@ func TestVerify(t *testing.T) {
 			t.Parallel()
 			got := verified(t, `{"scope":"a.fx"}`)
 			assert.ContainsInOrder(t, got.Render(), []string{
-				"a.fx — 2 issues", "a.fx:228", "warning", "modernize.stringsseq",
+				"a.fx — 2 issues", "a.fx:228:19", "warning", "modernize.stringsseq",
 				"prefer FieldsSeq", "strings.Fields(x)", "fix available",
 			}, "the render")
+		})
+
+		t.Run("writes the column of each of two issues on one line", func(t *testing.T) {
+			t.Parallel()
+			got := tool.VerifyOutput{Scope: tool.Scope{Path: "a.fx"}, Items: []tool.Reported{
+				{Severity: "error", Message: "undefined: missing", Path: "a.fx", Line: 4, Column: 9},
+				{Severity: "error", Message: "undefined: missing", Path: "a.fx", Line: 4, Column: 19},
+			}}.Render()
+			assert.That(t, got).
+				Contains("a.fx:4:9  error", "the render of the first issue").
+				Contains("a.fx:4:19  error", "the render of the second issue")
 		})
 	})
 }
