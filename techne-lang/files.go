@@ -23,27 +23,39 @@ type Files struct {
 	Unread []source.Path
 }
 
-// Walk returns the files in scope whose extension is one of extensions.
-// The scope is a file or a directory, relative to the root of fsys.
-//
-// Walk does not enter a directory that [Vendored] names or that the
-// .gitignore files of the workspace exclude, unless that directory is the
-// scope. It returns [GeneratedError] when the .gitignore files exclude the
-// scope, and an error that wraps
-// [go.dokimi.dev/techne/core/engine.ErrRefuse] when the scope does not
-// exist. A file scope with an extension outside extensions returns no files.
+// Walk returns the files in scope whose extension is one of extensions, by
+// the rules of [Visit]. A file scope with an extension outside extensions
+// returns no files. Walk returns the errors of Visit.
 func Walk(fsys fs.FS, scope source.Path, extensions []string) (Files, error) {
-	name, info, rules, err := located(fsys, scope)
+	var out Files
+	claimed := func(p string) bool { return Claims(p, extensions) }
+	err := Visit(fsys, scope, claimed, func(p string, d fs.DirEntry) {
+		if info, ok := Info(fsys, p, d); ok {
+			out.add(source.Path(p), info.Size())
+		}
+	})
 	if err != nil {
 		return Files{}, err
 	}
+	slices.Sort(out.Read)
+	slices.Sort(out.Unread)
+	return out, nil
+}
 
-	var out Files
-	if !info.IsDir() {
-		if Claims(name, extensions) {
-			out.add(source.Path(name), info.Size())
-		}
-		return out, nil
+// Visit calls visit with the path and the entry of each file in scope that
+// wanted reports true for. The scope is a file or a directory, relative to
+// the root of fsys, and so is each path.
+//
+// Visit does not enter a directory that [Vendored] names or that the
+// .gitignore files of the workspace exclude, unless that directory is the
+// scope. It leaves out a file that those .gitignore files exclude, and calls
+// wanted before it reads them for the path. It returns [GeneratedError] when the
+// .gitignore files exclude the scope, and an error that wraps
+// [go.dokimi.dev/techne/core/engine.ErrRefuse] when the scope does not exist.
+func Visit(fsys fs.FS, scope source.Path, wanted func(p string) bool, visit func(p string, d fs.DirEntry)) error {
+	name, _, rules, err := located(fsys, scope)
+	if err != nil {
+		return err
 	}
 
 	err = fs.WalkDir(fsys, name, func(p string, d fs.DirEntry, err error) error {
@@ -56,20 +68,16 @@ func Walk(fsys fs.FS, scope source.Path, extensions []string) (Files, error) {
 			}
 			rules.read(fsys, p)
 			return nil
-		case !Claims(p, extensions) || rules.skips(p, false):
+		case !wanted(p) || rules.skips(p, false):
 			return nil
 		}
-		if size, ok := sizeOf(fsys, p, d); ok {
-			out.add(source.Path(p), size)
-		}
+		visit(p, d)
 		return nil
 	})
 	if err != nil {
-		return Files{}, fmt.Errorf("lang: walk %q: %w", scope, err)
+		return fmt.Errorf("lang: walk %q: %w", scope, err)
 	}
-	slices.Sort(out.Read)
-	slices.Sort(out.Unread)
-	return out, nil
+	return nil
 }
 
 // Claims reports whether the extension of p is one of extensions. It reads
@@ -92,7 +100,7 @@ func (f *Files) add(p source.Path, size int64) {
 // it, and returns the result with the FileInfo of scope. It returns
 // GeneratedError when those files exclude scope, and an error that wraps
 // engine.ErrRefuse when scope does not exist, because the caller can name a
-// path that exists. Walk and Readable call it before they apply their own
+// path that exists. Visit and Readable call it before they apply their own
 // rules.
 func located(fsys fs.FS, scope source.Path) (string, fs.FileInfo, *ignores, error) {
 	name := path.Clean(string(scope))
@@ -113,19 +121,19 @@ func located(fsys fs.FS, scope source.Path) (string, fs.FileInfo, *ignores, erro
 	return name, info, rules, nil
 }
 
-// sizeOf returns the size of the file at p, following a symbolic link. It
-// reports false for:
+// Info returns the FileInfo of the file at p in fsys, whose entry a walk
+// returned as d, and follows a symbolic link. It reports false for:
 //
 //   - a link to a directory
 //   - a link to nothing
 //   - a file removed during the walk
-func sizeOf(fsys fs.FS, p string, d fs.DirEntry) (int64, bool) {
+func Info(fsys fs.FS, p string, d fs.DirEntry) (fs.FileInfo, bool) {
 	info, err := d.Info()
 	if err == nil && info.Mode()&fs.ModeSymlink != 0 {
 		info, err = fs.Stat(fsys, p)
 	}
 	if err != nil || info.IsDir() {
-		return 0, false
+		return nil, false
 	}
-	return info.Size(), true
+	return info, true
 }

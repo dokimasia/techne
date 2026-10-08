@@ -129,8 +129,8 @@
 // [Engine.Resolve] and [Engine.Relate] ask a new one once. A new server that has stopped
 // answering too declines.
 //
-// The session records the diagnostics that a server publishes and its progress jobs when it
-// reads each message, before a handler of the connection runs. A report is recorded before the
+// The session records the diagnostics that a server publishes, its progress jobs and its file
+// watchers when it reads each message, before a handler of the connection runs. A report is recorded before the
 // message after it, such as the end of the job that produced the report or the reply to a later
 // request.
 //
@@ -158,6 +158,16 @@
 // buffer whose file is gone. It compares the size and the modification time of each file, and
 // reads a file only when one of them changed. A server that declares [Server.DiskCheck] also
 // receives textDocument/didSave for a file that changed on disk since its last check.
+//
+// A server reads a file without a buffer from disk, and reads it again when the client reports
+// a change of the file. The server can register watchers of such files with
+// client/registerCapability, as gopls registers watchers of its Go files and of its go.mod,
+// go.sum and go.work files. The session records each registration and walks the workspace for
+// the files that the watchers match. Before each question the engine walks the workspace again
+// and sends workspace/didChangeWatchedFiles with the creation, the change and the deletion of
+// each such file without a buffer, of the kinds that its watchers name. The walk leaves out the
+// directories that [lang.Vendored] names and the paths that .gitignore excludes. A walk of the
+// 13,445 Go and module files of kubernetes takes 33 to 38 milliseconds warm.
 //
 // The diagnostics of a buffer are dropped when the engine replaces or releases the buffer. A
 // server can publish a report of a file after the release. The next open of the file drops that
@@ -189,7 +199,8 @@
 // # Dependency position
 //
 // Imports the standard library, core/diag, core/edit, core/engine, core/sema, core/source,
-// core/trust, lang, and the protocol binding at go.lsp.dev: protocol, jsonrpc2 and uri. The
-// binding decodes the union types of the protocol, such as a definition that is one location,
-// a list of locations or a list of links.
+// core/trust, lang, the protocol binding at go.lsp.dev: protocol, jsonrpc2 and uri, and
+// github.com/bmatcuk/doublestar/v4. The binding decodes the union types of the protocol, such as
+// a definition that is one location, a list of locations or a list of links. doublestar matches
+// the glob patterns of the file watchers, whose ** and {a,b} path.Match does not take.
 package lsp

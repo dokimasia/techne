@@ -11,6 +11,7 @@ require (
 )
 
 require (
+	github.com/bmatcuk/doublestar/v4 v4.10.2 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260623181947-01eb4420fa68 // indirect
 	github.com/mattn/go-pointer v0.0.1 // indirect
 	go.lsp.dev/jsonrpc2 v1.0.1 // indirect

@@ -398,12 +398,15 @@ func (e *Engine) reading() func() {
 
 // current sends the server the content of every file whose buffer is stale, and releases
 // every buffer whose file is gone. It reads a file only when its stamp differs from the stamp
-// of its buffer.
+// of its buffer. It then sends workspace/didChangeWatchedFiles with the creation, the change
+// and the deletion on disk of each file without a buffer that the server watches, by
+// [watching.changes].
 func (e *Engine) current(ctx context.Context, held *session) {
 	e.showing.Lock()
 	defer e.showing.Unlock()
 
-	for full, buffer := range held.buffers() {
+	buffers := held.buffers()
+	for full, buffer := range buffers {
 		info, err := os.Stat(full)
 		if err != nil {
 			e.release(ctx, held, full)
@@ -418,6 +421,9 @@ func (e *Engine) current(ctx context.Context, held *session) {
 			continue
 		}
 		_ = e.told(ctx, held, full, content, stamped)
+	}
+	if changes := held.watched.changes(buffers); len(changes) > 0 {
+		_ = held.asks.DidChangeWatchedFiles(ctx, &protocol.DidChangeWatchedFilesParams{Changes: changes})
 	}
 }
 

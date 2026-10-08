@@ -182,6 +182,19 @@ const (
 	// client sends workspace/didChangeWatchedFiles. jdtls refuses a rename this way.
 	Watches Mode = "watches"
 
+	// Watching diagnoses a document against its own copy of b.fake, as gopls type-checks a
+	// package against its own copy of a file without a buffer. It reads every file with the
+	// [Extension] suffix at initialize, and reads a file again only at an event of
+	// workspace/didChangeWatchedFiles. Its report of a document adds an error on line 0 for each
+	// occurrence of [Broken] in its copy of b.fake.
+	//
+	// It registers three watchers at initialize: one of every file with the [Extension] suffix,
+	// one of the creation of a file with the [Fresh] suffix, as a pattern relative to a URI, and
+	// one of every file with the [Dropped] suffix, as a pattern relative to a workspace folder.
+	// It unregisters the watcher of the [Dropped] files at the first event that it receives.
+	// [RecordRequests] records each event as a line that starts with [Watched].
+	Watching Mode = "watching"
+
 	// Opened computes references from its buffers or else from disk, and renames only in its
 	// buffers. It reports the first use of Store in b.fake, and renames that use only while it
 	// has a buffer of b.fake. metals renames this way.
@@ -442,6 +455,19 @@ const DiagnosisTime = 300 * time.Millisecond
 // DiagnosisPrefix starts the title of each diagnosis of the Diagnoses and DiagnosisStuck modes,
 // as diagnosing starts the title of each diagnosis of gopls.
 const DiagnosisPrefix = "diagnosing"
+
+// Fresh is the suffix of the files whose creation alone the Watching mode watches, and Dropped
+// the suffix of the files whose watcher the Watching mode unregisters at its first event.
+const (
+	Fresh   = ".fresh"
+	Dropped = ".dropped"
+)
+
+// Watched starts the line that [RecordRequests] writes for each event of
+// workspace/didChangeWatchedFiles that the Watching mode receives. The line goes on with the
+// type of the event and the path of the file under the workspace root, as in
+// "watched changed b.fake".
+const Watched = "watched"
 
 // Dying is the line that the Dies and DiesLate modes write to stderr before they exit.
 const Dying = "lsptest: the scripted server exits during initialize"

@@ -5,6 +5,7 @@ package lang_test
 
 import (
 	"bytes"
+	"errors"
 	"io/fs"
 	"os"
 	"path"
@@ -59,6 +60,20 @@ func (c *counting) Open(name string) (fs.File, error) {
 	c.opens[name]++
 	c.mu.Unlock()
 	return c.FS.Open(name)
+}
+
+// errUnreadable is the error of the directory that [unreadable] cannot read.
+var errUnreadable = errors.New("lang_test: the directory cannot be read")
+
+// unreadable is a filesystem whose directory sub cannot be read.
+type unreadable struct{ fstest.MapFS }
+
+// ReadDir returns errUnreadable for the directory sub, and the entries of any other directory.
+func (u unreadable) ReadDir(name string) ([]fs.DirEntry, error) {
+	if name == "sub" {
+		return nil, errUnreadable
+	}
+	return u.MapFS.ReadDir(name)
 }
 
 func TestFiles(t *testing.T) {
@@ -120,6 +135,15 @@ func TestFiles(t *testing.T) {
 			assert.Equal(t, got, lang.Files{Read: []source.Path{"small.fx"}, Unread: []source.Path{"big.fx"}}, "files")
 		})
 
+		t.Run("returns the files larger than Largest in byte order", func(t *testing.T) {
+			t.Parallel()
+			big := bytes.Repeat([]byte("x"), lang.Largest+1)
+			fsys := fstest.MapFS{"a.fx": {Data: big}, "a/b.fx": {Data: big}}
+			got, err := lang.Walk(fsys, ".", claimed)
+			assert.NoError(t, err, "Walk")
+			assert.Equal(t, got.Unread, []source.Path{"a.fx", "a/b.fx"}, "Unread")
+		})
+
 		t.Run("returns a file of Largest bytes in Read", func(t *testing.T) {
 			t.Parallel()
 			fsys := fstest.MapFS{"edge.fx": {Data: bytes.Repeat([]byte("x"), lang.Largest)}}
@@ -174,6 +198,117 @@ func TestFiles(t *testing.T) {
 					assert.Equal(t, opens, 1, name)
 				}
 			}
+		})
+	})
+
+	t.Run("Visit", func(t *testing.T) {
+		t.Parallel()
+
+		unclaimed := func(p string) bool { return !lang.Claims(p, claimed) }
+		tests := []struct {
+			name string
+			give source.Path
+			want []string
+		}{
+			{
+				name: "calls visit for each file under a directory that wanted selects",
+				give: ".",
+				want: []string{"Makefile", "b.txt", "pkg/d.other"},
+			},
+			{name: "calls visit for a file scope that wanted selects", give: "b.txt", want: []string{"b.txt"}},
+			{name: "calls visit for no file of a file scope that wanted leaves out", give: "a.fx"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				var got []string
+				err := lang.Visit(tree(), tt.give, unclaimed, func(p string, _ fs.DirEntry) { got = append(got, p) })
+				assert.NoError(t, err, "Visit")
+				assert.Equal(t, got, tt.want, "the visited paths")
+			})
+		}
+
+		t.Run("leaves out a file that a .gitignore excludes", func(t *testing.T) {
+			t.Parallel()
+			fsys := fstest.MapFS{
+				".gitignore": {Data: []byte("*.gen.fx\n")},
+				"a.fx":       {Data: []byte("a")},
+				"b.gen.fx":   {Data: []byte("b")},
+			}
+			var got []string
+			err := lang.Visit(fsys, ".", func(string) bool { return true },
+				func(p string, _ fs.DirEntry) { got = append(got, p) })
+			assert.NoError(t, err, "Visit")
+			assert.Equal(t, got, []string{".gitignore", "a.fx"}, "the visited paths")
+		})
+
+		t.Run("refuses a scope that does not exist", func(t *testing.T) {
+			t.Parallel()
+			err := lang.Visit(tree(), "nowhere", unclaimed, func(string, fs.DirEntry) {})
+			assert.ErrorIs(t, err, engine.ErrRefuse, "Visit")
+		})
+
+		t.Run("returns the error of a directory that it cannot read", func(t *testing.T) {
+			t.Parallel()
+			fsys := unreadable{fstest.MapFS{"a.fx": {Data: []byte("a")}, "sub/b.fx": {Data: []byte("b")}}}
+			err := lang.Visit(fsys, ".", unclaimed, func(string, fs.DirEntry) {})
+			assert.ErrorIs(t, err, errUnreadable, "Visit")
+		})
+	})
+
+	t.Run("Info", func(t *testing.T) {
+		t.Parallel()
+
+		// linked returns the entry of name in a directory with a file of three bytes, a link to
+		// it, a subdirectory, a link to the subdirectory and a link to nothing.
+		linked := func(t *testing.T, name string) (fs.FS, fs.DirEntry) {
+			t.Helper()
+			dir := t.TempDir()
+			assert.NoError(t, os.WriteFile(filepath.Join(dir, "file.fx"), []byte("abc"), 0o600), "write")
+			assert.NoError(t, os.Mkdir(filepath.Join(dir, "sub"), 0o700), "mkdir")
+			assert.NoError(t, os.Symlink(filepath.Join(dir, "file.fx"), filepath.Join(dir, "to-file.fx")), "symlink")
+			assert.NoError(t, os.Symlink(filepath.Join(dir, "sub"), filepath.Join(dir, "to-sub.fx")), "symlink")
+			assert.NoError(t, os.Symlink(filepath.Join(dir, "none"), filepath.Join(dir, "to-none.fx")), "symlink")
+			fsys := os.DirFS(dir)
+			entries, err := fs.ReadDir(fsys, ".")
+			assert.NoError(t, err, "ReadDir")
+			for _, one := range entries {
+				if one.Name() == name {
+					return fsys, one
+				}
+			}
+			t.Fatalf("the directory has no entry %s", name)
+			return nil, nil
+		}
+
+		t.Run("returns the FileInfo of a file", func(t *testing.T) {
+			t.Parallel()
+			fsys, entry := linked(t, "file.fx")
+			info, ok := lang.Info(fsys, "file.fx", entry)
+			assert.True(t, ok, "Info of a file")
+			assert.Equal(t, info.Size(), int64(3), "the size of the file")
+		})
+
+		t.Run("returns the FileInfo of the target of a link", func(t *testing.T) {
+			t.Parallel()
+			fsys, entry := linked(t, "to-file.fx")
+			info, ok := lang.Info(fsys, "to-file.fx", entry)
+			assert.True(t, ok, "Info of a link to a file")
+			assert.Equal(t, info.Size(), int64(3), "the size of the target")
+		})
+
+		t.Run("reports false for a link to a directory", func(t *testing.T) {
+			t.Parallel()
+			fsys, entry := linked(t, "to-sub.fx")
+			_, ok := lang.Info(fsys, "to-sub.fx", entry)
+			assert.False(t, ok, "Info of a link to a directory")
+		})
+
+		t.Run("reports false for a link to nothing", func(t *testing.T) {
+			t.Parallel()
+			fsys, entry := linked(t, "to-none.fx")
+			_, ok := lang.Info(fsys, "to-none.fx", entry)
+			assert.False(t, ok, "Info of a link to nothing")
 		})
 	})
 

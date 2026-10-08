@@ -23,10 +23,12 @@
 // # Files
 //
 // [Walk] returns the files of a scope that a language claims, with the
-// files larger than [Largest] in a separate list. It skips the directories
-// [Vendored] names and the paths the .gitignore files of the workspace
-// exclude, by the rules of gitignore(5). [Readable] applies the .gitignore
-// rules and the size limit to one path. [Indentation] returns how a file
+// files larger than [Largest] in a separate list. [Visit] walks a scope by
+// the same rules for files that a function of the caller selects, and
+// [Info] returns the FileInfo of a file of such a walk. Both skip the
+// directories [Vendored] names and the paths the .gitignore files of the
+// workspace exclude, by the rules of gitignore(5). [Readable] applies the
+// .gitignore rules and the size limit to one path. [Indentation] returns how a file
 // indents: with tabs, or with the number of spaces of one level.
 // [Outside] reports whether a workspace path leaves the workspace, and
 // [Moving] checks the two ends of the move of a file for every engine that
@@ -35,7 +37,7 @@
 // A request that the caller can correct is refused with
 // [go.dokimi.dev/techne/core/engine.ErrRefuse]:
 //
-//   - Walk and Readable refuse a path that does not exist.
+//   - Walk, Visit and Readable refuse a path that does not exist.
 //   - [GeneratedError] wraps ErrRefuse for a path that the .gitignore files
 //     exclude.
 //   - [Offset] converts a line and a column to an offset, and refuses a

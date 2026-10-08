@@ -71,6 +71,7 @@ type session struct {
 
 	reports  *reports
 	working  *working
+	watched  *watching
 	offering *asking
 
 	// ends makes stop run once.
@@ -88,6 +89,7 @@ func start(ctx context.Context, declared Server, root string) (*session, error) 
 		opened:   map[string]sent{},
 		reports:  newReports(declared.DiskCheck != ""),
 		working:  newWorking(declared.DiskCheck, declared.Diagnosis),
+		watched:  newWatching(root),
 		offering: &asking{},
 	}
 
@@ -126,7 +128,10 @@ func start(ctx context.Context, declared Server, root string) (*session, error) 
 		root: root, settings: declared.Settings, indentation: declared.Indentation, offering: held.offering,
 	}
 	stream := ordered{
-		Stream: jsonrpc2.NewStream(pipes{out: out, in: in}), reports: held.reports, working: held.working,
+		Stream:  jsonrpc2.NewStream(pipes{out: out, in: in}),
+		reports: held.reports,
+		working: held.working,
+		watched: held.watched,
 	}
 	_, held.conn, _ = protocol.NewClient(context.WithoutCancel(ctx), client, stream)
 	held.asks = protocol.ServerDispatcher(timed{Conn: held.conn})
@@ -169,11 +174,11 @@ type launch struct {
 	err   error
 }
 
-// ordered is the stream of a session. It records the diagnostics that the server publishes
-// and the work-done progress jobs that it reports when it reads each message, before the
-// connection passes the message to a handler. So the records follow the order of the stream:
-// a report is kept before the next message is read, such as the reply to a later request or
-// the end of the job that produced the report.
+// ordered is the stream of a session. It records the diagnostics that the server publishes,
+// the work-done progress jobs that it reports and the files that it watches when it reads each
+// message, before the connection passes the message to a handler. So the records follow the
+// order of the stream: a report is kept before the next message is read, such as the reply to a
+// later request or the end of the job that produced the report.
 //
 // A handler cannot record them in that order. go.lsp.dev/protocol v1.0.1 wraps every handler
 // in jsonrpc2.AsyncHandler, which releases the reader before the handler runs, so the handlers
@@ -182,11 +187,14 @@ type ordered struct {
 	jsonrpc2.Stream
 	reports *reports
 	working *working
+	watched *watching
 }
 
 // Read returns the next message of the stream. It first records a publishDiagnostics
-// notification, a $/progress notification and a window/workDoneProgress/create request. A
-// message whose params do not decode is returned without a record.
+// notification, a $/progress notification, a window/workDoneProgress/create request, and a
+// client/registerCapability and a client/unregisterCapability request. The record of a
+// registration of file watchers walks the workspace, by [watching.register]. A message whose
+// params do not decode is returned without a record.
 //
 // ordered does not implement the frame reader of the stream it wraps, so the connection reads
 // every message through Read.
@@ -211,6 +219,16 @@ func (o ordered) Read(ctx context.Context) (jsonrpc2.Message, int64, error) {
 		var params protocol.WorkDoneProgressCreateParams
 		if protocol.Unmarshal(request.Params(), &params) == nil {
 			o.working.began(tokened(params.Token))
+		}
+	case protocol.MethodClientRegisterCapability:
+		var params protocol.RegistrationParams
+		if protocol.Unmarshal(request.Params(), &params) == nil {
+			o.watched.register(&params)
+		}
+	case protocol.MethodClientUnregisterCapability:
+		var params protocol.UnregistrationParams
+		if protocol.Unmarshal(request.Params(), &params) == nil {
+			o.watched.unregister(&params)
 		}
 	}
 	return msg, n, err

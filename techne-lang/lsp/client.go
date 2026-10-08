@@ -43,12 +43,14 @@ type answers struct {
 	offering    *asking
 }
 
-// RegisterCapability accepts a registration and does not store it, because the roles read the
-// capabilities of initialize. A refusal would be an error response, which some servers treat
-// as a failed start.
+// RegisterCapability accepts a registration. The roles read the capabilities of initialize, and
+// the stream of the session records a registration of file watchers before this handler runs,
+// as [ordered.Read] states. A refusal would be an error response, which some servers treat as a
+// failed start.
 func (answers) RegisterCapability(context.Context, *protocol.RegistrationParams) error { return nil }
 
-// UnregisterCapability accepts the removal of a registration.
+// UnregisterCapability accepts the removal of a registration, which the stream of the session
+// records as it records a registration.
 func (answers) UnregisterCapability(context.Context, *protocol.UnregistrationParams) error {
 	return nil
 }

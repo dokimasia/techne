@@ -118,6 +118,9 @@ linters:
             - go.lsp.dev/protocol
             - go.lsp.dev/jsonrpc2
             - go.lsp.dev/uri
+            # The glob patterns of the file watchers that a language server registers, with ** and
+            # {a,b}, which path.Match does not take.
+            - github.com/bmatcuk/doublestar/v4
 
         presenter:
           files: ["**/techne-presenter/**"]

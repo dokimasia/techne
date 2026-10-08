@@ -79,10 +79,23 @@ const (
 	idFolders       = 9003
 	idApplyEdit     = 9004
 	idIndentation   = 9005
+	idUnregister    = 9006
 	idProgress      = 9100
 	idPerform       = 9200
 	idDiagnosis     = 9300
 )
+
+// The registration ids of the Watching mode: watchedFiles for the watchers of the files with the
+// [Extension] and the [Fresh] suffixes, and watchedDropped for the watcher of the files with the
+// [Dropped] suffix.
+const (
+	watchedFiles   = "lsptest/files"
+	watchedDropped = "lsptest/dropped"
+)
+
+// events names each type of event of workspace/didChangeWatchedFiles, as the protocol numbers
+// them, in the lines that the Watching mode records.
+var events = map[int]string{1: "created", 2: "changed", 3: "deleted"}
 
 // The ranges in [Content] and [Emoji] that the responses of the script contain, as the protocol
 // writes a range.
@@ -190,6 +203,12 @@ type script struct {
 	versions map[string]int
 	// synced reports whether the Watches mode's model of the files agrees with the disk.
 	synced bool
+	// copies is the Watching mode's copy of each file with the [Extension] suffix, by document
+	// URI, and dropped reports that it unregistered the watcher of the [Dropped] files.
+	copies  map[string]string
+	dropped bool
+	// requests is the path of the log of [RecordRequests], or empty.
+	requests string
 
 	// outside is the absolute path that references and renames name, or empty.
 	outside string
@@ -240,6 +259,8 @@ func serve(mode Mode) int {
 		opens:     map[string]int{},
 		analysed:  map[string]bool{},
 		synced:    true,
+		copies:    map[string]string{},
+		requests:  requests,
 		outside:   os.Getenv(envOutside),
 		renames:   os.Getenv(envRenames),
 	}
@@ -302,6 +323,9 @@ func (s *script) handle(m message) (int, bool) {
 		}
 	case "workspace/didChangeWatchedFiles":
 		s.synced = true
+		if s.mode == Watching {
+			return s.watchedChanges(m.Params)
+		}
 	case "initialized":
 		switch s.mode {
 		case DiskChecks:
@@ -417,8 +441,13 @@ func (s *script) initialize(m message) (int, bool) {
 	}
 
 	s.send(`{"jsonrpc":"2.0","method":"window/logMessage","params":{"type":3,"message":"starting"}}`)
+	registrations := "[]"
+	if s.mode == Watching {
+		s.copyFiles()
+		registrations = s.watchers()
+	}
 	s.send(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"client/registerCapability",`+
-		`"params":{"registrations":[]}}`, idRegister))
+		`"params":{"registrations":%s}}`, idRegister, registrations))
 	if s.mode == Asks {
 		s.replies["configuration"] = s.ask(idConfiguration, fmt.Sprintf(
 			`"workspace/configuration","params":{"items":[{"section":%q},{"section":"absent"}]}`,
@@ -686,6 +715,76 @@ func (s *script) changed(params json.RawMessage) {
 	case Diagnoses:
 		s.diagnosis(s.seen)
 	}
+}
+
+// copyFiles reads every file with the [Extension] suffix under the root into the copies of the
+// Watching mode.
+func (s *script) copyFiles() {
+	for _, doc := range s.onDisk() {
+		if content, err := os.ReadFile(uri.URI(doc).FsPath()); err == nil {
+			s.copies[doc] = string(content)
+		}
+	}
+}
+
+// watchers is the registrations of the Watching mode, by the rule of [Watching].
+func (s *script) watchers() string {
+	const watching = `{"id":%q,"method":"workspace/didChangeWatchedFiles","registerOptions":{"watchers":[%s]}}`
+	files := fmt.Sprintf(`{"globPattern":"**/*%s"},{"globPattern":{"baseUri":%q,"pattern":"**/*%s"},"kind":1}`,
+		Extension, s.root, Fresh)
+	dropped := fmt.Sprintf(`{"globPattern":{"baseUri":{"uri":%q,"name":"root"},"pattern":"**/*%s"}}`,
+		s.root, Dropped)
+	return "[" + fmt.Sprintf(watching, watchedFiles, files) + "," + fmt.Sprintf(watching, watchedDropped, dropped) + "]"
+}
+
+// watchedChanges acts on the events of a workspace/didChangeWatchedFiles notification in the
+// Watching mode. It records each event with [RecordRequests] and reads the file of each event
+// into its copy. A file that it cannot read, such as a deleted file, has no copy afterwards. At
+// its first notification it unregisters the watcher of the [Dropped] files. It reports the exit
+// status and true when the record fails.
+func (s *script) watchedChanges(params json.RawMessage) (int, bool) {
+	var held struct {
+		Changes []struct {
+			URI  string `json:"uri"`
+			Type int    `json:"type"`
+		} `json:"changes"`
+	}
+	if json.Unmarshal(params, &held) != nil {
+		return 0, false
+	}
+	root := uri.URI(s.root).FsPath()
+	for _, change := range held.Changes {
+		full := uri.URI(change.URI).FsPath()
+		relative, _ := filepath.Rel(root, full)
+		line := Watched + " " + events[change.Type] + " " + filepath.ToSlash(relative)
+		if s.requests != "" && record(s.requests, line) != nil {
+			return 4, true
+		}
+		content, err := os.ReadFile(full)
+		if err != nil {
+			delete(s.copies, change.URI)
+			continue
+		}
+		s.copies[change.URI] = string(content)
+	}
+	if !s.dropped {
+		s.dropped = true
+		s.send(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"client/unregisterCapability",`+
+			`"params":{"unregisterations":[{"id":%q,"method":"workspace/didChangeWatchedFiles"}]}}`,
+			idUnregister, watchedDropped))
+	}
+	return 0, false
+}
+
+// stale is one error on line 0 for each occurrence of [Broken] in the Watching mode's copy of
+// b.fake.
+func (s *script) stale() []string {
+	var out []string
+	for range strings.Count(s.copies[s.root+"/b"+Extension], Broken) {
+		out = append(out, fmt.Sprintf(`{"range":%s,"severity":1,"code":"E903","source":"fakecheck",`+
+			`"message":%q}`, lineStart, "b"+Extension+" uses "+Broken))
+	}
+	return out
 }
 
 // request responds to one request.
@@ -1244,6 +1343,8 @@ func (s *script) diagnose(doc string) string {
 	switch s.mode {
 	case Compiles, Unbound, DiskChecks, DiskStuck:
 		return "[" + strings.Join(broken(s.view(doc)), ",") + "]"
+	case Watching:
+		return "[" + strings.Join(append(broken(s.view(doc)), s.stale()...), ",") + "]"
 	case WorkspaceDiagnostics:
 		return "[" + strings.Join(s.faults(doc), ",") + "]"
 	case Asks:

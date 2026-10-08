@@ -15,11 +15,13 @@ import (
 	"testing/fstest"
 
 	"go.dokimi.dev/assert"
+	assertfiles "go.dokimi.dev/assert/files"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/lang"
 	golang "go.dokimi.dev/techne/lang/go"
 	"go.dokimi.dev/techne/lang/lsp"
+	"go.dokimi.dev/techne/lang/lsp/lsptest"
 	"go.dokimi.dev/techne/lang/treesitter"
 )
 
@@ -109,6 +111,35 @@ func TestLanguage(t *testing.T) {
 		t.Run("names a diagnosis of gopls by the start of its title", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, golang.Server().Diagnosis, "diagnosing", "the diagnosis of gopls")
+		})
+
+		t.Run("verifies a package against an imported package that changed on disk", func(t *testing.T) {
+			t.Parallel()
+			if _, err := exec.LookPath(golang.Server().Command[0]); err != nil {
+				t.Skip("gopls is not on PATH, so no verify of gopls runs")
+			}
+			root := lsptest.Workspace(t, map[string]string{
+				"go.mod": "module example.test/stale\n\ngo 1.27\n",
+				"a/a.go": "package a\n\n// T is a value with one field.\ntype T struct{ X int }\n",
+				"b/b.go": "package b\n\nimport \"example.test/stale/a\"\n\n// V is a value of T.\nvar V = a.T{X: 1}\n",
+			})
+			served, err := lsp.New(root, golang.Declaration(), golang.Server(), nil)
+			assert.NoError(t, err, "lsp.New over "+root)
+			lsptest.Cleanup(t, served)
+			got, err := served.Verify(t.Context(), engine.Request{Scope: "b"}, nil)
+			assert.NoError(t, err, "Verify of b")
+			assert.Empty(t, got.Items, "the findings of b before the change")
+
+			changed := assertfiles.Tree{
+				"a/a.go": assertfiles.Text("package a\n\n// T is a value with two fields.\n" +
+					"type T struct{ X, Y int }\n"),
+				"b/b.go": assertfiles.Text("package b\n\nimport \"example.test/stale/a\"\n\n// V is a value of T.\n" +
+					"var V = a.T{X: 1, Y: 2}\n"),
+			}
+			assertfiles.Write(t, root, changed)
+			got, err = served.Verify(t.Context(), engine.Request{Scope: "b"}, nil)
+			assert.NoError(t, err, "Verify of b after a and b change on disk")
+			assert.Empty(t, got.Items, "the findings of b after the change")
 		})
 	})
 
