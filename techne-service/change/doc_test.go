@@ -34,7 +34,7 @@ func TestDoc(t *testing.T) {
 			applied, err := s.Apply(t.Context(), asking(false))
 			assert.NoError(t, err, "the write")
 			assert.Equal(t, applied.Rewrites, previewed.Rewrites, "the rewrites of the write")
-			assert.Equal(t, files.at("a.fx"), previewed.Rewrites[0].Now+original, "the content of a.fx")
+			assert.Equal(t, files.at("a.fx"), previewed.Rewrites[0].Now+"\n"+original, "the content of a.fx")
 		})
 
 		t.Run("returns a refusal without an error", func(t *testing.T) {

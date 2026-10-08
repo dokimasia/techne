@@ -50,8 +50,8 @@ type Changed struct {
 	Changes []Rewrite `json:"changes,omitempty"`
 }
 
-// Rewrite is one range of a file that a change rewrites: the line on which it starts, counted
-// from one, the text it replaces and the text it writes.
+// Rewrite is one run of lines of a file that a change rewrites, with the lines before the change
+// and the lines that replace them. Line is the one-based line on which the run starts.
 type Rewrite struct {
 	Line int    `json:"line"`
 	Was  string `json:"was,omitempty"`
@@ -314,8 +314,9 @@ func applied(done edit.Outcome) map[string]bool {
 // the change moves, creates or deletes comes first from changes, and the rewrites follow
 // under the file they are in. With wrote set, Touched returns only the files that wrote
 // names, because an applied change reports what it wrote. With wrote nil, it returns every
-// file of a preview. Without rewrites, as for a change that the write path refused before it
-// rendered them, the sites of a file are the edits of its changes.
+// file of a preview. The sites of a file are the edits of its changes, also when two edits
+// share the run of lines of one rewrite, and a change that the write path refused before it
+// rendered its rewrites has sites and no rewrites.
 func Touched(changes []edit.Change, rewrites []edit.Rewrite, wrote map[string]bool) []Changed {
 	out := []Changed{}
 	at := map[string]int{}
@@ -336,9 +337,7 @@ func Touched(changes []edit.Change, rewrites []edit.Rewrite, wrote map[string]bo
 			continue
 		}
 		i := entry(string(c.Path))
-		if len(rewrites) == 0 {
-			out[i].Sites += len(c.Edits)
-		}
+		out[i].Sites += len(c.Edits)
 		switch c.Kind {
 		case edit.ChangeMove:
 			out[i].To = string(c.To)
@@ -354,7 +353,6 @@ func Touched(changes []edit.Change, rewrites []edit.Rewrite, wrote map[string]bo
 			continue
 		}
 		i := entry(string(r.Path))
-		out[i].Sites++
 		out[i].Changes = append(out[i].Changes, Rewrite{Line: r.Line, Was: r.Was, Now: r.Now})
 	}
 	return out

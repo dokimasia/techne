@@ -233,6 +233,12 @@ func TestWrite(t *testing.T) {
 			assert.Length(t, tool.Touched(planned, rewritten, nil), 2, "the files")
 		})
 
+		t.Run("returns the rewrites of a file as its changes", func(t *testing.T) {
+			t.Parallel()
+			got := tool.Touched(planned, rewritten, nil)
+			assert.Equal(t, got[0].Changes, []tool.Rewrite{{Line: 1, Was: "one", Now: "two"}}, "the changes of a.fx")
+		})
+
 		t.Run("returns a moved file without a rewrite", func(t *testing.T) {
 			t.Parallel()
 			got := tool.Touched([]edit.Change{{Kind: edit.ChangeMove, Path: "a.fx", To: "b.fx"}}, nil, nil)
@@ -246,11 +252,11 @@ func TestWrite(t *testing.T) {
 			assert.Equal(t, got, []tool.Changed{{Path: "a.fx", Sites: 2}}, "the files")
 		})
 
-		t.Run("counts the rewrites of a file as its sites", func(t *testing.T) {
+		t.Run("counts the edits of a file as its sites when two edits share a rewrite", func(t *testing.T) {
 			t.Parallel()
 			got := tool.Touched([]edit.Change{{Kind: edit.ChangeEdit, Path: "a.fx", Edits: make([]edit.TextEdit, 2)}},
 				rewritten[:1], nil)
-			assert.Equal(t, got[0].Sites, 1, "the sites of a.fx")
+			assert.Equal(t, got[0].Sites, 2, "the sites of a.fx")
 		})
 	})
 }

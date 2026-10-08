@@ -44,7 +44,7 @@ type Outcome struct {
 	Changed []source.Path
 	// Changes are the changes written or, for a dry run, planned.
 	Changes []Change
-	// Rewrites are Changes rendered as text against the current files.
+	// Rewrites are the edits of Changes as a diff of the lines of the current files.
 	Rewrites []Rewrite
 	// Handle identifies the plan of a dry run for a later commit. It is empty
 	// when the plan cannot be applied.
@@ -70,14 +70,16 @@ type Finding struct {
 	Fix []Change
 }
 
-// Rewrite is one range a change replaces, with the text before and after
-// the change.
+// Rewrite is one run of lines that a change rewrites, with the lines before
+// and after the change. The lines have no line ending.
 type Rewrite struct {
 	Path source.Path
-	// Line is the one-based line on which the range starts.
+	// Line is the one-based line on which the run starts.
 	Line int
-	// Was is the replaced text. It is empty for an insertion.
+	// Was is the lines of the run before the change. It is empty for lines
+	// that the change inserts.
 	Was string
-	// Now is the replacement text.
+	// Now is the lines that replace them. It is empty for lines that the
+	// change removes.
 	Now string
 }

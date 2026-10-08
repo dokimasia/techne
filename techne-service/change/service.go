@@ -175,7 +175,7 @@ func (s *Service) run(
 	if err != nil {
 		return edit.Outcome{}, err
 	}
-	rewrites := preview(plan, sealed)
+	rewrites := preview(plan, sealed, projected)
 	if gated.worse {
 		out := refusedBy(plan, fmt.Sprintf("the change stops %s %s, so it was not written",
 			where(gated.found), judging(gated.by)))
