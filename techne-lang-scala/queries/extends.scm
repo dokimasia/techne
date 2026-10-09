@@ -1,3 +1,6 @@
+; Copyright Dokimasia B.V. 2026
+; SPDX-License-Identifier: MIT
+
 ;; The declarations of Scala at any depth. The upstream query captures no
 ;; parameter, import, type parameter or field of a case class.
 
