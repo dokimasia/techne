@@ -1,3 +1,6 @@
+; Copyright Dokimasia B.V. 2026
+; SPDX-License-Identifier: MIT
+
 ;; Everything Python declares, at any depth.
 ;;
 ;; Nothing here is anchored. A class built inside a function is still a

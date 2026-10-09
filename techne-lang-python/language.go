@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package python
@@ -21,6 +21,12 @@ import (
 // stored.
 const Language source.Language = "python"
 
+// The delimiters of a docstring: three double quotes, and three single quotes.
+const (
+	tripleDouble = `"""`
+	tripleSingle = `'''`
+)
+
 // extendsQuery is the tags query that the module compiles in place of the
 // upstream query in queries/upstream.scm. Upstream captures an assignment
 // at module level as @definition.constant, and Python has no constant. The
@@ -42,10 +48,10 @@ func Declaration() lang.Declaration {
 		Comment: lang.CommentStyle{
 			Line: "# ",
 			Doc: []lang.DocStyle{
-				{Open: `"""`, Close: `"""`, Inside: true},
-				{Open: `'''`, Close: `'''`, Inside: true},
-				{Open: `r"""`, Close: `"""`, Inside: true},
-				{Open: `r'''`, Close: `'''`, Inside: true},
+				{Open: tripleDouble, Close: tripleDouble, Inside: true},
+				{Open: tripleSingle, Close: tripleSingle, Inside: true},
+				{Open: "r" + tripleDouble, Close: tripleDouble, Inside: true},
+				{Open: "r" + tripleSingle, Close: tripleSingle, Inside: true},
 			},
 		},
 		IsTest:     IsTest,
