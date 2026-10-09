@@ -1,3 +1,6 @@
+; Copyright Dokimasia B.V. 2026
+; SPDX-License-Identifier: MIT
+
 ;; Everything C declares, at any depth.
 ;;
 ;; Upstream captures a function, a type and what it calls a class, and
