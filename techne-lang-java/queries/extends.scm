@@ -1,3 +1,6 @@
+; Copyright Dokimasia B.V. 2026
+; SPDX-License-Identifier: MIT
+
 ;; Everything Java declares, at any depth.
 ;;
 ;; Nothing here is anchored. A class declared inside a method is still a
