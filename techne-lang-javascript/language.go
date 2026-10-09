@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package javascript
@@ -21,6 +21,9 @@ import (
 // JavaScript declaration contains it, so a change invalidates the IDs an
 // index has stored.
 const Language source.Language = "javascript"
+
+// jsx is the extension of a JavaScript file with JSX, which a server opens as javascriptreact.
+const jsx = ".jsx"
 
 // upstreamQuery is the tags query of the grammar's repository, vendored
 // unchanged, so an upgrade of the grammar replaces the file and a review
@@ -45,7 +48,7 @@ var shorthandsQuery string
 func Declaration() lang.Declaration {
 	return lang.Declaration{
 		Language:   Language,
-		Extensions: []string{".js", ".mjs", ".cjs", ".jsx"},
+		Extensions: []string{".js", ".mjs", ".cjs", jsx},
 		// The manifest of an npm package, and the file that marks the root of
 		// a JavaScript project for the TypeScript server.
 		Manifests: []string{"package.json", "jsconfig.json"},
@@ -92,7 +95,7 @@ func Server() lsp.Server {
 		Name:       server,
 		Command:    []string{server, stdio},
 		LanguageID: lsp.IdentityJavaScript,
-		Dialects:   map[string]string{".jsx": lsp.IdentityJavaScriptReact},
+		Dialects:   map[string]string{jsx: lsp.IdentityJavaScriptReact},
 		Serves:     lsp.Binding(),
 		Extracts: lsp.Refactor{
 			Kind:   "refactor.extract.function",
@@ -141,7 +144,7 @@ func Native() lsp.Server {
 		Name:       native,
 		Command:    []string{native, "--lsp", stdio},
 		LanguageID: lsp.IdentityJavaScript,
-		Dialects:   map[string]string{".jsx": lsp.IdentityJavaScriptReact},
+		Dialects:   map[string]string{jsx: lsp.IdentityJavaScriptReact},
 		Serves:     lsp.Binding(),
 		Scoped:     true,
 		// A rename rewrites every use of a re-exported declaration.

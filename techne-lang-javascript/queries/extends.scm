@@ -1,3 +1,6 @@
+; Copyright Dokimasia B.V. 2026
+; SPDX-License-Identifier: MIT
+
 ;; The declarations of JavaScript at any depth. The upstream query captures
 ;; a class, a function, a method and one form of constant, and no variable,
 ;; field, parameter or import.
