@@ -45,10 +45,10 @@ type process struct {
 	stderr strings.Builder
 }
 
-// run starts the scripted server in mode as a process of this test binary.
-func run(t *testing.T, mode lsptest.Mode) *process {
+// run starts the scripted server in mode with options as a process of this test binary.
+func run(t *testing.T, mode lsptest.Mode, options ...lsptest.Option) *process {
 	t.Helper()
-	server := lsptest.Server(mode)
+	server := lsptest.Server(mode, options...)
 	p := &process{cmd: exec.CommandContext(t.Context(), server.Command[0], server.Command[1:]...)}
 	p.cmd.Dir = t.TempDir()
 	p.cmd.Env = os.Environ()
@@ -227,6 +227,22 @@ func openingOf(name, text string) string {
 		`{"uri":"file:///tmp/%s","languageId":"fake","version":1,"text":%s}}}`, name, quoted)
 }
 
+// openingAt is the didOpen notification of the file at the absolute path full with text.
+func openingAt(full, text string) string {
+	quoted, _ := json.Marshal(text)
+	return fmt.Sprintf(`{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":`+
+		`{"uri":%q,"languageId":"fake","version":1,"text":%s}}}`, string(uri.File(full)), quoted)
+}
+
+// projecting is the workspace/executeCommand request with the id [asked] that asks tsserver for
+// the project of the file at the absolute path full, as techne asks typescript-language-server.
+func projecting(full string) string {
+	quoted, _ := json.Marshal(full)
+	return fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"workspace/executeCommand","params":`+
+		`{"command":"typescript.tsserverRequest","arguments":["projectInfo",{"file":%s}]}}`,
+		asked, quoted)
+}
+
 // changing is the didChange notification that replaces the buffer of a.fake with text under
 // version.
 func changing(text string, version int) string {
@@ -312,8 +328,8 @@ const publishes = `{"textDocument":{"publishDiagnostics":{}}}`
 // initializing is the initialize request with the id 1, the root at the absolute path root, and
 // capabilities, an object of client capabilities written as JSON.
 func initializing(root, capabilities string) string {
-	return fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":"file://%s",`+
-		`"capabilities":%s}}`, root, capabilities)
+	return fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"rootUri":%q,`+
+		`"capabilities":%s}}`, string(uri.File(root)), capabilities)
 }
 
 // placed writes content to a.fake in a new directory and returns the directory.
@@ -395,6 +411,66 @@ func TestScript(t *testing.T) {
 				{Name: "Sum", Range: on(4, 0, 31), Selection: on(4, 5, 8)},
 			}, "the symbols of Pair")
 		})
+
+		t.Run("responds to a definition after the lag of Lagging", func(t *testing.T) {
+			t.Parallel()
+			lag := 100 * time.Millisecond
+			p := run(t, lsptest.Default, lsptest.Lagging(lag))
+			p.initialize(t)
+			p.send(t, opening(lsptest.Content))
+			sent := time.Now()
+			p.send(t, defining(5))
+			p.reply(t, asked)
+			// The clock of Go on Windows advances in steps of about 16 ms, so the test takes half the
+			// lag as the least wait.
+			assert.InRange(t, time.Since(sent), float64(lag/2), 1<<63, "the time to the reply")
+		})
+
+		t.Run("responds to projectInfo with the tsconfig.json of a project with a buffer in the Projects mode",
+			func(t *testing.T) {
+				t.Parallel()
+				root := lsptest.Workspace(t, map[string]string{
+					"project/tsconfig.json": "{}\n", "project/x.fake": lsptest.Content,
+				})
+				x := filepath.Join(root, "project", "x.fake")
+				p := run(t, lsptest.Projects)
+				p.initializeAt(t, root)
+				p.send(t, openingAt(x, lsptest.Content))
+				p.send(t, projecting(x))
+				var got struct {
+					Body struct {
+						ConfigFileName string `json:"configFileName"`
+					} `json:"body"`
+				}
+				assert.NoError(t, json.Unmarshal(p.reply(t, asked), &got), "the reply to projectInfo")
+				assert.Equal(t, got.Body.ConfigFileName, filepath.Join(root, "project", "tsconfig.json"),
+					"the configuration file of the project of x.fake")
+			})
+
+		t.Run("responds to projectInfo with no project for a project without a buffer in the Projects mode",
+			func(t *testing.T) {
+				t.Parallel()
+				root := lsptest.Workspace(t, map[string]string{
+					"project/tsconfig.json": "{}\n", "project/x.fake": lsptest.Content, "other/b.fake": lsptest.Content,
+				})
+				p := run(t, lsptest.Projects)
+				p.initializeAt(t, root)
+				p.send(t, openingAt(filepath.Join(root, "other", "b.fake"), lsptest.Content))
+				p.send(t, projecting(filepath.Join(root, "project", "x.fake")))
+				assert.Empty(t, p.reply(t, asked), "the result of projectInfo")
+			})
+
+		t.Run("responds to projectInfo with no project for a file without a tsconfig.json in the Projects mode",
+			func(t *testing.T) {
+				t.Parallel()
+				root := lsptest.Workspace(t, map[string]string{"x.fake": lsptest.Content})
+				x := filepath.Join(root, "x.fake")
+				p := run(t, lsptest.Projects)
+				p.initializeAt(t, root)
+				p.send(t, openingAt(x, lsptest.Content))
+				p.send(t, projecting(x))
+				assert.Empty(t, p.reply(t, asked), "the result of projectInfo")
+			})
 
 		t.Run("responds at the end of an import name with the file of the name in the Resolves mode",
 			func(t *testing.T) {

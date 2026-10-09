@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -502,11 +503,15 @@ func TestInactiveEnv(t *testing.T) {
 }
 
 // locked returns the checker over [gated] with lockedFile, a file of plan9 that nobody can read.
-// It skips the test for root, which reads a file without read permission.
+// It skips the test for root, which reads a file without read permission, and on Windows, where
+// os.Chmod sets only the read-only attribute and the file stays readable.
 func locked(t *testing.T) *checker.Engine {
 	t.Helper()
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a file without read permission")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("windows reads a file without read permission")
 	}
 	files := gated()
 	files[lockedFile] = "package ported\n"

@@ -6,6 +6,7 @@ package lsp_test
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
@@ -151,7 +152,9 @@ func TestResolve(t *testing.T) {
 
 		t.Run("adds the waits for the server to the Waited of the context", func(t *testing.T) {
 			t.Parallel()
-			e := serving(t, lsptest.Default, sample())
+			// The clock of Go on Windows advances once per timer tick, about 16 ms, and measures a
+			// shorter wait as zero.
+			e := serving(t, lsptest.Default, sample(), lsptest.Lagging(50*time.Millisecond))
 			_, err := e.Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
 			assert.NoError(t, err, "the Resolve that starts the server")
 			ctx, waited := engine.Timing(t.Context())

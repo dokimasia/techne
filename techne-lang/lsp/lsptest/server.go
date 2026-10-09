@@ -27,6 +27,7 @@ const (
 	envOutside  = "TECHNE_LSPTEST_OUTSIDE"
 	envRenames  = "TECHNE_LSPTEST_RENAMES"
 	envDelay    = "TECHNE_LSPTEST_DELAY"
+	envLag      = "TECHNE_LSPTEST_LAG"
 	// envOrphan marks the child of the Orphans mode.
 	envOrphan = "TECHNE_LSPTEST_ORPHAN"
 )
@@ -85,6 +86,11 @@ func Renames(edit string) Option {
 // opens after delay, in place of [QuietDelay].
 func Delaying(delay time.Duration) Option {
 	return func(s *lsp.Server) { s.Env[envDelay] = delay.String() }
+}
+
+// Lagging makes the scripted server wait lag before it responds to textDocument/definition.
+func Lagging(lag time.Duration) Option {
+	return func(s *lsp.Server) { s.Env[envLag] = lag.String() }
 }
 
 // Server returns a declaration that runs the current test binary as the scripted server in

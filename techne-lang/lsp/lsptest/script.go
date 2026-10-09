@@ -230,8 +230,9 @@ type script struct {
 	// Diagnoses mode.
 	checks, diagnoses int
 
-	// delay is how long the Quiet and Loads modes take to publish the report of an open.
-	delay time.Duration
+	// delay is how long the Quiet and Loads modes take to publish the report of an open, and lag
+	// how long the server waits before it responds to textDocument/definition.
+	delay, lag time.Duration
 
 	// sending guards out, loaded, reported, opens, analysed, checks and diagnoses. In the Loading
 	// and Diagnoses modes a timer goroutine writes the end of the loading job, in the Burst mode a
@@ -271,9 +272,12 @@ func serve(mode Mode) int {
 	if given, err := time.ParseDuration(os.Getenv(envDelay)); err == nil {
 		delay = given
 	}
+	// A server without Lagging waits no time: the variable is empty, which does not parse.
+	lag, _ := time.ParseDuration(os.Getenv(envLag))
 	s := &script{
 		started:   time.Now(),
 		delay:     delay,
+		lag:       lag,
 		restarted: restarted,
 		mode:      mode,
 		in:        bufio.NewReader(os.Stdin),
@@ -407,13 +411,13 @@ func (s *script) projectInfo(id *int64, params json.RawMessage) {
 		return
 	}
 	root := uri.URI(s.root).FsPath()
-	for dir := filepath.Dir(args.File); strings.HasPrefix(dir, root); dir = filepath.Dir(dir) {
+	for dir := filepath.Dir(args.File); below(dir, root); dir = filepath.Dir(dir) {
 		config := filepath.Join(dir, "tsconfig.json")
 		if _, err := os.Stat(config); err != nil {
 			continue
 		}
 		for open := range s.holding {
-			if strings.HasPrefix(uri.URI(open).FsPath(), dir+string(filepath.Separator)) {
+			if below(uri.URI(open).FsPath(), dir) {
 				s.answer(id, fmt.Sprintf(`{"type":"response","success":true,"body":{"configFileName":%q}}`, config))
 				return
 			}
@@ -421,6 +425,15 @@ func (s *script) projectInfo(id *int64, params json.RawMessage) {
 		break
 	}
 	s.refuse(id, "No Project.")
+}
+
+// below reports whether the absolute path p is dir or a path under it. [filepath.Rel] compares
+// the names of the paths as the system does, so on Windows the drive letter that a URI writes in
+// lowercase matches the drive letter of a path. Rel returns the empty path, which is not local,
+// with its error.
+func below(p, dir string) bool {
+	relative, _ := filepath.Rel(dir, p)
+	return filepath.IsLocal(relative)
 }
 
 // tsserverCommand is the command of typescript-language-server to which the Projects mode
@@ -532,11 +545,16 @@ func (s *script) indenting() string {
 }
 
 // orphan starts the child of the Orphans mode: the binary of the scripted server, which sleeps
-// for [OrphanTime] with the stderr of the server and exits. The server does not wait for it.
+// for [OrphanTime] with the stderr of the server and exits. The server does not wait for it. The
+// child runs in the temporary directory of the system, outside the workspace, because Windows
+// deletes no directory in which a process runs, and a test deletes its workspace while the child
+// sleeps.
 func orphan() {
 	// The child outlives the server, so its context never ends.
 	child := exec.CommandContext(context.Background(), os.Args[0]) //nolint:gosec // the server's own binary
 	child.Env = append(os.Environ(), envOrphan+"=1")
+	//dokimi:mutate-skip sbr-delete: only Windows keeps the directory of a running process from deletion
+	child.Dir = os.TempDir()
 	child.Stderr = os.Stderr
 	_ = child.Start()
 }
@@ -849,6 +867,7 @@ func (s *script) request(m message) {
 	case "textDocument/documentSymbol":
 		s.answer(id, s.symbols())
 	case methodDefinition:
+		time.Sleep(s.lag)
 		s.answer(id, s.definition(m.Params))
 	case methodReferences:
 		if s.mode == Hangs {
