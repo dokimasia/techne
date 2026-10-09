@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 // Package version returns the version of a build of techne.

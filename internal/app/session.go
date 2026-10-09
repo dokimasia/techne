@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package app
@@ -70,17 +70,22 @@ type Session struct {
 
 	// home is the workspace of the session, at root.
 	home *workspace
+
+	// others are the open workspaces of the directories that calls named, by directory.
+	others map[string]*workspace
+
 	root string
+
+	mocks string
+
 	// trusted are the trusted folders, as absolute paths without symbolic links.
 	trusted []string
-	mocks   string
+
+	// used are the directories of others, the one that served a call least recently first.
+	used []string
 
 	// mu guards others, used and the calls of each workspace of others.
 	mu sync.Mutex
-	// others are the open workspaces of the directories that calls named, by directory.
-	others map[string]*workspace
-	// used are the directories of others, the one that served a call least recently first.
-	used []string
 }
 
 // Open returns the session of command: the workspace at the root that [Root] resolves, and the

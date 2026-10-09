@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 // Package app composes techne: the ten language modules and the mock languages, the read and

@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package app_test
@@ -81,8 +81,9 @@ func built(t *testing.T, files fstest.MapFS, mocks string) *app.Server {
 
 // named returns the names of the tools of s, in the order of the registry.
 func named(s *app.Server) []string {
-	var out []string
-	for _, one := range s.Tools.Tools() {
+	tools := s.Tools.Tools()
+	out := make([]string, 0, len(tools))
+	for _, one := range tools {
 		out = append(out, one.Name())
 	}
 	return out

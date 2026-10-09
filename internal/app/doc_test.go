@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package app_test
@@ -52,8 +52,8 @@ func languageModule(path string) bool {
 
 // listed is one package as go list -json reports it.
 type listed struct {
-	ImportPath string
-	Imports    []string
+	ImportPath string   `json:"ImportPath"`
+	Imports    []string `json:"Imports"`
 }
 
 // packages returns the packages of the patterns as go list reports them, with the imports of

@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package app_test
@@ -92,8 +92,9 @@ func outlined(t *testing.T, s *app.Session, wd string) []string {
 	}
 	got, err := execute(t, s, "outline", input)
 	assert.NoError(t, err, "the error of the outline")
-	var out []string
-	for _, item := range got["items"].([]any) {
+	items := got["items"].([]any)
+	out := make([]string, 0, len(items))
+	for _, item := range items {
 		out = append(out, item.(map[string]any)["name"].(string))
 	}
 	return out

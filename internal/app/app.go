@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package app
@@ -63,11 +63,11 @@ type Server struct {
 	// Tools are the tools that a client can call.
 	Tools *tool.Registry
 
-	// Languages are the registered languages.
-	Languages []source.Language
-
 	// engines are the engines of the languages, which Close closes.
 	engines *engine.Catalog
+
+	// Languages are the registered languages.
+	Languages []source.Language
 }
 
 // Close closes every engine of the server that implements [engine.Closer], such as the engine
@@ -244,7 +244,7 @@ func expand(given string) (string, error) {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("expand ~: %w", err)
 	}
 	return home + rest, nil
 }
