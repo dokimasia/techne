@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package conformance
@@ -34,15 +34,6 @@ import (
 // Suite is the input of [Run]: the declaration, the grammar, the server, the
 // registration and the fixture of one language module.
 type Suite struct {
-	// Declaration is the declaration the module registers.
-	Declaration lang.Declaration
-
-	// Grammar is the grammar the module supplies.
-	Grammar treesitter.Grammar
-
-	// Server is the language server the module declares.
-	Server lsp.Server
-
 	// Register is the Register function of the module.
 	Register func(lang.Workspace, *lang.Registry, *engine.Catalog) error
 
@@ -50,14 +41,20 @@ type Suite struct {
 	// root. Every path has an extension of Declaration.
 	Files map[string]string
 
-	// Declares lists every declaration of Files. Run compares it with the
-	// outline as a set, so a missing and an extra declaration both fail, and
-	// the fixture contains every declaration form of the language.
-	Declares []Declared
+	// Grammar is the grammar the module supplies.
+	Grammar treesitter.Grammar
 
 	// Unclaimed is a path with an extension that the language does not
 	// claim, or empty.
 	Unclaimed string
+
+	// Declaration is the declaration the module registers.
+	Declaration lang.Declaration
+
+	// Declares lists every declaration of Files. Run compares it with the
+	// outline as a set, so a missing and an extra declaration both fail, and
+	// the fixture contains every declaration form of the language.
+	Declares []Declared
 
 	// Shorthands lists the name of each shorthand property of an object
 	// literal in Files, such as value in { value }, in any order, and is
@@ -65,29 +62,32 @@ type Suite struct {
 	// Shorthands of the engine returns for every file, so a shorthand of a
 	// destructuring pattern in Files fails when the engine returns it.
 	Shorthands []string
+
+	// Server is the language server the module declares.
+	Server lsp.Server
 }
 
 // Declared is one declaration of a fixture. Run compares Name, Kind and
 // Visibility for every declaration, and each other field when it is set.
 type Declared struct {
 	Name string
-	Kind sema.Kind
-	// Visibility is the visibility the engine reports. A language that
-	// declares visibility with a modifier reports sema.VisibilityUnknown.
-	Visibility sema.Visibility
 	// Signature is the declaration without its body.
 	Signature string
 	// Doc is the documentation the fixture writes on the declaration. When
 	// any Doc is set, Run compares the documented declarations as a set.
 	Doc string
-	// Annotations are annotations of the declaration.
-	Annotations []Annotated
-	// Modifiers are modifier keywords of the declaration.
-	Modifiers []string
 	// Simple is the name of an import without its qualifier and extension,
 	// such as json for encoding/json and stdio for <stdio.h>. Run requires
 	// it for every import, and checks that Relate finds the import by it.
 	Simple string
+	// Annotations are annotations of the declaration.
+	Annotations []Annotated
+	// Modifiers are modifier keywords of the declaration.
+	Modifiers []string
+	Kind      sema.Kind
+	// Visibility is the visibility the engine reports. A language that
+	// declares visibility with a modifier reports sema.VisibilityUnknown.
+	Visibility sema.Visibility
 }
 
 // Annotated is one annotation of a fixture declaration. Run compares Text
@@ -292,6 +292,7 @@ func Run(t *testing.T, s Suite) {
 				for _, other := range got.Items[i+1:] {
 					if one.Name == other.Name && one.Kind == other.Kind && one.Span.Path == other.Span.Path &&
 						apart(one, other) {
+
 						pairs++
 						assert.NotEqual(t, one.ID, other.ID, "the IDs of the two "+one.Kind.String()+"s "+one.Name)
 					}
@@ -1183,19 +1184,21 @@ func search(t *testing.T, e *treesitter.Engine, q engine.Query) engine.Result[se
 // nothing, so the opens of a file count its reads.
 type counting struct {
 	fs.FS
-	mu    sync.Mutex
 	opens map[string]int
+	mu    sync.Mutex
 }
 
 func (c *counting) Open(name string) (fs.File, error) {
 	c.mu.Lock()
 	c.opens[name]++
 	c.mu.Unlock()
-	return c.FS.Open(name)
+	return c.FS.Open(name) //nolint:wrapcheck // the errors of the file system it counts
 }
 
 // Stat returns the file information of name without an open.
-func (c *counting) Stat(name string) (fs.FileInfo, error) { return fs.Stat(c.FS, name) }
+func (c *counting) Stat(name string) (fs.FileInfo, error) {
+	return fs.Stat(c.FS, name) //nolint:wrapcheck // the errors of the file system it counts
+}
 
 // opened returns the number of opens of name.
 func (c *counting) opened(name string) int {

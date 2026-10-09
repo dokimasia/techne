@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp
@@ -33,28 +33,34 @@ import (
 // Engine is safe for concurrent use. [Engine.Close] may run while a question is in flight, and
 // the question then returns the error of the closed connection.
 type Engine struct {
-	declared lang.Declaration
-	server   Server
 	// outliner reads the declarations of a file without the server, or is nil.
 	outliner engine.Outliner
+
+	failed error
+
+	held *session
+
+	// pending is the start of a server whose handshake had not ended when a question stopped
+	// waiting for it, or nil.
+	pending *launch
+
 	// root is the absolute workspace root with symbolic links resolved. given is the absolute
 	// root as the caller named it. A server path under either root maps into the workspace.
 	root, given string
 
-	// starting guards held, failed and pending. A question that arrives during the handshake
-	// waits for it and does not start a second server.
-	starting sync.Mutex
-	held     *session
-	failed   error
-	// pending is the start of a server whose handshake had not ended when a question stopped
-	// waiting for it, or nil.
-	pending *launch
+	declared lang.Declaration
+
+	server Server
 
 	// showing is locked while a buffer of the server differs from its file on disk: while
 	// [Engine.Check] and an extraction show the server content of their own, and while a
 	// question refreshes the buffers. A question read-locks it from the refresh to its answer,
 	// so no content of another request replaces a buffer that the question reads.
 	showing sync.RWMutex
+
+	// starting guards held, failed and pending. A question that arrives during the handshake
+	// waits for it and does not start a second server.
+	starting sync.Mutex
 }
 
 // New returns an engine over the workspace at root for the language that d declares, served
@@ -252,7 +258,7 @@ func (e *Engine) await(ctx context.Context) (*session, error) {
 // units, the LSP 3.17 default that [document] converts.
 func (e *Engine) handshake(ctx context.Context, held *session) error {
 	root := uri.File(e.root)
-	pid := int32(os.Getpid())
+	pid := int32(os.Getpid()) //nolint:gosec // LSP sends the ID as an int32, and systems allocate far smaller IDs
 	yes := true
 
 	params := &protocol.InitializeParams{
@@ -349,8 +355,8 @@ func (e *Engine) handshake(ctx context.Context, held *session) error {
 // stamp is the size and modification time of a file on disk. The zero stamp belongs to
 // content that is not on disk.
 type stamp struct {
-	size     int64
 	modified time.Time
+	size     int64
 }
 
 // stampOf returns the stamp of info.
@@ -361,29 +367,30 @@ func stampOf(info os.FileInfo) stamp {
 // sent describes the buffer of the server for one file: the version it was sent under, the
 // SHA-256 digest of its content, and the stamp of the file it was read from.
 type sent struct {
-	version int32
-	digest  [sha256.Size]byte
-	stamp   stamp
+	stamp stamp
 	// saved is the stamp of the file that the last check on disk of the server covers: the stamp
 	// at the last textDocument/didSave, or the stamp at the open of a file that did not change
 	// after the server started. The zero stamp is covered by no check.
-	saved stamp
+	saved   stamp
+	version int32
+	digest  [sha256.Size]byte
 }
 
-// snapshot reads the file at full and returns its content with the stamp of the open file.
+// snapshot reads the file at full and returns its content with the stamp of the open file. The
+// error of a failed open, stat or read contains the operation and full.
 func snapshot(full string) ([]byte, stamp, error) {
 	file, err := os.Open(full)
 	if err != nil {
-		return nil, stamp{}, err
+		return nil, stamp{}, fmt.Errorf("lsp: %w", err)
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return nil, stamp{}, err
+		return nil, stamp{}, fmt.Errorf("lsp: %w", err)
 	}
 	content, err := io.ReadAll(file)
 	if err != nil {
-		return nil, stamp{}, err
+		return nil, stamp{}, fmt.Errorf("lsp: %w", err)
 	}
 	return content, stampOf(info), nil
 }
@@ -462,7 +469,7 @@ func (e *Engine) load(ctx context.Context, held *session, p source.Path) (docume
 	full := e.fullPath(p)
 	content, stamped, err := snapshot(full)
 	if err != nil {
-		return document{}, fmt.Errorf("lsp: read %s: %w", p, err)
+		return document{}, err
 	}
 	if err := e.told(ctx, held, full, content, stamped); err != nil {
 		return document{}, err
@@ -496,7 +503,7 @@ func (e *Engine) told(ctx context.Context, held *session, full string, content [
 		if err := held.asks.DidChangeWatchedFiles(ctx, &protocol.DidChangeWatchedFilesParams{
 			Changes: []protocol.FileEvent{{URI: uri.File(full), Type: protocol.FileChangeTypeChanged}},
 		}); err != nil {
-			return err
+			return fmt.Errorf("lsp: %s: didChangeWatchedFiles %s: %w", e.server.Name, full, err)
 		}
 	}
 	return e.save(ctx, held, full, at)

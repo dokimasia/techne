@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lang_test
@@ -59,7 +59,7 @@ func (c *counting) Open(name string) (fs.File, error) {
 	c.mu.Lock()
 	c.opens[name]++
 	c.mu.Unlock()
-	return c.FS.Open(name)
+	return c.FS.Open(name) //nolint:wrapcheck // the errors of the file system it counts
 }
 
 // errUnreadable is the error of the directory that [unreadable] cannot read.
@@ -73,7 +73,7 @@ func (u unreadable) ReadDir(name string) ([]fs.DirEntry, error) {
 	if name == "sub" {
 		return nil, errUnreadable
 	}
-	return u.MapFS.ReadDir(name)
+	return u.MapFS.ReadDir(name) //nolint:wrapcheck // the errors of the file system it wraps
 }
 
 func TestFiles(t *testing.T) {

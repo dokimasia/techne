@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp
@@ -17,8 +17,8 @@ import (
 // declaration starts and the name of the declaration. The names that one declaration lists can
 // start at one offset: gopls gives each name of var a, b = 1, 2 the range of a, b = 1, 2.
 type nameAt struct {
-	start int
 	name  string
+	start int
 }
 
 // document is the content of one file and the offset at which each of its lines starts. It
@@ -32,15 +32,15 @@ type nameAt struct {
 // conversion past them decodes the line from its first byte outside ASCII. No conversion copies
 // the content.
 type document struct {
+	// names is the position of the name of each declaration that the server reported. It is
+	// empty for a document whose symbols were not read.
+	names   map[nameAt]protocol.Position
 	path    source.Path
 	content []byte
 	// at is the byte offset at which each line starts. The file has len(at) lines.
 	at []int
 	// plain is the number of ASCII bytes at the start of each line.
 	plain []int
-	// names is the position of the name of each declaration that the server reported. It is
-	// empty for a document whose symbols were not read.
-	names map[nameAt]protocol.Position
 }
 
 // texted returns the document of content at p, with no name recorded.
@@ -82,12 +82,13 @@ func (d document) bounds(n int) (start, end int) {
 	return start, end
 }
 
-// line returns line n without its line ending, or the empty string for a line past the end.
-func (d document) line(n uint32) string {
-	if int(n) >= len(d.at) {
+// line returns line n without its line ending, or the empty string for a line outside the
+// document.
+func (d document) line(n int) string {
+	if n < 0 || n >= len(d.at) {
 		return ""
 	}
-	start, end := d.bounds(int(n))
+	start, end := d.bounds(n)
 	return string(d.content[start:end])
 }
 
@@ -106,7 +107,7 @@ func (d document) position(p protocol.Position) source.Position {
 	if int(p.Line) >= len(d.at) {
 		return source.Position{Offset: len(d.content), Line: int(p.Line), Column: int(p.Character)}
 	}
-	column := d.bytesFor(int(p.Line), p.Character)
+	column := d.bytesFor(int(p.Line), int(p.Character))
 	return source.Position{Offset: d.at[p.Line] + column, Line: int(p.Line), Column: column}
 }
 
@@ -135,7 +136,10 @@ func (d document) mark(at source.Position) protocol.Position {
 	if line < 0 || line >= len(d.at) {
 		return protocol.Position{}
 	}
-	return protocol.Position{Line: uint32(line), Character: d.unitsFor(line, column)}
+	return protocol.Position{
+		Line:      uint32(line),                     //nolint:gosec // LSP 3.17 counts lines in uint32
+		Character: uint32(d.unitsFor(line, column)), //nolint:gosec // LSP 3.17 counts code units in uint32
+	}
 }
 
 // lineAt returns the line that contains the byte at offset and the column of the byte in the
@@ -179,12 +183,12 @@ func (d document) sourceLine(s source.Span) string {
 // bytesFor returns the number of bytes of line n that units UTF-16 code units cover, up to the
 // length of the line. A rune outside the Basic Multilingual Plane is two code units and four
 // bytes.
-func (d document) bytesFor(n int, units uint32) int {
+func (d document) bytesFor(n, units int) int {
 	start, end := d.bounds(n)
-	if units <= uint32(d.plain[n]) {
-		return int(units)
+	if units <= d.plain[n] {
+		return units
 	}
-	counted := uint32(d.plain[n])
+	counted := d.plain[n]
 	for i := start + d.plain[n]; i < end; {
 		if counted >= units {
 			return i - start
@@ -201,15 +205,15 @@ func (d document) bytesFor(n int, units uint32) int {
 
 // unitsFor returns the number of UTF-16 code units that the first width bytes of line n
 // cover, up to the length of the line.
-func (d document) unitsFor(n, width int) uint32 {
+func (d document) unitsFor(n, width int) int {
 	start, end := d.bounds(n)
 	if width <= 0 {
 		return 0
 	}
 	if width <= d.plain[n] {
-		return uint32(width)
+		return width
 	}
-	counted := uint32(d.plain[n])
+	counted := d.plain[n]
 	for i := start + d.plain[n]; i < end && i-start < width; {
 		r, size := utf8.DecodeRune(d.content[i:end])
 		counted++

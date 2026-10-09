@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package treesitter
@@ -42,7 +42,8 @@ func (g Grammar) For(p string) *ts.Language {
 
 // each returns every grammar of g, Language first.
 func (g Grammar) each() []*ts.Language {
-	out := []*ts.Language{g.Language}
+	out := make([]*ts.Language, 0, 1+len(g.Dialects))
+	out = append(out, g.Language)
 	for _, dialect := range g.Dialects {
 		out = append(out, dialect)
 	}

@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lang
@@ -44,17 +44,17 @@ type DocStyle struct {
 	// as " * " in Java. Reading removes it and writing adds it.
 	Continuation string
 
-	// Inside reports whether the form documents the item that contains it,
-	// such as Rust's //! or a Python docstring, rather than the declaration
-	// that follows it.
-	Inside bool
-
 	// Element is the XML element that wraps the text of the form, such as
 	// summary in the XML documentation of C#, or empty for a form without
 	// markup. Writing puts text that does not start with a tag inside the
 	// element, on lines of its own, and [CommentStyle.Unwrapped] removes the
 	// element again.
 	Element string
+
+	// Inside reports whether the form documents the item that contains it,
+	// such as Rust's //! or a Python docstring, rather than the declaration
+	// that follows it.
+	Inside bool
 }
 
 // Unwrapped returns doc, documentation that [CommentStyle.Documentation]

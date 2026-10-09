@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp_test
@@ -164,9 +164,10 @@ func TestEdit(t *testing.T) {
 
 		t.Run("keeps the order of inserts at one offset", func(t *testing.T) {
 			t.Parallel()
-			edits := []string{insert(8, 5, "Late")}
+			const inserts = 20
+			edits := append(make([]string, 0, 1+inserts), insert(8, 5, "Late"))
 			var want strings.Builder
-			for i := range 20 {
+			for i := range inserts {
 				edits = append(edits, insert(0, 0, fmt.Sprintf("%d\n", i)))
 				fmt.Fprintf(&want, "%d\n", i)
 			}

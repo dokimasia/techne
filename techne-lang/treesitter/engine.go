@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package treesitter
@@ -28,19 +28,19 @@ import (
 // plan target read a file again only when its size or its modification time
 // changed, or when it declares a name that the call selects.
 type Engine struct {
-	fsys     fs.FS
-	declared lang.Declaration
-	grammar  Grammar
+	fsys  fs.FS
+	scans scans
 	// tags is the compiled query of each grammar. A query compiles against
 	// one grammar, so a language with a dialect has one query per grammar.
 	tags map[*ts.Language]*ts.Query
 	// shorthands is the compiled shorthands query of each grammar, and empty
 	// for a grammar without one.
 	shorthands map[*ts.Language]*ts.Query
-	scans      scans
 	// keywords are the words that a grammar of the engine parses as tokens
 	// without a name, such as func and type of Go.
 	keywords map[string]bool
+	grammar  Grammar
+	declared lang.Declaration
 }
 
 // ErrUnknownCapture reports a query with a definition capture that no kind
@@ -58,9 +58,9 @@ var ErrUnknownCapture = errors.New("treesitter: unknown definition capture")
 func New(fsys fs.FS, d lang.Declaration, g Grammar) (*Engine, error) {
 	switch {
 	case fsys == nil:
-		return nil, fmt.Errorf("treesitter: no filesystem to read from")
+		return nil, errors.New("treesitter: no filesystem to read from")
 	case d.Language == "":
-		return nil, fmt.Errorf("treesitter: declaration has no language")
+		return nil, errors.New("treesitter: declaration has no language")
 	case len(d.Extensions) == 0:
 		return nil, fmt.Errorf("treesitter: %q declares no extension", d.Language)
 	case d.Namespace == nil || d.Visibility == nil:
@@ -123,7 +123,7 @@ func New(fsys fs.FS, d lang.Declaration, g Grammar) (*Engine, error) {
 // grammar, and the kinds that are not words are its punctuation.
 func keywordsOf(grammar *ts.Language) iter.Seq[string] {
 	return func(yield func(string) bool) {
-		for id := range uint16(grammar.NodeKindCount()) {
+		for id := range uint16(grammar.NodeKindCount()) { //nolint:gosec // tree-sitter's TSSymbol is a uint16
 			kind := grammar.NodeKindForId(id)
 			if grammar.NodeKindIsVisible(id) && !grammar.NodeKindIsNamed(id) && isIdentifier(kind) && !yield(kind) {
 				return

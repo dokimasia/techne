@@ -1,9 +1,10 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lang
 
 import (
+	"errors"
 	"fmt"
 	"path"
 	"slices"
@@ -108,7 +109,7 @@ func (r *Registry) Languages() []source.Language {
 func validate(d Declaration) error {
 	switch {
 	case d.Language == "":
-		return fmt.Errorf("lang: declaration has no language")
+		return errors.New("lang: declaration has no language")
 	case len(d.Extensions) == 0:
 		return fmt.Errorf("lang: %q declares no extension", d.Language)
 	case d.IsTest == nil:

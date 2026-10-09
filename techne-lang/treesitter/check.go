@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package treesitter
@@ -117,7 +117,7 @@ func faults(walk *ts.TreeCursor, from *ts.Node) []*ts.Node {
 // by [lang.Clipped] to faultWidth bytes.
 func fault(node *ts.Node, content []byte) string {
 	if node.IsMissing() {
-		return fmt.Sprintf("expected %s", node.Kind())
+		return "expected " + node.Kind()
 	}
 	text := strings.TrimSpace(node.Utf8Text(content))
 	if text == "" {

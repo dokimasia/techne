@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp_test
@@ -45,6 +45,7 @@ func satisfies(e any, role engine.Role) bool {
 	case engine.RoleIndex:
 		_, ok := e.(engine.Indexer)
 		return ok
+	case engine.RoleUnset:
 	}
 	return false
 }

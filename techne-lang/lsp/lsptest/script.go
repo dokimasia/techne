@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsptest
@@ -6,6 +6,7 @@ package lsptest
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,6 +27,15 @@ import (
 
 // configured is the settings section that the Asks mode declares and asks the client for.
 const configured = "fake"
+
+// The methods of LSP that the script treats apart from the others.
+const (
+	methodDefinition = "textDocument/definition"
+	methodReferences = "textDocument/references"
+)
+
+// null is the result of a request without one, as JSON writes it.
+const null = "null"
 
 // The sections under which the Asks mode requests the indentation of a file, as its
 // declaration names them in [lsp.Server.Indentation].
@@ -48,7 +58,7 @@ const progressToken = "loading"
 
 // diagnosisToken starts the work-done progress token of each diagnosis of the Diagnoses and
 // DiagnosisStuck modes, and the number of the diagnosis ends it.
-const diagnosisToken = "lsptest/diagnosis/"
+const diagnosisToken = "lsptest/diagnosis/" //nolint:gosec // a progress token of LSP, which no credential is
 
 // diagnosisBegin is the value of the begin of a diagnosis of the Diagnoses and DiagnosisStuck
 // modes.
@@ -56,7 +66,7 @@ const diagnosisBegin = `{"kind":"begin","title":"` + DiagnosisPrefix + ` changed
 
 // burstToken starts the work-done progress token of each job of the Burst mode, and the number
 // of the job ends it.
-const burstToken = "lsptest/burst/"
+const burstToken = "lsptest/burst/" //nolint:gosec // a progress token of LSP, which no credential is
 
 // The values of the begin of a loading job and of the end of any job.
 const (
@@ -158,19 +168,70 @@ const (
 // message is one JSON-RPC message as the script reads it. A message without a method is a
 // reply to a request of the script.
 type message struct {
-	ID     *int64          `json:"id"`
+	ID    *int64 `json:"id"`
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error"`
 	Method string          `json:"method"`
 	Params json.RawMessage `json:"params"`
 	Result json.RawMessage `json:"result"`
-	Error  *struct {
-		Message string `json:"message"`
-	} `json:"error"`
 }
 
 // script is the state of one run of the scripted server.
 type script struct {
+	// started is the time at which the process began to serve.
+	started time.Time
+
+	out io.Writer
+
+	in *bufio.Reader
+
+	// reported is the report of each open document in the Quiet and Loads modes. opens counts
+	// the opens and the closes of each document, so a delayed report of an earlier open is
+	// dropped. analysed are the documents whose delayed report was sent.
+	reported map[string]string
+
+	opens map[string]int
+
+	analysed map[string]bool
+
+	// replies are the client's replies to the requests of the Asks mode, by request name.
+	replies map[string]string
+
+	// holding is the buffer the client gave the server, and versions its version, by
+	// document URI.
+	holding map[string]string
+
+	versions map[string]int
+
+	// copies is the Watching mode's copy of each file with the [Extension] suffix, by document
+	// URI, and dropped reports that it unregistered the watcher of the [Dropped] files.
+	copies map[string]string
+
 	mode Mode
-	in   *bufio.Reader
+
+	// root is the workspace URI of initialize. seen is the document URI of the latest
+	// request with a text document.
+	root, seen string
+
+	// requests is the path of the log of [RecordRequests], or empty.
+	requests string
+
+	// outside is the absolute path that references and renames name, or empty.
+	outside string
+
+	// renames is the template of the answer to textDocument/rename, or empty.
+	renames string
+
+	// client is the params of initialize, which declare the client capabilities.
+	client json.RawMessage
+
+	// checks counts the checks on disk of the DiskChecks mode, and diagnoses the diagnoses of the
+	// Diagnoses mode.
+	checks, diagnoses int
+
+	// delay is how long the Quiet and Loads modes take to publish the report of an open.
+	delay time.Duration
 
 	// sending guards out, loaded, reported, opens, analysed, checks and diagnoses. In the Loading
 	// and Diagnoses modes a timer goroutine writes the end of the loading job, in the Burst mode a
@@ -178,52 +239,17 @@ type script struct {
 	// open, in the DiskChecks mode a goroutine runs each check on disk, and in the Diagnoses mode
 	// a goroutine ends each diagnosis.
 	sending sync.Mutex
-	out     io.Writer
-	loaded  bool
-	// reported is the report of each open document in the Quiet and Loads modes. opens counts
-	// the opens and the closes of each document, so a delayed report of an earlier open is
-	// dropped. analysed are the documents whose delayed report was sent.
-	reported map[string]string
-	opens    map[string]int
-	analysed map[string]bool
-	// checks counts the checks on disk of the DiskChecks mode, and diagnoses the diagnoses of the
-	// Diagnoses mode.
-	checks, diagnoses int
 
-	// root is the workspace URI of initialize. seen is the document URI of the latest
-	// request with a text document.
-	root, seen string
-	// client is the params of initialize, which declare the client capabilities.
-	client json.RawMessage
-	// replies are the client's replies to the requests of the Asks mode, by request name.
-	replies map[string]string
-	// holding is the buffer the client gave the server, and versions its version, by
-	// document URI.
-	holding  map[string]string
-	versions map[string]int
+	loaded bool
+
 	// synced reports whether the Watches mode's model of the files agrees with the disk.
 	synced bool
-	// copies is the Watching mode's copy of each file with the [Extension] suffix, by document
-	// URI, and dropped reports that it unregistered the watcher of the [Dropped] files.
-	copies  map[string]string
-	dropped bool
-	// requests is the path of the log of [RecordRequests], or empty.
-	requests string
 
-	// outside is the absolute path that references and renames name, or empty.
-	outside string
-	// renames is the template of the answer to textDocument/rename, or empty.
-	renames string
+	dropped bool
 
 	// restarted reports that [RecordStarts] recorded a start before the start of this process.
 	// muted reports that the Mutes mode responds with empty results.
 	restarted, muted bool
-
-	// delay is how long the Quiet and Loads modes take to publish the report of an open.
-	delay time.Duration
-
-	// started is the time at which the process began to serve.
-	started time.Time
 }
 
 // serve runs the script over stdin and stdout until the client sends exit or closes stdin,
@@ -234,7 +260,7 @@ func serve(mode Mode) int {
 		if err := record(log, "started"); err != nil {
 			return 4
 		}
-		recorded, err := os.ReadFile(log)
+		recorded, err := os.ReadFile(log) //nolint:gosec // the test's log
 		if err != nil {
 			return 4
 		}
@@ -290,17 +316,20 @@ func serve(mode Mode) int {
 	}
 }
 
-// record appends line to the file at log.
+// record appends line to the file at log, which a test names in the environment.
 func record(log, line string) error {
-	file, err := os.OpenFile(log, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	file, err := os.OpenFile(log, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) //nolint:gosec // the test's log
 	if err != nil {
-		return err
+		return fmt.Errorf("lsptest: open %s: %w", log, err)
 	}
 	if _, err := fmt.Fprintln(file, line); err != nil {
 		_ = file.Close()
-		return err
+		return fmt.Errorf("lsptest: write %s: %w", log, err)
 	}
-	return file.Close()
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("lsptest: close %s: %w", log, err)
+	}
+	return nil
 }
 
 // handle acts on one request or notification. It reports the exit status and true when the
@@ -335,12 +364,14 @@ func (s *script) handle(m message) (int, bool) {
 		case DiagnosisStuck:
 			s.send(created(idDiagnosis, diagnosisToken+"0"))
 			s.send(progressOf(diagnosisToken+"0", diagnosisBegin))
+		default:
+			// Another mode starts no work after the handshake.
 		}
 	case "textDocument/didSave":
 		if s.mode == DiskChecks {
 			go s.diskCheck()
 		}
-	case "textDocument/references":
+	case methodReferences:
 		if s.mode == Exits && !s.restarted {
 			return 0, true
 		}
@@ -371,6 +402,7 @@ func (s *script) projectInfo(id *int64, params json.RawMessage) {
 	}
 	if json.Unmarshal(params, &held) != nil || held.Command != tsserverCommand || len(held.Arguments) < 2 ||
 		json.Unmarshal(held.Arguments[1], &args) != nil {
+
 		s.refuse(id, "No Project.")
 		return
 	}
@@ -398,7 +430,7 @@ const tsserverCommand = "typescript.tsserverRequest"
 // lists are the requests whose result is a list, to which the Mutes mode responds with an empty
 // list.
 var lists = []string{
-	"textDocument/documentSymbol", "textDocument/definition", "textDocument/references",
+	"textDocument/documentSymbol", methodDefinition, methodReferences,
 	"textDocument/implementation", "textDocument/prepareCallHierarchy", "callHierarchy/incomingCalls",
 	"callHierarchy/outgoingCalls", "textDocument/prepareTypeHierarchy", "typeHierarchy/supertypes",
 	"typeHierarchy/subtypes", "textDocument/codeAction", "textDocument/formatting",
@@ -414,7 +446,7 @@ func emptied(method string) string {
 	case slices.Contains(lists, method):
 		return "[]"
 	}
-	return "null"
+	return null
 }
 
 // initialize responds to the handshake. Before the response it sends a log message and a
@@ -438,6 +470,8 @@ func (s *script) initialize(m message) (int, bool) {
 		fmt.Fprintln(os.Stderr, Dying)
 		time.Sleep(SlowStart)
 		return 3, true
+	default:
+		// Another mode answers the handshake at once.
 	}
 
 	s.send(`{"jsonrpc":"2.0","method":"window/logMessage","params":{"type":3,"message":"starting"}}`)
@@ -472,6 +506,8 @@ func (s *script) initialize(m message) (int, bool) {
 		go s.burst()
 	case Orphans:
 		orphan()
+	default:
+		// Another mode starts no job before its response.
 	}
 	s.answer(m.ID, s.capabilities())
 	return 0, false
@@ -498,7 +534,8 @@ func (s *script) indenting() string {
 // orphan starts the child of the Orphans mode: the binary of the scripted server, which sleeps
 // for [OrphanTime] with the stderr of the server and exits. The server does not wait for it.
 func orphan() {
-	child := exec.Command(os.Args[0])
+	// The child outlives the server, so its context never ends.
+	child := exec.CommandContext(context.Background(), os.Args[0]) //nolint:gosec // the server's own binary
 	child.Env = append(os.Environ(), envOrphan+"=1")
 	child.Stderr = os.Stderr
 	_ = child.Start()
@@ -695,12 +732,12 @@ func (s *script) quietClose(doc string) {
 // the report of the change, and the Diagnoses mode diagnoses the document.
 func (s *script) changed(params json.RawMessage) {
 	var held struct {
-		TextDocument struct {
-			Version int `json:"version"`
-		} `json:"textDocument"`
 		ContentChanges []struct {
 			Text string `json:"text"`
 		} `json:"contentChanges"`
+		TextDocument struct {
+			Version int `json:"version"`
+		} `json:"textDocument"`
 	}
 	if json.Unmarshal(params, &held) != nil || len(held.ContentChanges) == 0 {
 		return
@@ -714,6 +751,8 @@ func (s *script) changed(params json.RawMessage) {
 		s.quietChange(s.seen)
 	case Diagnoses:
 		s.diagnosis(s.seen)
+	default:
+		// Another mode keeps the buffer and the version alone.
 	}
 }
 
@@ -779,8 +818,9 @@ func (s *script) watchedChanges(params json.RawMessage) (int, bool) {
 // stale is one error on line 0 for each occurrence of [Broken] in the Watching mode's copy of
 // b.fake.
 func (s *script) stale() []string {
-	var out []string
-	for range strings.Count(s.copies[s.root+"/b"+Extension], Broken) {
+	count := strings.Count(s.copies[s.root+"/b"+Extension], Broken)
+	out := make([]string, 0, count)
+	for range count {
 		out = append(out, fmt.Sprintf(`{"range":%s,"severity":1,"code":"E903","source":"fakecheck",`+
 			`"message":%q}`, lineStart, "b"+Extension+" uses "+Broken))
 	}
@@ -790,17 +830,16 @@ func (s *script) stale() []string {
 // request responds to one request.
 func (s *script) request(m message) {
 	id := m.ID
-	if s.mode == Mutes && !s.restarted &&
-		(m.Method == "textDocument/references" || m.Method == "textDocument/definition") {
+	if s.mode == Mutes && !s.restarted && (m.Method == methodReferences || m.Method == methodDefinition) {
 		s.muted = true
 	}
 	if s.muted {
 		s.answer(id, emptied(m.Method))
 		return
 	}
-	if s.mode == Cancels && (m.Method == "textDocument/definition" || m.Method == "textDocument/references") {
+	if s.mode == Cancels && (m.Method == methodDefinition || m.Method == methodReferences) {
 		code, why := requestCancelled, "The request has been cancelled"
-		if m.Method == "textDocument/references" {
+		if m.Method == methodReferences {
 			code, why = contentModified, "The content was modified, and the request cancelled"
 		}
 		s.send(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"error":{"code":%d,"message":%q}}`, *id, code, why))
@@ -809,9 +848,9 @@ func (s *script) request(m message) {
 	switch m.Method {
 	case "textDocument/documentSymbol":
 		s.answer(id, s.symbols())
-	case "textDocument/definition":
+	case methodDefinition:
 		s.answer(id, s.definition(m.Params))
-	case "textDocument/references":
+	case methodReferences:
 		if s.mode == Hangs {
 			return
 		}
@@ -835,6 +874,8 @@ func (s *script) request(m message) {
 		case Projected:
 			s.answer(id, s.types(s.seen))
 			return
+		default:
+			// Another mode answers with the declaration of Store.
 		}
 		s.answer(id, "["+location(s.seen, storeName)+"]")
 	case "textDocument/prepareCallHierarchy":
@@ -863,7 +904,7 @@ func (s *script) request(m message) {
 			return
 		}
 		s.ask(idPerform, fmt.Sprintf(`"workspace/applyEdit","params":{"edit":%s}`, s.lift("function")))
-		s.answer(id, "null")
+		s.answer(id, null)
 	case "workspace/willRenameFiles":
 		s.answer(id, s.move(m.Params))
 	case "textDocument/prepareRename":
@@ -875,7 +916,7 @@ func (s *script) request(m message) {
 	case "workspace/diagnostic":
 		s.answer(id, s.workspaceReport())
 	default:
-		s.answer(id, "null")
+		s.answer(id, null)
 	}
 }
 
@@ -909,6 +950,8 @@ func (s *script) capabilities() string {
 			fmt.Sprintf(`"executeCommandProvider":{"commands":[%q]}`, performed))
 	case Compiles, Unbound, WorkspaceDiagnostics:
 		fields = append(fields, `"codeActionProvider":{"codeActionKinds":["quickfix"]}`)
+	default:
+		// Another mode offers no code action.
 	}
 	if s.mode != Moveless && s.declares("capabilities", "workspace", "fileOperations", "willRename") {
 		fields = append(fields, fmt.Sprintf(`"workspace":{"fileOperations":{"willRename":{"filters":[`+
@@ -963,6 +1006,8 @@ func (s *script) symbols() string {
 		after := symbol("<function>", kindFunction, "", afterRange, afterName,
 			symbol("After", kindFunction, "func() int", afterRange, afterName, ""))
 		return "[" + symbol("a.fake", kindFile, "", fileRange, lineStart, shop+","+after) + "]"
+	default:
+		// Another mode answers with the symbols of Content.
 	}
 	out := []string{
 		symbol("Store", kindStruct, "", storeRange, storeName,
@@ -1002,7 +1047,7 @@ func (s *script) definition(params json.RawMessage) string {
 		return fmt.Sprintf(`[{"targetUri":%q,"targetRange":%s,"targetSelectionRange":%s}]`,
 			s.seen, storeRange, storeName)
 	case Unresolved, Unbound:
-		return "null"
+		return null
 	case Unicode, Strict:
 		return "[" + location(s.seen, stoereName) + "]"
 	case Pointed, Receivers, Impls, Wrapped:
@@ -1030,7 +1075,7 @@ func (s *script) definition(params json.RawMessage) string {
 	case Minified, Nested, Uncalled:
 		found := called(s.holding[s.seen], bundleCallee)
 		if len(found) == 0 {
-			return "null"
+			return null
 		}
 		return "[" + location(s.seen, found[0]) + "]"
 	case Shorthand:
@@ -1047,6 +1092,8 @@ func (s *script) definition(params json.RawMessage) string {
 			}, ",") + "]"
 		}
 		return "[]"
+	default:
+		// Another mode answers with the declaration of Store.
 	}
 	return "[" + location(s.seen, storeName) + "]"
 }
@@ -1155,6 +1202,8 @@ func (s *script) actions(params json.RawMessage) string {
 	case Commands:
 		return fmt.Sprintf(`[{"title":"Extract into function","kind":%q,`+
 			`"command":{"title":"Extract","command":%q,"arguments":[]}}]`, extractKind, performed)
+	default:
+		// Another mode offers no action.
 	}
 	return "[]"
 }
@@ -1173,6 +1222,7 @@ func (s *script) mends(params json.RawMessage) string {
 	}
 	if json.Unmarshal(params, &held) != nil || len(held.Context.Diagnostics) == 0 ||
 		!slices.Contains(held.Context.Only, "quickfix") {
+
 		return "[]"
 	}
 	return fmt.Sprintf(`[{"title":"Declare it","kind":"quickfix","edit":{"changes":{%q:[`+
@@ -1190,7 +1240,7 @@ func (s *script) resolve(params json.RawMessage) string {
 		} `json:"data"`
 	}
 	if json.Unmarshal(params, &held) != nil {
-		return "null"
+		return null
 	}
 	return fmt.Sprintf(`{"title":%q,"kind":%q,"edit":%s}`, held.Title, held.Kind, s.lift(held.Data.Pick))
 }
@@ -1218,7 +1268,7 @@ func (s *script) move(params json.RawMessage) string {
 		} `json:"files"`
 	}
 	if json.Unmarshal(params, &held) != nil || len(held.Files) == 0 {
-		return "null"
+		return null
 	}
 	moved := held.Files[0].OldURI
 	edits := fmt.Sprintf(`%q:[{"range":%s,"newText":"Vault"}]`, moved, storeName)
@@ -1234,16 +1284,18 @@ func (s *script) move(params json.RawMessage) string {
 func (s *script) prepare(params json.RawMessage) string {
 	switch s.mode {
 	case Unnameable:
-		return "null"
+		return null
 	case Strict:
 		if line, character := position(params); line != 2 || character != 17 {
-			return "null"
+			return null
 		}
 		return stoereName
 	case FromUse:
 		if line, character := position(params); line == 2 && character == 5 {
-			return "null"
+			return null
 		}
+	default:
+		// Another mode renames Store.
 	}
 	return storeName
 }
@@ -1254,7 +1306,7 @@ func (s *script) rename(id *int64, params json.RawMessage) {
 	line, character := position(params)
 	switch {
 	case s.mode == FromUse && line == 2 && character == 5:
-		s.answer(id, "null")
+		s.answer(id, null)
 	case s.mode == Conflicts:
 		s.refuse(id, "renaming this type conflicts with func in same block")
 	case s.mode == Opened || s.mode == Short || s.mode == Qualified || s.scoped():
@@ -1372,6 +1424,8 @@ func (s *script) diagnose(doc string) string {
 		return "[" + strings.Join(out, ",") + "]"
 	case Minified, Nested, Uncalled:
 		return "[]"
+	default:
+		// Another mode reports the problems of Content.
 	}
 	return problems
 }
@@ -1400,8 +1454,9 @@ func (s *script) faults(doc string) []string {
 // workspaceReport returns the result of workspace/diagnostic, with a full report for each file
 // that [script.files] returns.
 func (s *script) workspaceReport() string {
-	var out []string
-	for _, doc := range s.files() {
+	files := s.files()
+	out := make([]string, 0, len(files))
+	for _, doc := range files {
 		out = append(out, fmt.Sprintf(`{"kind":"full","uri":%q,"version":null,"items":[%s]}`,
 			doc, strings.Join(s.faults(doc), ",")))
 	}
@@ -1631,8 +1686,8 @@ func (s *script) canonical(doc string) string {
 	if s.mode != Canonical || at == "" {
 		return doc
 	}
-	if real, err := filepath.EvalSymlinks(at); err == nil {
-		return string(uri.File(real))
+	if resolved, err := filepath.EvalSymlinks(at); err == nil {
+		return string(uri.File(resolved))
 	}
 	if dir, err := filepath.EvalSymlinks(filepath.Dir(at)); err == nil {
 		return string(uri.File(filepath.Join(dir, filepath.Base(at))))
@@ -1912,7 +1967,7 @@ func frame(from *bufio.Reader) ([]byte, error) {
 	for {
 		line, err := from.ReadString('\n')
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("lsptest: read a header: %w", err)
 		}
 		line = strings.TrimRight(line, "\r\n")
 		if line == "" {
@@ -1927,6 +1982,8 @@ func frame(from *bufio.Reader) ([]byte, error) {
 		return nil, io.EOF
 	}
 	body := make([]byte, length)
-	_, err := io.ReadFull(from, body)
-	return body, err
+	if _, err := io.ReadFull(from, body); err != nil {
+		return nil, fmt.Errorf("lsptest: read a body: %w", err)
+	}
+	return body, nil
 }

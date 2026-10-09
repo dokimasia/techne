@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp
@@ -207,16 +207,19 @@ var globalBlock = regexp.MustCompile(`(?m)^[ \t]*(?:declare\s+)?global\s*\{`)
 var specifiers = regexp.MustCompile(
 	`(?:\bfrom|\bimport\s*\(?|\brequire\s*\()\s*["']([^"'\n]+)["']|<reference\s+path\s*=\s*["']([^"'\n]+)["']`)
 
+// tsx is the extension of a TypeScript file with JSX.
+const tsx = ".tsx"
+
 // resolvable are the extensions that tsserver appends to a module specifier, in the order in
 // which it tries them: those of TypeScript, then those of JavaScript for a project that allows
 // JavaScript.
-var resolvable = []string{".ts", ".tsx", ".d.ts", ".mts", ".cts", ".d.mts", ".d.cts", ".js", ".jsx", ".mjs", ".cjs"}
+var resolvable = []string{".ts", tsx, ".d.ts", ".mts", ".cts", ".d.mts", ".d.cts", ".js", ".jsx", ".mjs", ".cjs"}
 
 // compiled maps the extension of a JavaScript file to the extensions of the TypeScript files that
 // compile to it. tsserver resolves a specifier of the JavaScript file to such a file.
 var compiled = map[string][]string{
-	".js":  {".ts", ".tsx", ".d.ts"},
-	".jsx": {".tsx"},
+	".js":  {".ts", tsx, ".d.ts"},
+	".jsx": {tsx},
 	".mjs": {".mts", ".d.mts"},
 	".cjs": {".cts", ".d.cts"},
 }
@@ -242,9 +245,9 @@ const (
 // [Engine.reaching]. It reads each file at most once.
 type reach struct {
 	engine   *Engine
-	projects []string             // the directories of the projects that tsserver loaded
-	declared source.Path          // the file of the declaration
 	known    map[source.Path]bool // whether the imports of a file lead to the declaration
+	declared source.Path          // the file of the declaration
+	projects []string             // the directories of the projects that tsserver loaded
 }
 
 // leads reports whether the imports of the file at p lead to the declaration. They do when p, or
@@ -350,7 +353,8 @@ func (r *reach) resolved(base source.Path) ([]source.Path, bool) {
 			out = append(out, source.Path(one))
 		}
 	}
-	if info, err := os.Stat(r.engine.fullPath(base)); len(out) == 0 && err == nil && info.IsDir() {
+	info, err := os.Stat(r.engine.fullPath(base)) //nolint:gosec // lang.Outside keeps base in the workspace
+	if len(out) == 0 && err == nil && info.IsDir() {
 		return nil, false
 	}
 	return out, true
@@ -369,7 +373,7 @@ func (r *reach) linked(p source.Path, specifier string) bool {
 	}
 	for dir := filepath.Dir(r.engine.fullPath(p)); ; dir = filepath.Dir(dir) {
 		link := filepath.Join(dir, nodeModules, filepath.FromSlash(name))
-		if info, err := os.Lstat(link); err == nil {
+		if info, err := os.Lstat(link); err == nil { //nolint:gosec // node looks up packages above the workspace
 			if info.Mode()&os.ModeSymlink == 0 {
 				return false
 			}
@@ -409,7 +413,7 @@ func (e *Engine) projectOf(dir string, nearest map[string]string) string {
 
 // fileExists reports whether a file is at full.
 func fileExists(full string) bool {
-	info, err := os.Stat(full)
+	info, err := os.Stat(full) //nolint:gosec // a stat of a candidate module, which reads no content
 	return err == nil && !info.IsDir()
 }
 

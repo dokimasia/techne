@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp_test
@@ -171,9 +171,9 @@ func TestEngine(t *testing.T) {
 
 		t.Run("maps a path the server resolves through a symbolic link into the workspace", func(t *testing.T) {
 			t.Parallel()
-			real := lsptest.Workspace(t, sample())
+			root := lsptest.Workspace(t, sample())
 			link := filepath.Join(t.TempDir(), "link")
-			assert.NoError(t, os.Symlink(real, link), "the test links "+link+" to "+real)
+			assert.NoError(t, os.Symlink(root, link), "the test links "+link+" to "+root)
 			e := lsptest.Engine(t, link, lsptest.Server(lsptest.Canonical))
 
 			got, err := e.Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())

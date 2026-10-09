@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp
@@ -180,6 +180,7 @@ func (e *Engine) targeted(req engine.Request, target edit.Target) (lang.Files, b
 			return lang.Files{}, false, err
 		}
 		return files, len(files.Read) == 0 && len(files.Unread) == 0, nil
+	case edit.TargetUnset, edit.TargetFile:
 	}
 	return lang.Files{}, false, fmt.Errorf("%w: %s names a declaration or a span, and this target names neither",
 		engine.ErrRefuse, edit.RenameSymbol)

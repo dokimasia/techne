@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp
@@ -41,7 +41,7 @@ type Shorthands interface {
 func (e *Engine) shorthanded(ctx context.Context, held *session, changes []edit.Change) (*trust.Caveat, error) {
 	reads, implements := e.outliner.(Shorthands)
 	if !implements {
-		return nil, nil
+		return nil, nil //nolint:nilnil // a nil caveat is no caveat
 	}
 	s := spelling{
 		engine: e, session: held, found: newFinder(e, held), reads: reads,

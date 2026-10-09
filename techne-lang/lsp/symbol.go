@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp
@@ -35,7 +35,7 @@ func (e *Engine) symbols(ctx context.Context, held *session, doc document) ([]se
 	}
 	answered, err := e.documentSymbols(ctx, held, doc.path)
 	if err != nil {
-		return nil, fmt.Errorf("lsp: %s: symbols of %s: %w", e.server.Name, doc.path, err)
+		return nil, err
 	}
 
 	unit := source.Path(e.declared.Namespace(string(doc.path)))
@@ -62,10 +62,14 @@ func (e *Engine) documentSymbols(
 	err := protocol.Call(ctx, held.conn, protocol.MethodTextDocumentDocumentSymbol,
 		&protocol.DocumentSymbolParams{TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(e.fullPath(p))}},
 		&raw)
-	if err != nil {
-		return nil, err
+	var answered protocol.DocumentSymbolResult
+	if err == nil {
+		answered, err = decodedSymbols(raw)
 	}
-	return decodedSymbols(raw)
+	if err != nil {
+		return nil, fmt.Errorf("lsp: %s: symbols of %s: %w", e.server.Name, p, err)
+	}
+	return answered, nil
 }
 
 // wireSymbol is one entry of a reply to textDocument/documentSymbol in either form of LSP 3.17:
@@ -74,14 +78,14 @@ func (e *Engine) documentSymbols(
 // in the types of the wire and without decoder methods, so encoding/json decodes it by its
 // fields. A type of go.lsp.dev/protocol has decoder methods, which encoding/json calls.
 type wireSymbol struct {
-	Name           string        `json:"name"`
 	Detail         *string       `json:"detail"`
-	Kind           uint32        `json:"kind"`
-	Range          wireRange     `json:"range"`
-	SelectionRange wireRange     `json:"selectionRange"`
-	Children       []wireSymbol  `json:"children"`
 	Location       *wireLocation `json:"location"`
 	ContainerName  *string       `json:"containerName"`
+	Name           string        `json:"name"`
+	Children       []wireSymbol  `json:"children"`
+	Range          wireRange     `json:"range"`
+	SelectionRange wireRange     `json:"selectionRange"`
+	Kind           uint32        `json:"kind"`
 }
 
 // wireLocation is a Location of LSP 3.17 in the types of the wire.
@@ -380,11 +384,11 @@ type finder struct {
 // outline is the document of one file and its declarations, both empty for a file that the
 // engine does not read.
 type outline struct {
+	doc     document
 	symbols []sema.Symbol
 	// offered are the declarations of symbols that the file offers to the rest of a program:
 	// no import, parameter, label or local declaration.
 	offered []sema.Symbol
-	doc     document
 }
 
 // outlined returns the outline of doc with symbols.

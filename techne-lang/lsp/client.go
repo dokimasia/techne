@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp
@@ -37,10 +37,13 @@ const (
 type answers struct {
 	protocol.UnimplementedClient
 
-	root        string
-	settings    map[string]any
+	settings map[string]any
+
+	offering *asking
+
 	indentation Indentation
-	offering    *asking
+
+	root string
 }
 
 // RegisterCapability accepts a registration. The roles read the capabilities of initialize, and
@@ -73,74 +76,6 @@ func (a answers) Configuration(
 		out = append(out, a.setting(item.Section))
 	}
 	return out, nil
-}
-
-// indented returns the value of an item that requests the indentation of a file, as
-// [lang.Indentation] reads it from the file on disk, and reports whether item requests it: its
-// section is one that [Server.Indentation] names, and its scope is a file of the workspace of
-// at most [lang.Largest] bytes.
-func (a answers) indented(item protocol.ConfigurationItem) (protocol.LSPAny, bool) {
-	if item.Section == nil || *item.Section == "" || item.ScopeURI == nil {
-		return nil, false
-	}
-	var value func(lang.Indent) any
-	switch *item.Section {
-	case a.indentation.Options:
-		value = func(i lang.Indent) any {
-			return protocol.FormattingOptions{TabSize: uint32(i.Width), InsertSpaces: i.Spaces}
-		}
-	case a.indentation.Size:
-		value = func(i lang.Indent) any { return i.Width }
-	case a.indentation.Spaces:
-		value = func(i lang.Indent) any { return i.Spaces }
-	default:
-		return nil, false
-	}
-	content, read := a.file(*item.ScopeURI)
-	if !read {
-		return nil, false
-	}
-	raw, err := json.Marshal(value(lang.Indentation(content)))
-	if err != nil {
-		return nil, false
-	}
-	return protocol.LSPAny(raw), true
-}
-
-// file returns the content of the file that u names, and reports false for a URI that names no
-// file of the workspace, and for a file larger than [lang.Largest].
-func (a answers) file(u uri.URI) ([]byte, bool) {
-	full := u.FsPath()
-	relative, err := filepath.Rel(a.root, full)
-	if full == "" || err != nil || lang.Outside(source.Path(filepath.ToSlash(relative))) {
-		return nil, false
-	}
-	info, err := os.Stat(full)
-	if err != nil || !info.Mode().IsRegular() || info.Size() > lang.Largest {
-		return nil, false
-	}
-	content, err := os.ReadFile(full)
-	return content, err == nil
-}
-
-// setting returns the settings under section as JSON, or null.
-func (a answers) setting(section *string) protocol.LSPAny {
-	var value any = a.settings
-	if section != nil && *section != "" {
-		under, declared := a.settings[*section]
-		if !declared {
-			return protocol.LSPAny(nothing)
-		}
-		value = under
-	}
-	if value == nil {
-		return protocol.LSPAny(nothing)
-	}
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return protocol.LSPAny(nothing)
-	}
-	return protocol.LSPAny(raw)
 }
 
 // WorkspaceFolders returns the workspace root as the only folder, because a server that is
@@ -197,6 +132,75 @@ func (answers) TextDocumentContentRefresh(
 	return nil
 }
 
+// indented returns the value of an item that requests the indentation of a file, as
+// [lang.Indentation] reads it from the file on disk, and reports whether item requests it: its
+// section is one that [Server.Indentation] names, and its scope is a file of the workspace of
+// at most [lang.Largest] bytes.
+func (a answers) indented(item protocol.ConfigurationItem) (protocol.LSPAny, bool) {
+	if item.Section == nil || *item.Section == "" || item.ScopeURI == nil {
+		return nil, false
+	}
+	var value func(lang.Indent) any
+	switch *item.Section {
+	case a.indentation.Options:
+		value = func(i lang.Indent) any {
+			width := uint32(i.Width) //nolint:gosec // the width of a line of a file of at most lang.Largest bytes
+			return protocol.FormattingOptions{TabSize: width, InsertSpaces: i.Spaces}
+		}
+	case a.indentation.Size:
+		value = func(i lang.Indent) any { return i.Width }
+	case a.indentation.Spaces:
+		value = func(i lang.Indent) any { return i.Spaces }
+	default:
+		return nil, false
+	}
+	content, read := a.file(*item.ScopeURI)
+	if !read {
+		return nil, false
+	}
+	raw, err := json.Marshal(value(lang.Indentation(content)))
+	if err != nil {
+		return nil, false
+	}
+	return protocol.LSPAny(raw), true
+}
+
+// file returns the content of the file that u names, and reports false for a URI that names no
+// file of the workspace, and for a file larger than [lang.Largest].
+func (a answers) file(u uri.URI) ([]byte, bool) {
+	full := u.FsPath()
+	relative, err := filepath.Rel(a.root, full)
+	if full == "" || err != nil || lang.Outside(source.Path(filepath.ToSlash(relative))) {
+		return nil, false
+	}
+	info, err := os.Stat(full)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > lang.Largest {
+		return nil, false
+	}
+	content, err := os.ReadFile(full)
+	return content, err == nil
+}
+
+// setting returns the settings under section as JSON, or null.
+func (a answers) setting(section *string) protocol.LSPAny {
+	var value any = a.settings
+	if section != nil && *section != "" {
+		under, declared := a.settings[*section]
+		if !declared {
+			return protocol.LSPAny(nothing)
+		}
+		value = under
+	}
+	if value == nil {
+		return protocol.LSPAny(nothing)
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return protocol.LSPAny(nothing)
+	}
+	return protocol.LSPAny(raw)
+}
+
 // asking keeps the edits that a server offers through workspace/applyEdit while techne
 // performs a command for it. typescript-language-server performs every refactoring this way.
 //
@@ -204,12 +208,12 @@ func (answers) TextDocumentContentRefresh(
 // other's edits. An edit offered while the window is closed is refused. asking is safe for
 // concurrent use.
 type asking struct {
+	kept []*protocol.WorkspaceEdit
 	// one is locked during one command.
 	one sync.Mutex
 	// mu guards open and kept, which the goroutine that reads the connection writes.
 	mu   sync.Mutex
 	open bool
-	kept []*protocol.WorkspaceEdit
 }
 
 // arm opens the window and returns the function that closes it and returns the edits offered

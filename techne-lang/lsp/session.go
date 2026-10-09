@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp
@@ -50,32 +50,42 @@ const stderrSize = 8 << 10
 // [session.stop]. Every field that changes after start has its own lock, so a question and a
 // stop can run concurrently.
 type session struct {
-	cmd  *exec.Cmd
-	conn jsonrpc2.Conn
-	// asks is the server as a [protocol.Server], with one method per request of LSP 3.17.
-	asks protocol.Server
-	// capable is the capabilities that the server returned from initialize.
-	capable protocol.ServerCapabilities
-	// stderr keeps the last [stderrSize] bytes that the server wrote to stderr.
-	stderr *tail
 	// started is the time before the process started. The first check on disk of a server
 	// covers a file that did not change after it.
 	started time.Time
+
+	conn jsonrpc2.Conn
+
+	// asks is the server as a [protocol.Server], with one method per request of LSP 3.17.
+	asks protocol.Server
+
+	cmd *exec.Cmd
+
+	// stderr keeps the last [stderrSize] bytes that the server wrote to stderr.
+	stderr *tail
+
 	// exited is closed when the process has exited. One goroutine waits for the process, from
 	// [start] on.
 	exited chan struct{}
 
-	// opening guards opened, the buffer of the server for each absolute path.
-	opening sync.Mutex
-	opened  map[string]sent
+	opened map[string]sent
 
-	reports  *reports
-	working  *working
-	watched  *watching
+	reports *reports
+
+	working *working
+
+	watched *watching
+
 	offering *asking
+
+	// capable is the capabilities that the server returned from initialize.
+	capable protocol.ServerCapabilities
 
 	// ends makes stop run once.
 	ends sync.Once
+
+	// opening guards opened, the buffer of the server for each absolute path.
+	opening sync.Mutex
 }
 
 // start runs the server that declared names in root and connects to it over stdin and stdout.
@@ -93,7 +103,8 @@ func start(ctx context.Context, declared Server, root string) (*session, error) 
 		offering: &asking{},
 	}
 
-	cmd := exec.Command(declared.Command[0], declared.Command[1:]...)
+	cmd := exec.CommandContext( //nolint:gosec // the server that the language module declares
+		context.WithoutCancel(ctx), declared.Command[0], declared.Command[1:]...)
 	cmd.Dir = root
 	if len(declared.Env) > 0 {
 		cmd.Env = os.Environ()
@@ -147,7 +158,7 @@ type timed struct {
 // Call sends the request method to the server and waits for its reply.
 func (c timed) Call(ctx context.Context, method string, params, result any) (jsonrpc2.ID, error) {
 	defer engine.Waiting(ctx)()
-	return c.Conn.Call(ctx, method, params, result)
+	return c.Conn.Call(ctx, method, params, result) //nolint:wrapcheck // replied wraps the error of each request
 }
 
 // replied returns err of the request what to server. An error response of the server, a
@@ -202,7 +213,7 @@ func (o ordered) Read(ctx context.Context) (jsonrpc2.Message, int64, error) {
 	msg, n, err := o.Stream.Read(ctx)
 	request, isRequest := msg.(jsonrpc2.RequestMessage)
 	if err != nil || !isRequest {
-		return msg, n, err
+		return msg, n, err //nolint:wrapcheck // the connection ends on the error of its stream
 	}
 	switch request.Method() {
 	case protocol.MethodTextDocumentPublishDiagnostics:
@@ -231,7 +242,7 @@ func (o ordered) Read(ctx context.Context) (jsonrpc2.Message, int64, error) {
 			o.watched.unregister(&params)
 		}
 	}
-	return msg, n, err
+	return msg, n, nil
 }
 
 // stop ends the server and returns the error of its shutdown.
@@ -262,6 +273,7 @@ func (s *session) stop(ctx context.Context) error {
 	if refused != nil &&
 		!errors.Is(refused, context.Canceled) &&
 		!errors.Is(refused, context.DeadlineExceeded) {
+
 		return fmt.Errorf("lsp: shutdown: %w", refused)
 	}
 	return nil
@@ -298,8 +310,8 @@ func (s *session) withStderr(err error) error {
 
 // tail keeps the last [stderrSize] bytes written to it. It is safe for concurrent use.
 type tail struct {
-	mu   sync.Mutex
 	kept []byte
+	mu   sync.Mutex
 }
 
 // Write keeps the end of what has been written, and never returns an error.
@@ -327,8 +339,16 @@ type pipes struct {
 	in  io.WriteCloser
 }
 
-func (p pipes) Read(into []byte) (int, error)  { return p.out.Read(into) }
-func (p pipes) Write(from []byte) (int, error) { return p.in.Write(from) }
+// Read reads from stdout. It returns the error of the pipe as it is, because a caller compares
+// the error with io.EOF.
+func (p pipes) Read(into []byte) (int, error) {
+	return p.out.Read(into) //nolint:wrapcheck // io.EOF documents that Read returns it unwrapped
+}
+
+// Write writes to stdin and returns the error of the pipe as it is, as Read does.
+func (p pipes) Write(from []byte) (int, error) {
+	return p.in.Write(from) //nolint:wrapcheck // the engine wraps the error of each message that it sends
+}
 
 // Close closes stdin and then stdout, and returns both errors joined. A server that reads
 // stdin ends its input when stdin closes.

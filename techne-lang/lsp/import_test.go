@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp_test
@@ -127,7 +127,7 @@ func TestImport(t *testing.T) {
 			t.Parallel()
 			got, err := importers(t, lsptest.Server(lsptest.Resolves), "store", ".", atStore)
 			assert.NoError(t, err, "Relate of the importers of store")
-			var sites []string
+			sites := make([]string, 0, len(got.Items))
 			for _, one := range got.Items {
 				sites = append(sites, fmt.Sprintf("%s:%d", one.At.Path, one.At.Start.Line))
 			}

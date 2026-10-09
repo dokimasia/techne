@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp
@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
@@ -163,7 +164,7 @@ func coded(code protocol.ProgressToken) string {
 	case protocol.String:
 		return string(held)
 	case protocol.Integer:
-		return fmt.Sprint(int32(held))
+		return strconv.Itoa(int(held))
 	}
 	return ""
 }
@@ -174,16 +175,16 @@ func coded(code protocol.ProgressToken) string {
 // each contain every diagnostic of the file that they cover. reports is safe for concurrent
 // use.
 type reports struct {
-	mu sync.Mutex
-	// ondisk reports whether a publish describes the file on disk, as the check on disk of a
-	// server that declares [Server.DiskCheck] publishes it, so a change of a buffer keeps it.
-	ondisk bool
 	// kept are the published diagnostics, and pulls the pulled diagnostics, of each file.
 	kept, pulls map[uri.URI][]protocol.Diagnostic
 	// released are the files whose buffer the engine released and has not opened again.
 	released map[uri.URI]bool
 	// waking has one channel per file that a caller waits on, which the next publish closes.
 	waking map[uri.URI]chan struct{}
+	mu     sync.Mutex
+	// ondisk reports whether a publish describes the file on disk, as the check on disk of a
+	// server that declares [Server.DiskCheck] publishes it, so a change of a buffer keeps it.
+	ondisk bool
 }
 
 // newReports returns an empty store. ondisk reports whether the publishes describe the files

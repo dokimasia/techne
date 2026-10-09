@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lang
@@ -38,6 +38,8 @@ type ignores struct {
 
 // pattern is one line of a .gitignore file.
 type pattern struct {
+	// parts are the segments of the pattern, in path.Match syntax.
+	parts []string
 	// negate reports a leading "!", which re-includes what an earlier
 	// pattern excluded.
 	negate bool
@@ -47,8 +49,6 @@ type pattern struct {
 	// anchored reports a slash before the last character, which makes the
 	// pattern match from the directory of its file.
 	anchored bool
-	// parts are the segments of the pattern, in path.Match syntax.
-	parts []string
 }
 
 // read adds the patterns of the .gitignore file in dir, if there is one.

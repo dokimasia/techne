@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsptest_test
@@ -107,7 +107,7 @@ func TestOutline(t *testing.T) {
 		t.Run("returns each function of a bundle", func(t *testing.T) {
 			t.Parallel()
 			got := outlined(t, lsptest.Bundle(2))
-			var names []string
+			names := make([]string, 0, len(got))
 			for _, one := range got {
 				names = append(names, one.Name)
 			}
@@ -266,7 +266,7 @@ func TestOutline(t *testing.T) {
 			root := lsptest.Workspace(t, map[string]string{"a.fake": lsptest.Literal})
 			got, err := shorthands(t, root).Shorthands(t.Context(), "a.fake")
 			assert.NoError(t, err, "Shorthands of a.fake")
-			var starts []int
+			starts := make([]int, 0, len(got))
 			for _, one := range got {
 				assert.Equal(t, lsptest.Literal[one.Start.Offset:one.End.Offset], "size", "the text of a span")
 				starts = append(starts, one.Start.Offset)

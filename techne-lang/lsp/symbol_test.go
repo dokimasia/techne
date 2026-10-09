@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp_test
@@ -81,8 +81,9 @@ func TestSymbol(t *testing.T) {
 		t.Run("returns two identities for two methods of one name", func(t *testing.T) {
 			t.Parallel()
 			e := serving(t, lsptest.Receivers, map[string]string{"a.fake": lsptest.Twins})
-			var ids []sema.ID
-			for _, line := range []int{4, 8} {
+			lines := []int{4, 8}
+			ids := make([]sema.ID, 0, len(lines))
+			for _, line := range lines {
 				at := source.Position{Line: line, Column: 16}
 				got, err := e.Resolve(t.Context(), engine.Request{Scope: "a.fake"}, at)
 				assert.NoError(t, err, "Resolve of the Get on line "+strconv.Itoa(line))

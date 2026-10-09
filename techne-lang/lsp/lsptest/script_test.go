@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsptest_test
@@ -49,7 +49,7 @@ type process struct {
 func run(t *testing.T, mode lsptest.Mode) *process {
 	t.Helper()
 	server := lsptest.Server(mode)
-	p := &process{cmd: exec.Command(server.Command[0], server.Command[1:]...)}
+	p := &process{cmd: exec.CommandContext(t.Context(), server.Command[0], server.Command[1:]...)}
 	p.cmd.Dir = t.TempDir()
 	p.cmd.Env = os.Environ()
 	for name, value := range server.Env {

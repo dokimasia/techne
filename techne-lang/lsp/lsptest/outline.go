@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsptest
@@ -65,11 +65,12 @@ type parser struct{ root string }
 // [sema.ImportedBy]. A line lists the name when one of its imports is the qualified name in of
 // or ends in it after a slash, as a/store ends in store. Each such line has one relation. Its
 // site is the span of the line and its far end is the file of the line. Relate reads the files
-// with the [Extension] suffix under the root in the order of [filepath.WalkDir], whatever the
-// scope of req. It stops at the [engine.Request.Limit] of req, as the port allows an engine to.
+// with the [Extension] suffix under the root through an [os.Root], in the order of
+// [fs.WalkDir], whatever the scope of req. It stops at the [engine.Request.Limit] of req, as
+// the port allows an engine to.
 //
-// Relate returns [engine.ErrDecline] for any other kind. It returns an error for a file that it
-// cannot read.
+// Relate returns [engine.ErrDecline] for any other kind. It returns an error for a root that it
+// cannot open and for a file that it cannot read.
 func (p parser) Relate(
 	_ context.Context,
 	req engine.Request,
@@ -80,21 +81,23 @@ func (p parser) Relate(
 		return engine.Result[sema.Relation]{}, fmt.Errorf("%w: lsptest: the parser relates no %s", engine.ErrDecline,
 			kind)
 	}
+	root, err := os.OpenRoot(p.root)
+	if err != nil {
+		return engine.Result[sema.Relation]{}, fmt.Errorf("lsptest: %w", err)
+	}
+	defer root.Close()
+	workspace := root.FS()
 	name := of.Name()
 	var out []sema.Relation
-	walked := filepath.WalkDir(p.root, func(at string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() || filepath.Ext(at) != Extension {
+	walked := fs.WalkDir(workspace, ".", func(at string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || path.Ext(at) != Extension {
 			return err
 		}
-		content, err := os.ReadFile(at)
+		content, err := fs.ReadFile(workspace, at)
 		if err != nil {
 			return fmt.Errorf("lsptest: read %s: %w", at, err)
 		}
-		relative, err := filepath.Rel(p.root, at)
-		if err != nil {
-			return fmt.Errorf("lsptest: the path of %s: %w", at, err)
-		}
-		file := source.Path(filepath.ToSlash(relative))
+		file := source.Path(at)
 		related := map[int]bool{}
 		for _, one := range declarations(file, string(content)) {
 			matches := one.Name == name || strings.HasSuffix(one.Name, "/"+name)
@@ -200,10 +203,10 @@ func (p parser) Outline(_ context.Context, req engine.Request) (engine.Result[se
 
 // found is one declaration that [declarations] reads, before its identity is known.
 type found struct {
-	kind     sema.Kind
 	name     string
 	receiver string
 	span     source.Span
+	kind     sema.Kind
 }
 
 // declarations returns the declarations of text, the content of the file at p, in the order of
@@ -222,9 +225,9 @@ func declarations(p source.Path, text string) []sema.Symbol {
 	spanned := func(n, from, to int) source.Span {
 		end := at(n, to)
 		if strings.HasSuffix(strings.TrimSpace(lines[n][from:to]), "{") {
-			for close := n + 1; close < len(lines); close++ {
-				if lines[close] == "}" {
-					end = at(close, 1)
+			for closing := n + 1; closing < len(lines); closing++ {
+				if lines[closing] == "}" {
+					end = at(closing, 1)
 					break
 				}
 			}

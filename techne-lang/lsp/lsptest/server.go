@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsptest
@@ -136,6 +136,8 @@ func Server(mode Mode, options ...Option) lsp.Server {
 		server.Diagnosis = DiagnosisPrefix
 	case DiagnosisStuck:
 		server.Diagnosis, server.Loading = DiagnosisPrefix, time.Second
+	default:
+		// The other modes run with the declaration above.
 	}
 	for _, option := range options {
 		option(&server)

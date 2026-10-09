@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package treesitter
@@ -91,9 +91,9 @@ type named struct {
 // time of the file, each distinct declaration the parse matched, and whether
 // the tree of the file contains a parse error.
 type scan struct {
-	size     int64
 	modified time.Time
 	declared []named
+	size     int64
 	faulty   bool
 }
 
@@ -105,8 +105,8 @@ func (s scan) selects(selected keep) bool {
 // scans keeps the latest scan of each file that the engine parsed, until the
 // engine closes. It is safe for concurrent use.
 type scans struct {
-	mu    sync.Mutex
 	files map[source.Path]scan
+	mu    sync.Mutex
 }
 
 // fresh returns the scan of the file at p, and reports whether the engine
@@ -234,17 +234,17 @@ func result[T any](items []T, files lang.Files, unparsed []source.Path, note str
 // declaration is one declaration the tags query matched, before its
 // metadata is read.
 type declaration struct {
-	kind sema.Kind
 	// node is the declaring node. It is valid while the tree is open.
 	node ts.Node
 	name string
 	// receiver is the name that a [Receiver] capture gives the type of the
 	// declaration, or empty.
 	receiver string
+	span     source.Span
 	// start is the first byte of the declaring node. Declarations with one
 	// start come from one statement that binds more than one name.
 	start uint
-	span  source.Span
+	kind  sema.Kind
 	// reexported reports that a [DefinitionReexport] capture matched the
 	// declaration.
 	reexported bool
@@ -492,12 +492,12 @@ func bound(node, named *ts.Node, walk *ts.TreeCursor, content []byte) []identifi
 
 // captured is what one match of the tags query captures of a declaration.
 type captured struct {
-	kind sema.Kind
 	// node is the declaring node, and named the node of its name.
 	node, named *ts.Node
 	// receiver is the node of the [Receiver] capture, or nil.
 	receiver *ts.Node
 	span     source.Span
+	kind     sema.Kind
 	// reexported reports that the definition capture is [DefinitionReexport].
 	reexported bool
 }

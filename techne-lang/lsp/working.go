@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp
@@ -82,27 +82,33 @@ const quiet = 300 * time.Millisecond
 // arrives with its begin. A created job counts as loading until its begin arrives with the
 // title of a diagnosis. working is safe for concurrent use.
 type working struct {
-	mu   sync.Mutex
-	open map[string]bool
-	// idle is closed while no job is open, and replaced when the first job of a run begins.
-	idle chan struct{}
 	last time.Time
 
-	// disk is the prefix of the token of a check on disk, or empty.
-	disk string
-	// checks are the begin times of the open checks on disk, by token.
-	checks map[string]time.Time
 	// ran is the begin time of the latest check on disk that ended, and saved the time of the
 	// latest textDocument/didSave that the client sent.
 	ran, saved time.Time
 
-	// diagnosis is the prefix of the title of a diagnosis, or empty.
-	diagnosis string
+	open map[string]bool
+
+	// idle is closed while no job is open, and replaced when the first job of a run begins.
+	idle chan struct{}
+
+	// checks are the begin times of the open checks on disk, by token.
+	checks map[string]time.Time
+
 	// diagnosing are the tokens of the open diagnoses.
 	diagnosing map[string]bool
 
 	// turned is closed and replaced when a check on disk or a diagnosis ends.
 	turned chan struct{}
+
+	// disk is the prefix of the token of a check on disk, or empty.
+	disk string
+
+	// diagnosis is the prefix of the title of a diagnosis, or empty.
+	diagnosis string
+
+	mu sync.Mutex
 }
 
 // newWorking returns an idle tracker without recorded activity, whose checks on disk have

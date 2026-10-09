@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package treesitter
@@ -292,6 +292,8 @@ func local(found []declaration, containers []int, i int) bool {
 		switch found[at].kind {
 		case sema.KindFunction, sema.KindMethod, sema.KindConstructor:
 			return true
+		default:
+			// A container of another kind leaves the search to the container above it.
 		}
 	}
 	return false

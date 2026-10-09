@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp
@@ -39,13 +39,15 @@ const everything = protocol.WatchKindCreate | protocol.WatchKindChange | protoco
 //
 // watching is safe for concurrent use.
 type watching struct {
+	// watchers are the watchers of each registration, by the id of the registration.
+	watchers map[string][]watcher
+
+	// stamps is the stamp of each file that a watcher matched at the last walk, by absolute path.
+	stamps map[string]stamp
+
 	root string
 
 	mu sync.Mutex
-	// watchers are the watchers of each registration, by the id of the registration.
-	watchers map[string][]watcher
-	// stamps is the stamp of each file that a watcher matched at the last walk, by absolute path.
-	stamps map[string]stamp
 }
 
 // newWatching returns the state of a server without watchers, in the workspace at root, an
@@ -66,9 +68,10 @@ func (w *watching) register(params *protocol.RegistrationParams) {
 		var options protocol.DidChangeWatchedFilesRegistrationOptions
 		if one.Method != protocol.MethodWorkspaceDidChangeWatchedFiles ||
 			protocol.Unmarshal(one.RegisterOptions, &options) != nil {
+
 			continue
 		}
-		var kept []watcher
+		kept := make([]watcher, 0, len(options.Watchers))
 		for _, held := range options.Watchers {
 			kept = append(kept, watched(held))
 		}

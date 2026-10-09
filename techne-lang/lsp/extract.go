@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp
@@ -373,7 +373,7 @@ func (e *Engine) declarations(ctx context.Context, held *session, p source.Path)
 	}
 	answered, err := e.documentSymbols(ctx, held, p)
 	if err != nil {
-		return nil, fmt.Errorf("lsp: %s: symbols of %s: %w", e.server.Name, p, err)
+		return nil, err
 	}
 	var out []placed
 	switch reported := answered.(type) {
@@ -423,7 +423,7 @@ func selection(doc document, span source.Span) (protocol.Range, bool) {
 	}
 	start, end := doc.bounds(last)
 	return protocol.Range{
-		Start: protocol.Position{Line: uint32(first)},
-		End:   protocol.Position{Line: uint32(last), Character: doc.unitsFor(last, end-start)},
+		Start: doc.mark(source.Position{Line: first}),
+		End:   doc.mark(source.Position{Line: last, Column: end - start}),
 	}, true
 }

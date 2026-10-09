@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp
@@ -95,7 +95,7 @@ func (e *Engine) lines(p source.Path) (func(line int) string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return func(n int) string { return doc.line(uint32(n)) }, nil
+	return doc.line, nil
 }
 
 // reached returns the completeness, the lowered tier and the caveats of a plan for the file

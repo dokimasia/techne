@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp
@@ -27,18 +27,6 @@ var roles = []engine.Role{
 // Server declares the language server of one language. A language module declares one whether
 // or not the program is installed, and [Server.Installed] reports whether it is.
 type Server struct {
-	// Name is the name of the server, such as gopls or rust-analyzer. A provenance and a
-	// capability report name the server by it.
-	Name string
-
-	// Command is the program and its arguments. [Server.Installed] looks the program up on
-	// PATH.
-	Command []string
-
-	// LanguageID is the LSP 3.17 language identifier of the files of the language: one of the
-	// Identity constants.
-	LanguageID string
-
 	// Dialects maps a file extension to the language identifier of a dialect that the same
 	// server serves, such as ".tsx" to typescriptreact.
 	Dialects map[string]string
@@ -47,32 +35,26 @@ type Server struct {
 	// an entry is not served. [Binding] returns the map of a server with a type checker.
 	Serves map[engine.Role]trust.Fidelity
 
-	// Unrelated are the relations whose request the server answers with other relations, which
-	// the engine declines, so another engine of the language answers them. gopls answers the
-	// type hierarchy of a Go type with the interfaces that the type implements, which are not
-	// the types that it embeds.
-	Unrelated []sema.RelationKind
-
 	// Settings are sent as the initializationOptions of initialize and in reply to
 	// workspace/configuration.
 	Settings map[string]any
+
+	// Env are the environment variables that the server runs with, added to the environment of
+	// techne.
+	Env map[string]string
 
 	// Indentation names the sections of workspace/configuration under which the server requests
 	// the indentation of a file, which it applies to the code of a code action. For a file of
 	// the workspace, the client returns the indentation of the file under them.
 	Indentation Indentation
 
-	// Env are the environment variables that the server runs with, added to the environment of
-	// techne.
-	Env map[string]string
+	// Name is the name of the server, such as gopls or rust-analyzer. A provenance and a
+	// capability report name the server by it.
+	Name string
 
-	// Extracts is the code action that extracts a function, or the zero value for a server
-	// without one.
-	Extracts Refactor
-
-	// Loading is how long a question waits for the server to settle. Zero waits 10 seconds. A
-	// question that waits the whole time returns a partial answer.
-	Loading time.Duration
+	// LanguageID is the LSP 3.17 language identifier of the files of the language: one of the
+	// Identity constants.
+	LanguageID string
 
 	// Unchecked names what the diagnostics of the server leave out and the compiler of the
 	// language checks, such as the lifetimes and borrows that rust-analyzer does not check, or
@@ -103,6 +85,24 @@ type Server struct {
 	// so the reports that they read describe the buffers that they sent.
 	Diagnosis string
 
+	// Extracts is the code action that extracts a function, or the zero value for a server
+	// without one.
+	Extracts Refactor
+
+	// Command is the program and its arguments. [Server.Installed] looks the program up on
+	// PATH.
+	Command []string
+
+	// Unrelated are the relations whose request the server answers with other relations, which
+	// the engine declines, so another engine of the language answers them. gopls answers the
+	// type hierarchy of a Go type with the interfaces that the type implements, which are not
+	// the types that it embeds.
+	Unrelated []sema.RelationKind
+
+	// Loading is how long a question waits for the server to settle. Zero waits 10 seconds. A
+	// question that waits the whole time returns a partial answer.
+	Loading time.Duration
+
 	// Answering is how long a question waits for the reply of the server, from the moment the
 	// server runs. Zero waits one minute. A question that waits the whole time returns
 	// [engine.ErrDecline], so the next engine serves it, and the server receives a
@@ -113,6 +113,12 @@ type Server struct {
 	// diagnostics of the changed files, from the moment the server settles. Zero waits 30
 	// seconds. A check that waits the whole time declines, so a weaker engine checks the write.
 	Checking time.Duration
+
+	// Resolving is how long after its start the server can resolve an import to no file and later
+	// to the imported file, with no work-done progress job in between. metals does so while it
+	// compiles the build that it imported. Until the server has run that long, [Engine.importers]
+	// asks again at such an import once a second. Zero asks once.
+	Resolving time.Duration
 
 	// Scoped reports that the server reads only the files that it has open and what they load,
 	// as typescript-language-server does for a file that no tsconfig.json or jsconfig.json
@@ -168,12 +174,6 @@ type Server struct {
 	// checker of Go relates the importers of a package by its import path, so gopls does not set
 	// it either.
 	Imports bool
-
-	// Resolving is how long after its start the server can resolve an import to no file and later
-	// to the imported file, with no work-done progress job in between. metals does so while it
-	// compiles the build that it imported. Until the server has run that long, [Engine.importers]
-	// asks again at such an import once a second. Zero asks once.
-	Resolving time.Duration
 }
 
 // Refactor names the code action of a server that performs one refactoring.

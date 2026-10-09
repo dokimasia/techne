@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package lsp
@@ -156,6 +156,8 @@ func (e *Engine) relating(
 		}
 	case sema.Embeds, sema.EmbeddedBy:
 		named, saw, err = e.incorporating(ctx, held, pick, kind)
+	case sema.RelationUnknown, sema.Imports, sema.ImportedBy:
+		// related declined the first two kinds, and importers answered the third.
 	}
 	if err != nil {
 		return engine.Result[sema.Relation]{}, err
@@ -223,6 +225,8 @@ func incoming(kind sema.RelationKind) bool {
 	switch kind {
 	case sema.ReferencedBy, sema.CalledBy, sema.ImplementedBy, sema.EmbeddedBy:
 		return true
+	case sema.RelationUnknown, sema.References, sema.Calls, sema.Implements, sema.Embeds,
+		sema.Imports, sema.ImportedBy:
 	}
 	return false
 }
@@ -235,6 +239,7 @@ func related(kind sema.RelationKind) bool {
 		sema.Implements, sema.ImplementedBy,
 		sema.Embeds, sema.EmbeddedBy:
 		return true
+	case sema.RelationUnknown, sema.Imports, sema.ImportedBy:
 	}
 	return false
 }
@@ -251,15 +256,15 @@ func skipping(unread []source.Path) string {
 // site is one relation that a server named, before the engine reads the declaration at its
 // far end.
 type site struct {
+	// far is the item that the server named as the far end, or nil when the far end is the
+	// innermost declaration that contains the site.
+	far *protocol.CallHierarchyItem
 	// path is the file of at, the range of the call or the reference.
 	path source.Path
 	at   protocol.Range
 	// placed reports whether the server returned a range for the site. The call hierarchy can
 	// return a far end without one.
 	placed bool
-	// far is the item that the server named as the far end, or nil when the far end is the
-	// innermost declaration that contains the site.
-	far *protocol.CallHierarchyItem
 }
 
 // lines returns the span of the lines of s, without offsets.
