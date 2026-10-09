@@ -1,0 +1,180 @@
+# Copyright Dokimasia B.V. 2026
+# SPDX-License-Identifier: MIT
+
+# The settings of techne, which ergon init merges into .golangci.yml.
+
+linters:
+  settings:
+    # depguard enforces the boundaries of the modules. Each rule is list-mode strict, so it
+    # refuses an import that its allow list does not name, and a new third-party import is an
+    # edit of this file beside go.mod. $gostd is the standard library without the go/ tree. An
+    # entry that ends with $ matches that path alone, and any other entry matches as a prefix.
+    # The root module has no rule and may import anything.
+    depguard:
+      rules:
+        # core declares the ports and the vocabulary, and imports nothing else of techne. The
+        # services that drive the ports are techne-service, and the surface of the agent is
+        # techne-tool.
+        core:
+          files: ["**/techne-core/**"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - go.dokimi.dev/assert
+            - go.dokimi.dev/techne/core
+
+        # The read path, the write path and the workspace. A service imports core, and not the
+        # surface of the agent.
+        service:
+          files: ["**/techne-service/**"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - go.dokimi.dev/assert
+            - go.dokimi.dev/techne/core
+            - go.dokimi.dev/techne/service
+            # LockFileEx, the advisory lock of a file on Windows, which the lock of a workspace
+            # takes.
+            - golang.org/x/sys/windows
+
+        # The surface of the agent. A tool takes a service through an interface that it
+        # declares, so techne-service is absent from this list.
+        tool:
+          files: ["**/techne-tool/**"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - go.dokimi.dev/assert
+            - go.dokimi.dev/techne/core
+            - go.dokimi.dev/techne/tool
+            # The schema of a tool from the types of its handler. The library is a module of its
+            # own, so the surface of the agent does not import a transport.
+            - github.com/google/jsonschema-go
+
+        lang:
+          files: ["**/techne-lang/**"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - go.dokimi.dev/assert
+            - go.dokimi.dev/techne/core
+            - go.dokimi.dev/techne/lang$
+            - go.dokimi.dev/techne/lang/treesitter
+            - go.dokimi.dev/techne/lang/lsp
+            - go.dokimi.dev/techne/lang/engines
+            - go.dokimi.dev/techne/lang/conformance
+            # The binding of tree-sitter. A grammar belongs to one language, so the module of
+            # that language imports it.
+            - github.com/tree-sitter/go-tree-sitter
+            # The language server protocol, for its union types: a definition is a location, a
+            # list of locations or a list of links.
+            - go.lsp.dev/protocol
+            - go.lsp.dev/jsonrpc2
+            - go.lsp.dev/uri
+            # The glob patterns of the file watchers that a language server registers, with ** and
+            # {a,b}, which path.Match does not take.
+            - github.com/bmatcuk/doublestar/v4
+
+        presenter:
+          files: ["**/techne-presenter/**"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - go.dokimi.dev/assert
+            - go.dokimi.dev/techne/core
+            - go.dokimi.dev/techne/tool
+            - go.dokimi.dev/techne/presenter
+            # The MCP SDK. The presenter is the only module that imports it.
+            - github.com/modelcontextprotocol/go-sdk
+
+        # The production files of a language module import core and the shared packages of
+        # lang, and no other language module. The Go module has a rule of its own, because it
+        # imports its own type checker.
+        language-module:
+          files: ["**/techne-lang-*/**", "!**/techne-lang-go/**", "!$test"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - go.dokimi.dev/techne/core
+            - go.dokimi.dev/techne/lang$
+            - go.dokimi.dev/techne/lang/engines
+            - go.dokimi.dev/techne/lang/lsp
+            - go.dokimi.dev/techne/lang/treesitter
+            - github.com/tree-sitter/go-tree-sitter
+            # A grammar of tree-sitter. The grammar of a module is the one that it imports.
+            - github.com/tree-sitter/tree-sitter-
+
+        go-module:
+          files: ["**/techne-lang-go/**", "!$test"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - go.dokimi.dev/techne/core
+            - go.dokimi.dev/techne/lang$
+            - go.dokimi.dev/techne/lang/engines
+            - go.dokimi.dev/techne/lang/lsp
+            - go.dokimi.dev/techne/lang/treesitter
+            - go.dokimi.dev/techne/lang/go
+            - github.com/tree-sitter/go-tree-sitter
+            - github.com/tree-sitter/tree-sitter-go
+            # The loader of the Go toolchain, which type-checks a module in the process, and the
+            # packages of the go/ tree that it returns.
+            - golang.org/x/tools/go/packages
+            - go/ast
+            - go/token
+            - go/types
+            # The parser and the printer of Go, with which a move reads a file that the load
+            # excludes and prints a file that it rewrites.
+            - go/format
+            - go/parser
+            # The build constraints of go/build, with which the checker decides whether a build
+            # of another port includes a file that the load excludes, as gopls decides it, and the
+            # scanner of Go, with which it finds the excluded files that name a declaration.
+            - go/build$
+            - go/scanner
+            # The import edits of goimports and its printer, with which a move adds, deletes and
+            # rewrites the imports of the files that it changes and prints them in the groups of
+            # goimports.
+            - golang.org/x/tools/go/ast/astutil
+            - golang.org/x/tools/imports$
+
+        # The tests of a language module import its own package and the test packages of lang,
+        # such as the conformance suite and the scripted server. depguard matches a file against
+        # any entry of files, so the globs name the test files of the language modules.
+        language-module-tests:
+          files: ["**/techne-lang-*/*_test.go", "**/techne-lang-*/**/*_test.go"]
+          list-mode: strict
+          allow:
+            - $gostd
+            - go.dokimi.dev/assert
+            - go.dokimi.dev/techne/core
+            - go.dokimi.dev/techne/lang
+            - github.com/tree-sitter/go-tree-sitter
+            - github.com/tree-sitter/tree-sitter-
+            - golang.org/x/tools/go/packages
+            - go/ast
+            - go/token
+            - go/types
+            # The build constraints and the parser of Go, which the tests of the Go module read
+            # a declared content with, so the expectation comes from the Go toolchain.
+            - go/build/constraint
+            - go/parser
+
+    # Each module of techne starts its errors with the name of its package and wraps the cause, so
+    # an error that one module returns from another already carries its context.
+    wrapcheck:
+      ignore-package-globs:
+        - go.dokimi.dev/techne/*
+
+  exclusions:
+    rules:
+      # The functions and methods of techne take its values, such as locations, symbols and edits,
+      # by value on purpose: the values are immutable, and a copy allocates nothing.
+      - linters: [gocritic]
+        text: "(hugeParam|rangeValCopy):"
+      # A conformance fixture is the source of another language. Ruby closes every nested block
+      # with end, so `end end` is the language and not a repeated word. A path is relative to the
+      # go.mod of its module.
+      - linters: [dupword]
+        path: ^doc_test\.go$
+        text: Duplicate words \(end\)

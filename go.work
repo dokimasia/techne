@@ -1,8 +1,11 @@
-go 1.27.0
+// Copyright Dokimasia B.V. 2026
+// SPDX-License-Identifier: MIT
 
-// The repository root module (go.dokimi.dev/techne) holds the binary and
-// the composition root. Every other module is listed here so local
-// development resolves across them without replace directives.
+go 1.27.2
+
+// The repository root module (go.dokimi.dev/techne) contains the binary and the composition root.
+// Every other module is listed here, so builds and tests resolve across the modules without the
+// network.
 use (
 	./
 	./techne-core
@@ -11,8 +14,8 @@ use (
 	./techne-lang-csharp
 	./techne-lang-go
 	./techne-lang-java
-	./techne-lang-mock
 	./techne-lang-javascript
+	./techne-lang-mock
 	./techne-lang-python
 	./techne-lang-ruby
 	./techne-lang-rust
@@ -21,4 +24,26 @@ use (
 	./techne-presenter
 	./techne-service
 	./techne-tool
+)
+
+// The go command reads the go.mod of each version of a module of the workspace that another module
+// requires. ergon release keeps a replace of each such version by the directory of its module, so
+// the workspace builds before the tag of a version exists.
+replace (
+	go.dokimi.dev/techne/core v0.0.0 => ./techne-core
+	go.dokimi.dev/techne/lang v0.0.0 => ./techne-lang
+	go.dokimi.dev/techne/lang/c v0.0.0 => ./techne-lang-c
+	go.dokimi.dev/techne/lang/csharp v0.0.0 => ./techne-lang-csharp
+	go.dokimi.dev/techne/lang/go v0.0.0 => ./techne-lang-go
+	go.dokimi.dev/techne/lang/java v0.0.0 => ./techne-lang-java
+	go.dokimi.dev/techne/lang/javascript v0.0.0 => ./techne-lang-javascript
+	go.dokimi.dev/techne/lang/mock v0.0.0 => ./techne-lang-mock
+	go.dokimi.dev/techne/lang/python v0.0.0 => ./techne-lang-python
+	go.dokimi.dev/techne/lang/ruby v0.0.0 => ./techne-lang-ruby
+	go.dokimi.dev/techne/lang/rust v0.0.0 => ./techne-lang-rust
+	go.dokimi.dev/techne/lang/scala v0.0.0 => ./techne-lang-scala
+	go.dokimi.dev/techne/lang/typescript v0.0.0 => ./techne-lang-typescript
+	go.dokimi.dev/techne/presenter v0.0.0 => ./techne-presenter
+	go.dokimi.dev/techne/service v0.0.0 => ./techne-service
+	go.dokimi.dev/techne/tool v0.0.0 => ./techne-tool
 )

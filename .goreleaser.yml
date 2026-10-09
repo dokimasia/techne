@@ -1,7 +1,11 @@
+# Copyright Dokimasia B.V. 2026
+# SPDX-License-Identifier: MIT
+
 # yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 #
-# The release of techne. The grammars of the ten languages are C, so every target builds with
-# cgo, and the release runs on a macOS runner:
+# The binaries of techne, which the job binaries of release.yml builds after ergon has released the
+# root module. The grammars of the ten languages are C, so every target builds with cgo, and the
+# job runs on a macOS runner:
 #
 #   - darwin builds with the clang of the runner, which links the macOS SDK.
 #   - Linux and Windows build with zig as the C compiler: static musl binaries for Linux, and
@@ -82,49 +86,25 @@ checksum:
   name_template: checksums.txt
   algorithm: sha256
 
+# cosign signs checksums.txt with the OIDC identity of the workflow, without a key, at the version
+# that the section go of .ergon.yaml pins.
 signs:
-  - cmd: cosign
-    signature: '${artifact}.sig'
-    certificate: '${artifact}.pem'
-    args:
-      - sign-blob
-      - '--output-signature=${signature}'
-      - '--output-certificate=${certificate}'
-      - '${artifact}'
-      - '--yes'
+  - cmd: ergon
+    signature: '${artifact}.sigstore.json'
+    args: [tool, run, go.cosign, --, sign-blob, '--bundle=${signature}', '${artifact}', --yes]
     artifacts: checksum
     output: true
 
+# syft writes an SPDX SBOM of each archive, which checksums.txt lists.
+sboms:
+  - id: archives
+    cmd: ergon
+    args: [tool, run, go.syft, --, '$artifact', --output, 'spdx-json=$document', --enrich, all]
+    artifacts: archive
+
+# ergon creates the release of the tag, and changesets writes its notes.
 changelog:
-  sort: asc
-  use: github
-  groups:
-    - title: New features
-      regexp: '^feat'
-      order: 0
-    - title: Performance
-      regexp: '^perf'
-      order: 1
-    - title: Bug fixes
-      regexp: '^fix'
-      order: 2
-    - title: Test rigor
-      regexp: '^test'
-      order: 3
-    - title: Refactors
-      regexp: '^refactor'
-      order: 4
-    - title: Other
-      order: 999
-  filters:
-    exclude:
-      - '^docs'
-      - '^ci'
-      - '^chore'
-      - '^build'
-      - '^style'
-      - 'Merge pull request'
-      - 'Merge branch'
+  disable: true
 
 homebrew_casks:
   - name: techne
@@ -140,8 +120,8 @@ homebrew_casks:
           if OS.mac?
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/techne"]
           end
-    # The tap is github.com/dokimasia/homebrew-tap. The release workflow passes a token with
-    # contents:write on it as HOMEBREW_TAP_TOKEN.
+    # The tap is github.com/dokimasia/homebrew-tap. The job binaries of release.yml passes a token of
+    # the GitHub App with contents:write on it as HOMEBREW_TAP_TOKEN.
     repository:
       owner: dokimasia
       name: homebrew-tap
@@ -154,10 +134,10 @@ homebrew_casks:
     # A prerelease, such as v1.0.0-rc1, does not update the cask.
     skip_upload: auto
 
+# The release of the tag exists, because ergon release publish created it. GoReleaser keeps its
+# notes and attaches the assets.
 release:
-  draft: false
+  mode: keep-existing
   prerelease: auto
-  footer: |
-    **Full changelog:** {{ .ReleaseURL }}
 
 report_sizes: true
