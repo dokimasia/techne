@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package change
@@ -17,17 +17,17 @@ import (
 // keeps the latest heldLimit plans in memory, and a caller whose handle is gone previews
 // again. It is safe for concurrent use.
 type held struct {
-	mu    sync.Mutex
 	plans map[string]kept
 	// order are the handles of plans, oldest first.
 	order []string
+	mu    sync.Mutex
 }
 
 // kept is the plan of a preview with the request of the preview. A commit checks the plan
 // through the language of the request, which the preview asked.
 type kept struct {
-	request edit.Request
 	plan    edit.Plan
+	request edit.Request
 }
 
 // newHeld returns an empty held.

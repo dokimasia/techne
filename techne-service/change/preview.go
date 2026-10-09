@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package change
@@ -51,11 +51,10 @@ func runs(p source.Path, before, after []byte, edits []edit.TextEdit) []edit.Rew
 	for i := 0; i < len(edits); {
 		first, last := spans[i][0], spans[i][1]
 		grown := 0
-		j := i
-		for ; j < len(edits) && spans[j][0] <= last+1; j++ {
-			last = spans[j][1]
-			cut := before[edits[j].Span.Start.Offset:edits[j].Span.End.Offset]
-			grown += strings.Count(edits[j].New, "\n") - bytes.Count(cut, []byte("\n"))
+		for ; i < len(edits) && spans[i][0] <= last+1; i++ {
+			last = spans[i][1]
+			cut := before[edits[i].Span.Start.Offset:edits[i].Span.End.Offset]
+			grown += strings.Count(edits[i].New, "\n") - bytes.Count(cut, []byte("\n"))
 		}
 		old, fresh := was[first:last+1], now[first+shift:last+1+shift+grown]
 		kept := 0
@@ -71,7 +70,6 @@ func runs(p source.Path, before, after []byte, edits []edit.TextEdit) []edit.Rew
 			out = append(out, edit.Rewrite{Path: p, Line: first + kept + 1, Was: joined(old), Now: joined(fresh)})
 		}
 		shift += grown
-		i = j
 	}
 	return out
 }

@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package files_test
@@ -39,7 +39,7 @@ const (
 func appending(root *files.Root) error {
 	log, err := os.OpenFile(os.Getenv(logVar), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return err
+		return fmt.Errorf("open the log: %w", err)
 	}
 	defer func() { _ = log.Close() }()
 	id := os.Getenv(idVar)
@@ -69,14 +69,14 @@ func holding(root *files.Root) error {
 		return err
 	}
 	if failed := os.WriteFile(os.Getenv(readyVar), nil, 0o600); failed != nil {
-		return failed
+		return fmt.Errorf("create the ready file: %w", failed)
 	}
 	if os.Getenv(holdVar) == "exit" {
 		os.Exit(0)
 	}
 	held, err := time.ParseDuration(os.Getenv(holdVar))
 	if err != nil {
-		return err
+		return fmt.Errorf("read %s: %w", holdVar, err)
 	}
 	time.Sleep(held)
 	unlock()
@@ -87,7 +87,7 @@ func holding(root *files.Root) error {
 func waiting(root *files.Root) error {
 	patience, err := time.ParseDuration(os.Getenv(patienceVar))
 	if err != nil {
-		return err
+		return fmt.Errorf("read %s: %w", patienceVar, err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), patience)
 	defer cancel()

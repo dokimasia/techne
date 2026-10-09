@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package change
@@ -38,9 +38,9 @@ func (s *Service) verified(ctx context.Context, req edit.Request, paths []source
 	out := disk{by: trust.Provenance{Fidelity: trust.Resolved, Completeness: trust.ScopeTotal}}
 	for _, p := range paths {
 		asking := engine.Request{Scope: p, Language: req.Language, Tests: true}
-		answered, ok, _, err := engine.AskAny(ctx, s.catalog, s.router, asking, engine.RoleVerify,
-			func(e engine.Engine) (engine.Result[edit.Finding], error) {
-				return e.(engine.Verifier).Verify(ctx, asking, nil)
+		answered, ok, _, err := askAny(ctx, s, asking, engine.RoleVerify,
+			func(verifier engine.Verifier) (engine.Result[edit.Finding], error) {
+				return verifier.Verify(ctx, asking, nil)
 			})
 		if err != nil {
 			return disk{}, err

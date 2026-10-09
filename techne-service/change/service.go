@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package change
@@ -76,6 +76,22 @@ func (s *Service) Apply(ctx context.Context, req edit.Request) (edit.Outcome, er
 	return out, err
 }
 
+// Commit applies the plan that a preview kept under handle, once. It takes the steps of the
+// preview again with the request of the preview, over the files as they are now, and
+// refuses a plan whose files changed since the preview. The outcome has the request of the
+// preview as its [edit.Outcome.Request].
+func (s *Service) Commit(ctx context.Context, handle string) (edit.Outcome, error) {
+	preview, found := s.held.take(handle)
+	if !found {
+		return refused("", "no preview is kept under that handle: preview again to get one"), nil
+	}
+	req := preview.request
+	req.DryRun = false
+	out, err := s.commit(ctx, req, preview.plan)
+	out.Request = req
+	return out, err
+}
+
 // apply returns the outcome of [Service.Apply] without its request.
 func (s *Service) apply(ctx context.Context, req edit.Request) (edit.Outcome, error) {
 	spec, declared := edit.SpecFor(req.Operation)
@@ -108,22 +124,6 @@ func (s *Service) apply(ctx context.Context, req edit.Request) (edit.Outcome, er
 		return edit.Outcome{}, err
 	}
 	return s.run(ctx, req, spec, plan, sealed)
-}
-
-// Commit applies the plan that a preview kept under handle, once. It takes the steps of the
-// preview again with the request of the preview, over the files as they are now, and
-// refuses a plan whose files changed since the preview. The outcome has the request of the
-// preview as its [edit.Outcome.Request].
-func (s *Service) Commit(ctx context.Context, handle string) (edit.Outcome, error) {
-	preview, found := s.held.take(handle)
-	if !found {
-		return refused("", "no preview is kept under that handle: preview again to get one"), nil
-	}
-	req := preview.request
-	req.DryRun = false
-	out, err := s.commit(ctx, req, preview.plan)
-	out.Request = req
-	return out, err
 }
 
 // commit returns the outcome of [Service.Commit] for the plan of a preview that req asked for,
@@ -248,9 +248,9 @@ func (s *Service) plan(
 		Preferred: spec.MinFidelity,
 		Tests:     true,
 	}
-	answered, ok, declined, err := engine.AskAny(ctx, s.catalog, s.router, asking, engine.RolePlan,
-		func(e engine.Engine) (engine.Result[edit.Change], error) {
-			return e.(engine.Planner).Plan(ctx, asking, req.Operation, req.Target, req.Args)
+	answered, ok, declined, err := askAny(ctx, s, asking, engine.RolePlan,
+		func(planner engine.Planner) (engine.Result[edit.Change], error) {
+			return planner.Plan(ctx, asking, req.Operation, req.Target, req.Args)
 		})
 	if err != nil || !ok {
 		return edit.Plan{}, declined, err
@@ -260,6 +260,27 @@ func (s *Service) plan(
 		Changes:    answered.Items,
 		Provenance: answered.Provenance,
 	}, nil, nil
+}
+
+// askAny asks the engines of role for req through [engine.AskAny], and calls call with the
+// port P of the role of each engine. The catalog returns an engine for a role only when the
+// engine implements the port of the role, so an engine without P is a defect of the catalog,
+// which askAny returns as an error.
+func askAny[P, T any](
+	ctx context.Context,
+	s *Service,
+	req engine.Request,
+	role engine.Role,
+	call func(P) (engine.Result[T], error),
+) (engine.Answer[T], bool, engine.Declined, error) {
+	return engine.AskAny(ctx, s.catalog, s.router, req, role,
+		func(e engine.Engine) (engine.Result[T], error) {
+			port, ok := e.(P)
+			if !ok {
+				return engine.Result[T]{}, fmt.Errorf("change: %s offers %s without its port", e.Name(), role)
+			}
+			return call(port)
+		})
 }
 
 // seal reads the content of each path that the plan reads, and adds its digest to the

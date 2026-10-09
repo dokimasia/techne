@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 //go:build darwin || dragonfly || freebsd || linux || netbsd || openbsd
@@ -7,6 +7,7 @@ package files
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"syscall"
 )
@@ -20,10 +21,13 @@ func try(file *os.File) (bool, error) {
 	case errors.Is(err, syscall.EWOULDBLOCK):
 		return false, nil
 	}
-	return false, err
+	return false, fmt.Errorf("flock: %w", err)
 }
 
 // release releases the flock(2) lock of file.
 func release(file *os.File) error {
-	return syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_UN); err != nil {
+		return fmt.Errorf("flock: %w", err)
+	}
+	return nil
 }

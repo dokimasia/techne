@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package query
@@ -32,8 +32,8 @@ func New(c *engine.Catalog, r Router) *Service {
 // Outline returns the declarations of the files in the scope of req.
 func (s *Service) Outline(ctx context.Context, req engine.Request) (engine.Answer[sema.Symbol], error) {
 	return ask(ctx, s, req, engine.RoleOutline,
-		func(e engine.Engine) (engine.Result[sema.Symbol], error) {
-			return e.(engine.Outliner).Outline(ctx, req)
+		func(outliner engine.Outliner) (engine.Result[sema.Symbol], error) {
+			return outliner.Outline(ctx, req)
 		})
 }
 
@@ -45,8 +45,8 @@ func (s *Service) Search(
 	q engine.Query,
 ) (engine.Answer[sema.Symbol], error) {
 	return ask(ctx, s, req, engine.RoleSearch,
-		func(e engine.Engine) (engine.Result[sema.Symbol], error) {
-			return e.(engine.Searcher).Search(ctx, req, q)
+		func(searcher engine.Searcher) (engine.Result[sema.Symbol], error) {
+			return searcher.Search(ctx, req, q)
 		})
 }
 
@@ -59,8 +59,8 @@ func (s *Service) Resolve(
 	at source.Position,
 ) (engine.Answer[sema.Symbol], error) {
 	return ask(ctx, s, req, engine.RoleResolve,
-		func(e engine.Engine) (engine.Result[sema.Symbol], error) {
-			return e.(engine.Resolver).Resolve(ctx, req, at)
+		func(resolver engine.Resolver) (engine.Result[sema.Symbol], error) {
+			return resolver.Resolve(ctx, req, at)
 		})
 }
 
@@ -73,8 +73,8 @@ func (s *Service) Relate(
 	kind sema.RelationKind,
 ) (engine.Answer[sema.Relation], error) {
 	return ask(ctx, s, req, engine.RoleRelate,
-		func(e engine.Engine) (engine.Result[sema.Relation], error) {
-			return e.(engine.Relator).Relate(ctx, req, of, kind)
+		func(relator engine.Relator) (engine.Result[sema.Relation], error) {
+			return relator.Relate(ctx, req, of, kind)
 		})
 }
 
@@ -87,8 +87,8 @@ func (s *Service) Verify(
 	suites []string,
 ) (engine.Answer[edit.Finding], error) {
 	return ask(ctx, s, req, engine.RoleVerify,
-		func(e engine.Engine) (engine.Result[edit.Finding], error) {
-			return e.(engine.Verifier).Verify(ctx, req, suites)
+		func(verifier engine.Verifier) (engine.Result[edit.Finding], error) {
+			return verifier.Verify(ctx, req, suites)
 		})
 }
 
@@ -96,14 +96,25 @@ func (s *Service) Verify(
 // refused answer with the reason of a refusal, and an unsupported answer with the reasons of
 // the engines that declined when every answer is skipped. It returns an unsupported answer
 // about the scope when no engine answered or declined.
-func ask[T any](
+//
+// call receives the port P of the role. The catalog returns an engine for a role only when the
+// engine implements the port of the role, so an engine without P is a defect of the catalog,
+// which ask returns as an error.
+func ask[P, T any](
 	ctx context.Context,
 	s *Service,
 	req engine.Request,
 	role engine.Role,
-	call func(engine.Engine) (engine.Result[T], error),
+	call func(P) (engine.Result[T], error),
 ) (engine.Answer[T], error) {
-	answered, declined, err := engine.AskEach(ctx, s.catalog, s.router, req, role, call)
+	answered, declined, err := engine.AskEach(ctx, s.catalog, s.router, req, role,
+		func(e engine.Engine) (engine.Result[T], error) {
+			port, ok := e.(P)
+			if !ok {
+				return engine.Result[T]{}, fmt.Errorf("query: %s offers %s without its port", e.Name(), role)
+			}
+			return call(port)
+		})
 	switch {
 	case err != nil:
 		if why, refused := engine.Refusal(err); refused {

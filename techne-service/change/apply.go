@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package change
@@ -66,10 +66,10 @@ func relocations(plan edit.Plan) map[source.Path]source.Path {
 // workspace, and returns a refusal when the file is not as the plan read it. undo takes the
 // change back.
 type step struct {
-	paths []source.Path
 	check func() (string, error)
 	do    func() error
 	undo  func() error
+	paths []source.Path
 }
 
 // write puts the projection on disk, and returns the steps that it took, which [restore] takes

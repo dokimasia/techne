@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package change
@@ -14,8 +14,8 @@ import (
 // changes of different files do not wait for each other. The mutex of a path is kept for
 // the life of the service, so the map has one entry per path that a change touched.
 type locks struct {
-	mu    sync.Mutex
 	paths map[source.Path]*sync.Mutex
+	mu    sync.Mutex
 }
 
 // newLocks returns locks without a path.

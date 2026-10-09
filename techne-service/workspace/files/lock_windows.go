@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 //go:build windows
@@ -7,6 +7,7 @@ package files
 
 import (
 	"errors"
+	"fmt"
 	"os"
 
 	"golang.org/x/sys/windows"
@@ -24,11 +25,14 @@ func try(file *os.File) (bool, error) {
 	case errors.Is(err, windows.ERROR_LOCK_VIOLATION):
 		return false, nil
 	}
-	return false, err
+	return false, fmt.Errorf("LockFileEx: %w", err)
 }
 
 // release releases the LockFileEx lock of file.
 func release(file *os.File) error {
 	var at windows.Overlapped
-	return windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, &at)
+	if err := windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, &at); err != nil {
+		return fmt.Errorf("UnlockFileEx: %w", err)
+	}
+	return nil
 }

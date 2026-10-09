@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package change
@@ -18,6 +18,11 @@ import (
 
 // verdict is what the gate made of a projection.
 type verdict struct {
+	// found are the errors of the projection that the gate counted.
+	found []edit.Finding
+	// by is the evidence of the engine that judged the projection. A parser can judge what a
+	// type checker planned.
+	by trust.Provenance
 	// checked reports whether an engine judged the projection.
 	checked bool
 	// partial reports whether that engine checks less than the compiler of the language: its
@@ -25,11 +30,6 @@ type verdict struct {
 	partial bool
 	// worse reports whether the projection has more errors than the content it replaces.
 	worse bool
-	// found are the errors of the projection that the gate counted.
-	found []edit.Finding
-	// by is the evidence of the engine that judged the projection. A parser can judge what a
-	// type checker planned.
-	by trust.Provenance
 }
 
 // gate judges the projection and the content that it replaces, and reports the change as
@@ -88,9 +88,9 @@ func (s *Service) check(
 		return nil, trust.Provenance{}, true, nil
 	}
 	asking := engine.Request{Scope: req.Scope, Language: req.Language}
-	answered, ok, _, err := engine.AskAny(ctx, s.catalog, s.router, asking, engine.RoleCheck,
-		func(e engine.Engine) (engine.Result[edit.Finding], error) {
-			return e.(engine.Checker).Check(ctx, files)
+	answered, ok, _, err := askAny(ctx, s, asking, engine.RoleCheck,
+		func(checker engine.Checker) (engine.Result[edit.Finding], error) {
+			return checker.Check(ctx, files)
 		})
 	if err != nil || !ok {
 		return nil, trust.Provenance{}, false, err
@@ -144,7 +144,7 @@ func partial(caveats []trust.Caveat) bool {
 // unverified returns the caveat that lists the errors that the gate of a move left out, by
 // file and one-based line.
 func unverified(left []edit.Finding) trust.Caveat {
-	var sites []string
+	sites := make([]string, 0, len(left))
 	var paths []source.Path
 	for _, one := range left {
 		at := one.Diagnostic.Span

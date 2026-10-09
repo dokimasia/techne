@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package files
@@ -39,7 +39,12 @@ func Open(dir string) (*Root, error) {
 }
 
 // Close releases the directory.
-func (r *Root) Close() error { return r.root.Close() }
+func (r *Root) Close() error {
+	if err := r.root.Close(); err != nil {
+		return fmt.Errorf("files: close %q: %w", r.dir, err)
+	}
+	return nil
+}
 
 // FS returns the directory as an [fs.FS], which the engines read.
 func (r *Root) FS() fs.FS { return r.root.FS() }
@@ -47,7 +52,11 @@ func (r *Root) FS() fs.FS { return r.root.FS() }
 // Read returns the content of the file at p, and an error that wraps [fs.ErrNotExist] for
 // a path without a file.
 func (r *Root) Read(p source.Path) ([]byte, error) {
-	return r.root.ReadFile(string(p))
+	content, err := r.root.ReadFile(string(p))
+	if err != nil {
+		return nil, fmt.Errorf("files: %w", err)
+	}
+	return content, nil
 }
 
 // Write replaces the content of the file at p and keeps its mode. The content is staged
