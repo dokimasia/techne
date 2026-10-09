@@ -48,12 +48,12 @@ func Moving(root string, target edit.Target, args edit.Args, extensions []string
 	return from, to, nil
 }
 
-// Outside reports whether p is outside the workspace: an absolute path, or a relative path
-// whose first segment is "..". A name that starts with two dots, such as ..config.ts, is inside.
+// Outside reports whether p is outside the workspace: a path that is not local on the system by
+// the rules of [filepath.IsLocal], such as an absolute path, a path from the root of a drive on
+// Windows, or a relative path whose first segment is "..". A name that starts with two dots,
+// such as ..config.ts, is inside.
 func Outside(p source.Path) bool {
-	native := filepath.Clean(filepath.FromSlash(string(p)))
-	return filepath.IsAbs(native) || native == ".." ||
-		strings.HasPrefix(native, ".."+string(filepath.Separator))
+	return !filepath.IsLocal(filepath.Clean(filepath.FromSlash(string(p))))
 }
 
 // outsider returns the end of a move that is outside the workspace: from when from is outside,
