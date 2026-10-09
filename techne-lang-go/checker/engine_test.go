@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package checker_test
@@ -282,6 +282,7 @@ func ported(held any, role engine.Role) (any, bool) {
 	case engine.RoleIndex:
 		one, ok := held.(engine.Indexer)
 		return one, ok
+	case engine.RoleUnset:
 	}
 	return nil, false
 }

@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package checker
@@ -195,16 +195,16 @@ func compiling(v *view, full string) (*packages.Package, *ast.File) {
 // move is what one move changes: the two packages, the declarations that move and the
 // declarations that remain in the source package.
 type move struct {
-	source, destination string
-	// from and to are the name and the import path of the source and the destination package.
-	fromName, fromPath string
-	toName, toPath     string
 	// moved and remaining are the top-level declarations of the moved file and of the other
 	// files of the source package, by the position of their name. The objects of one
 	// declaration in a package and its test variant share that position.
 	moved, remaining map[token.Position]bool
 	// movedNames and remainingNames are the names of those declarations without methods.
 	movedNames, remainingNames map[string]bool
+	source, destination        string
+	// from and to are the name and the import path of the source and the destination package.
+	fromName, fromPath string
+	toName, toPath     string
 }
 
 // moving returns the move of file, a file of pkg, into the directory dir.
@@ -250,6 +250,7 @@ func (v *view) packageIn(dir string) (string, string, error) {
 		}
 		if one := pkg.Module; one != nil && one.Dir != "" && below(dir, one.Dir) &&
 			(module == nil || len(one.Dir) > len(module.Dir)) {
+
 			module = one
 		}
 	}
@@ -320,12 +321,12 @@ func (m *move) roleOf(full, pkgPath string) role {
 // rewrite is how a move changes one file: its edits, the imports that it adds, and whether it
 // imports the destination in place of the source.
 type rewrite struct {
-	edits []edit.TextEdit
-	adds  []string
-	swap  bool
 	// alias is the name under which the file imports the destination, or empty for the name of
 	// the destination package.
 	alias string
+	edits []edit.TextEdit
+	adds  []string
+	swap  bool
 	// byName reports that the file has no types and the move rewrote it by name.
 	byName bool
 }
@@ -724,7 +725,7 @@ func (m *move) imports(full string, content []byte, r *rewrite) ([]byte, error) 
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, full, content, parser.ParseComments)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("parse: %w", err)
 	}
 	if r.swap || m.replaces(f) {
 		astutil.RewriteImport(fset, f, m.fromPath, m.toPath)
@@ -753,11 +754,11 @@ func (m *move) imports(full string, content []byte, r *rewrite) ([]byte, error) 
 	}
 	var out bytes.Buffer
 	if failed := format.Node(&out, fset, f); failed != nil {
-		return nil, failed
+		return nil, fmt.Errorf("print: %w", failed)
 	}
 	grouped, err := imports.Process(full, out.Bytes(), &printing)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("group the imports: %w", err)
 	}
 	if bytes.Contains(content, []byte("\r\n")) {
 		return bytes.ReplaceAll(grouped, []byte("\n"), []byte("\r\n")), nil

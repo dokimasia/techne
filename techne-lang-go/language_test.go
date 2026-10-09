@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package golang_test
@@ -185,6 +185,8 @@ func TestLanguage(t *testing.T) {
 					methods = append(methods, one.ID.Name())
 				case sema.KindFunction:
 					functions = append(functions, one.ID.Name())
+				default:
+					// The case compares the methods and the functions alone.
 				}
 			}
 			expect.Equal(t, methods, []string{"Box.Map"}, "the methods of generic.go")

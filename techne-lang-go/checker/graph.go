@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package checker
@@ -243,6 +243,7 @@ func (g *graph) reaching(excluded, seeds, dirs []string) []string {
 	for _, full := range excluded {
 		if slices.Contains(near, filepath.Dir(full)) ||
 			slices.ContainsFunc(importsOf(full), func(path string) bool { return reached[path] }) {
+
 			out = append(out, full)
 		}
 	}
@@ -273,7 +274,7 @@ func (g *graph) narrowed(plans []plan, wanted []string) ([]plan, bool) {
 	for _, one := range wanted {
 		keep[one] = true
 	}
-	var out []plan
+	out := make([]plan, 0, len(plans))
 	whole := true
 	for i, one := range plans {
 		var patterns []string
@@ -313,7 +314,7 @@ func (g *graph) porting(plans []plan, dirs []string, at port) []plan {
 			}
 		}
 	}
-	var out []plan
+	out := make([]plan, 0, len(patterns))
 	for _, i := range slices.Sorted(maps.Keys(patterns)) {
 		one := plans[i]
 		one.patterns, one.port = patterns[i], at

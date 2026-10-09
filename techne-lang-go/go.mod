@@ -1,6 +1,9 @@
+// Copyright Dokimasia B.V. 2026
+// SPDX-License-Identifier: MIT
+
 module go.dokimi.dev/techne/lang/go
 
-go 1.27.0
+go 1.27.2
 
 require (
 	github.com/tree-sitter/go-tree-sitter v0.25.0
@@ -21,10 +24,6 @@ require (
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 )
-
-replace go.dokimi.dev/techne/core => ../techne-core
-
-replace go.dokimi.dev/techne/lang => ../techne-lang
 
 // The fork of the Go grammar parses a method with type parameters.
 replace github.com/tree-sitter/tree-sitter-go => github.com/dokimasia/tree-sitter-go v0.0.0-20261008091630-10115b8fc25d

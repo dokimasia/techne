@@ -1,10 +1,11 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package checker
 
 import (
 	"bytes"
+	"fmt"
 	"maps"
 	"os"
 	"slices"
@@ -47,7 +48,7 @@ func (e *Engine) errors(one program) map[source.Path][]int {
 func (e *Engine) lines(p source.Path) (func(int) string, error) {
 	content, err := os.ReadFile(e.fullPath(p))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("checker: read %s: %w", p, err)
 	}
 	lines := bytes.Split(content, []byte("\n"))
 	return func(n int) string {

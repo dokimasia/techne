@@ -1,3 +1,6 @@
+; Copyright Dokimasia B.V. 2026
+; SPDX-License-Identifier: MIT
+
 ;; The declarations of Go source, at any depth.
 ;;
 ;; No pattern is anchored to source_file, so a declaration inside a

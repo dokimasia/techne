@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package checker
@@ -49,32 +49,45 @@ var manifests = []string{"go.mod", "go.sum", "go.work", "go.work.sum"}
 // view is one type-checked reading of the workspace: the programs that the engine loaded, in
 // one file set. Every position of the packages of a view is an index into its file set.
 type view struct {
-	fset     *token.FileSet
-	programs []program
+	fset *token.FileSet
+
 	// unloaded are the errors of the modules that failed to load, by module directory.
 	unloaded map[source.Path]string
+
+	files map[*token.File]*ast.File
+
+	compiled map[string]bool
+
+	generated map[string]bool
+
+	paths map[string]bool
+
 	// stamp is the stamp of the walk before the load, and empty for a load with an overlay.
 	stamp string
-	// whole reports that the view loaded every package of the workspace, and not the packages
-	// that one question needs.
-	whole bool
+
 	// goroot is the root of the Go toolchain, as go env GOROOT reports it.
 	goroot string
 
+	programs []program
+
+	kept []*packages.Package
+
 	// keep builds kept on the first call of [view.held].
 	keep sync.Once
-	kept []*packages.Package
+
 	// index builds files on the first call of [view.file].
 	index sync.Once
-	files map[*token.File]*ast.File
+
 	// list builds compiled and generated on the first call of [view.compiles] or
 	// [view.generates].
-	list      sync.Once
-	compiled  map[string]bool
-	generated map[string]bool
+	list sync.Once
+
 	// name builds paths on the first call of [view.contains].
-	name  sync.Once
-	paths map[string]bool
+	name sync.Once
+
+	// whole reports that the view loaded every package of the workspace, and not the packages
+	// that one question needs.
+	whole bool
 }
 
 // contains reports whether v loaded every package whose import path is in paths.
@@ -439,11 +452,11 @@ func failures(unloaded map[source.Path]string) string {
 // GOWORK=off, without the go.work file that does not list it. port is the port of the build that
 // the load reads, or the zero port for the default build.
 type plan struct {
-	dir      string
-	patterns []string
-	module   source.Path
-	alone    bool
 	port     port
+	dir      string
+	module   source.Path
+	patterns []string
+	alone    bool
 }
 
 // plans returns the loads of the modules of the workspace.

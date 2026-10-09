@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package checker_test
@@ -119,7 +119,7 @@ func TestLoad(t *testing.T) {
 			})
 			got, err := over(t, root).Verify(t.Context(), engine.Request{Scope: "."}, nil)
 			assert.NoError(t, err, "Verify of two modules")
-			var paths []string
+			paths := make([]string, 0, len(got.Items))
 			for _, one := range got.Items {
 				paths = append(paths, string(one.Diagnostic.Span.Path))
 			}

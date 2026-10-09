@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package checker
@@ -50,8 +50,8 @@ func (e *Engine) Referenced(changes []edit.Change) []edit.Change {
 // comment is one comment of a Go file: the offset of its first byte in the file, and its text
 // with its markers.
 type comment struct {
-	start int
 	text  string
+	start int
 }
 
 // commentsOf returns the comments of the Go file that c edits, in the order of the file, and the

@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package checker
@@ -102,6 +102,8 @@ func (e *Engine) Relate(
 		out = e.implementing(v, files, subject, kind)
 	case sema.Embeds, sema.EmbeddedBy:
 		out = e.incorporating(v, files, subject, kind)
+	case sema.RelationUnknown, sema.Imports, sema.ImportedBy:
+		// serves declined the first two kinds, and importers answered the third.
 	}
 	slices.SortFunc(out, order)
 
@@ -134,6 +136,7 @@ func serves(kind sema.RelationKind) bool {
 		sema.Embeds, sema.EmbeddedBy,
 		sema.ImportedBy:
 		return true
+	case sema.RelationUnknown, sema.Imports:
 	}
 	return false
 }
@@ -340,8 +343,7 @@ func counterpart(v *view, pkg *packages.Package, subject *types.TypeName) *types
 	if subject.Pkg() == nil || subject.Parent() != subject.Pkg().Scope() {
 		return subject
 	}
-	scopes := []*types.Package{pkg.Types}
-	scopes = append(scopes, pkg.Types.Imports()...)
+	scopes := append([]*types.Package{pkg.Types}, pkg.Types.Imports()...)
 	for _, one := range scopes {
 		if one.Path() != subject.Pkg().Path() {
 			continue

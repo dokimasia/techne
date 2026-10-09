@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package checker
@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/core/sema"
@@ -54,54 +55,34 @@ type port struct {
 // dist list. gopls tries the ports in this order for a file that the default port excludes, and
 // reads the file in the build of the first that includes it. A test compares the list with go
 // tool dist list of the toolchain that runs the tests.
-var ports = []port{
-	{"darwin", "amd64"},
-	{"darwin", "arm64"},
-	{"linux", "amd64"},
-	{"linux", "arm64"},
-	{"windows", "amd64"},
-	{"linux", "arm"},
-	{"linux", "386"},
-	{"windows", "386"},
-	{"aix", "ppc64"},
-	{"android", "386"},
-	{"android", "amd64"},
-	{"android", "arm"},
-	{"android", "arm64"},
-	{"dragonfly", "amd64"},
-	{"freebsd", "386"},
-	{"freebsd", "amd64"},
-	{"freebsd", "arm"},
-	{"freebsd", "arm64"},
-	{"illumos", "amd64"},
-	{"ios", "amd64"},
-	{"ios", "arm64"},
-	{"js", "wasm"},
-	{"linux", "loong64"},
-	{"linux", "mips"},
-	{"linux", "mips64"},
-	{"linux", "mips64le"},
-	{"linux", "mipsle"},
-	{"linux", "ppc64"},
-	{"linux", "ppc64le"},
-	{"linux", "riscv64"},
-	{"linux", "s390x"},
-	{"netbsd", "386"},
-	{"netbsd", "amd64"},
-	{"netbsd", "arm"},
-	{"netbsd", "arm64"},
-	{"openbsd", "386"},
-	{"openbsd", "amd64"},
-	{"openbsd", "arm"},
-	{"openbsd", "arm64"},
-	{"openbsd", "ppc64"},
-	{"openbsd", "riscv64"},
-	{"plan9", "386"},
-	{"plan9", "amd64"},
-	{"plan9", "arm"},
-	{"solaris", "amd64"},
-	{"wasip1", "wasm"},
-	{"windows", "arm64"},
+var ports = portsOf(
+	"darwin/amd64", "darwin/arm64", "linux/amd64", "linux/arm64", "windows/amd64",
+	"linux/arm", "linux/386", "windows/386",
+	"aix/ppc64",
+	"android/386", "android/amd64", "android/arm", "android/arm64",
+	"dragonfly/amd64",
+	"freebsd/386", "freebsd/amd64", "freebsd/arm", "freebsd/arm64",
+	"illumos/amd64",
+	"ios/amd64", "ios/arm64",
+	"js/wasm",
+	"linux/loong64", "linux/mips", "linux/mips64", "linux/mips64le", "linux/mipsle", "linux/ppc64",
+	"linux/ppc64le", "linux/riscv64", "linux/s390x",
+	"netbsd/386", "netbsd/amd64", "netbsd/arm", "netbsd/arm64",
+	"openbsd/386", "openbsd/amd64", "openbsd/arm", "openbsd/arm64", "openbsd/ppc64", "openbsd/riscv64",
+	"plan9/386", "plan9/amd64", "plan9/arm",
+	"solaris/amd64",
+	"wasip1/wasm",
+	"windows/arm64",
+)
+
+// portsOf returns the port of each of names, which go tool dist list writes as os/arch.
+func portsOf(names ...string) []port {
+	out := make([]port, 0, len(names))
+	for _, name := range names {
+		goos, goarch, _ := strings.Cut(name, "/")
+		out = append(out, port{goos: goos, goarch: goarch})
+	}
+	return out
 }
 
 // portOf returns the first port of [ports] whose build includes the Go file at the absolute path
@@ -301,6 +282,8 @@ func (e *Engine) leftOut(g *graph, dir, name string, kind sema.RelationKind, tes
 		return nil
 	case sema.Implements, sema.ImplementedBy:
 		return e.workspacePaths(excluded)
+	default:
+		// Each relation of another kind is at a use of the name.
 	}
 	reached := g.reaching(excluded, g.housing([]string{dir}), []string{dir})
 	return e.workspacePaths(slices.DeleteFunc(reached, func(full string) bool { return !mentions(full, name) }))

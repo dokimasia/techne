@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package checker
@@ -25,18 +25,22 @@ import (
 // An Engine is safe for concurrent use. It keeps one view of the workspace until the stamp of a
 // walk of the workspace changes.
 type Engine struct {
-	declared lang.Declaration
+	view *view
+
+	graph *graph
+
 	// root is the absolute path of the workspace. The go command runs in root and reports the
 	// files under it in the form of root, also when root contains a symbolic link, because it
 	// takes the working directory from PWD.
 	root string
 
+	declared lang.Declaration
+
 	// loading guards view, so two questions that arrive together load the workspace once.
 	loading sync.Mutex
-	view    *view
+
 	// listing guards graph, the import graph of the last walk.
 	listing sync.Mutex
-	graph   *graph
 }
 
 // New returns an engine over the workspace at root, a directory on disk, for the language that
