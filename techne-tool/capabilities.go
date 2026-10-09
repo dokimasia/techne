@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool
@@ -26,15 +26,20 @@ type CapabilitiesOutput struct {
 // because the completeness of an answer depends on its scope and on the state of the index.
 type Capability struct {
 	Language string `json:"language"`
-	Role     string `json:"role"`
-	Engine   string `json:"engine,omitempty"`
+
+	Role string `json:"role"`
+
+	Engine string `json:"engine,omitempty"`
+
 	Fidelity string `json:"fidelity"`
-	Cost     string `json:"cost"`
+
+	Cost string `json:"cost"`
+
+	Unavailable string `json:"unavailable,omitempty"`
 
 	// Available reports whether the engine can run now. The output keeps an engine that
 	// cannot run, with the reason in Unavailable.
-	Available   bool   `json:"available"`
-	Unavailable string `json:"unavailable,omitempty"`
+	Available bool `json:"available"`
 }
 
 // Render returns the capabilities as text, one line per language and engine with the roles of

@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool
@@ -21,14 +21,14 @@ type OutlineInput struct {
 	Scope     string       `json:"scope"                        jsonschema:"file or directory, relative to the root"`
 	Language  string       `json:"language,omitempty"           jsonschema:"a language to ask instead of the scope's"`
 	Detail    Detail       `json:"detail,omitempty"             jsonschema:"signatures for a file and names for a directory by default"`
-	Names     []string     `json:"names,omitempty"              jsonschema:"keep these names"`
 	Kind      KindWord     `json:"kind,omitempty"               jsonschema:"keep one kind, such as function, method, struct or interface"`
 	Prefix    string       `json:"prefix,omitempty"             jsonschema:"keep the names that start with this"`
-	Private   bool         `json:"private,omitempty"            jsonschema:"include unexported declarations"`
-	Include   []Include    `json:"include,omitempty"            jsonschema:"bindings to add"`
-	Tests     bool         `json:"tests,omitempty"              jsonschema:"include test files"`
-	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"answer ceiling in tokens, 6000 by default"`
 	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence wanted; the answer states its own fidelity"`
+	Names     []string     `json:"names,omitempty"              jsonschema:"keep these names"`
+	Include   []Include    `json:"include,omitempty"            jsonschema:"bindings to add"`
+	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"answer ceiling in tokens, 6000 by default"`
+	Private   bool         `json:"private,omitempty"            jsonschema:"include unexported declarations"`
+	Tests     bool         `json:"tests,omitempty"              jsonschema:"include test files"`
 }
 
 // Outline returns the tool that lists the declarations of a scope, by file. It narrows the

@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool
@@ -17,29 +17,14 @@ import (
 // levels [Docs] and [Source] cost more than the file, and over a few named declarations they
 // cost a fraction of it.
 type Narrow struct {
+	// Prefix keeps the declarations whose names start with it.
+	Prefix string
 	// Names keeps the declarations of these names, each plain or qualified as Instant.Time.
 	Names []string
 	// Kind keeps the declarations of one kind. [sema.KindUnknown] keeps every kind.
 	Kind sema.Kind
-	// Prefix keeps the declarations whose names start with it.
-	Prefix string
 	// Private keeps the declarations that are not visible outside their unit.
 	Private bool
-}
-
-// wanted reports whether d is a declaration that n keeps.
-func (n Narrow) wanted(d Declaration) bool {
-	if !n.Private && d.Visibility == sema.Unexported {
-		return false
-	}
-	if n.Kind != sema.KindUnknown && d.Kind != n.Kind {
-		return false
-	}
-	if n.Prefix != "" && !strings.HasPrefix(d.Name, n.Prefix) {
-		return false
-	}
-	return len(n.Names) == 0 || slices.Contains(n.Names, d.Name) ||
-		d.qualified != "" && slices.Contains(n.Names, d.qualified)
 }
 
 // Apply returns the declarations of items that n keeps. A declaration that n keeps comes with
@@ -60,6 +45,21 @@ func (n Narrow) Apply(items []Declaration) []Declaration {
 	return out
 }
 
+// wanted reports whether d is a declaration that n keeps.
+func (n Narrow) wanted(d Declaration) bool {
+	if !n.Private && d.Visibility == sema.Unexported {
+		return false
+	}
+	if n.Kind != sema.KindUnknown && d.Kind != n.Kind {
+		return false
+	}
+	if n.Prefix != "" && !strings.HasPrefix(d.Name, n.Prefix) {
+		return false
+	}
+	return len(n.Names) == 0 || slices.Contains(n.Names, d.Name) ||
+		d.qualified != "" && slices.Contains(n.Names, d.qualified)
+}
+
 // Members are the declarations that a declaration contains, in a type whose schema refers to
 // the schema of a declaration, because a schema that contains itself does not terminate.
 type Members []Declaration
@@ -67,10 +67,9 @@ type Members []Declaration
 // Declaration is one item of an answer: the fields of a [sema.Symbol] that the level of
 // [Detail] selects. The facts of the whole answer are in [Scope].
 type Declaration struct {
-	Name string    `json:"name"`
-	Kind sema.Kind `json:"kind"`
-	// Line is the line on which the declaration starts, counted from one.
-	Line int `json:"line"`
+	// Span is the span that the declaration covers, at [Source].
+	Span *Extent `json:"span,omitempty"`
+	Name string  `json:"name"`
 	// Path is the file of the declaration when it is not the file of the scope, as in an answer
 	// about more than one file.
 	Path string `json:"path,omitempty"`
@@ -80,21 +79,22 @@ type Declaration struct {
 	Signature string `json:"signature,omitempty"`
 	// Doc is the documentation comment, from [Docs] on.
 	Doc string `json:"doc,omitempty"`
-	// Visibility is the visibility of a declaration that is not [sema.Exported].
-	Visibility sema.Visibility `json:"visibility,omitempty"`
+	// Snippet is the source text of the declaration, at [Source].
+	Snippet string `json:"snippet,omitempty"`
+	// qualified is the qualified name of the declaration, as Instant.Time for the method Time of
+	// Instant, which [Narrow] matches beside the name. It is not part of the answer.
+	qualified string
 	// Modifiers are the keywords on the declaration, from [Signatures] on.
 	Modifiers []string `json:"modifiers,omitempty"`
 	// Annotations are the names of the annotations of the declaration, from [Signatures] on.
 	Annotations []string `json:"annotations,omitempty"`
-	// Snippet is the source text of the declaration, at [Source].
-	Snippet string `json:"snippet,omitempty"`
-	// Span is the span that the declaration covers, at [Source].
-	Span *Extent `json:"span,omitempty"`
 	// Members are the declarations that this one contains, such as the fields of a struct.
 	Members Members `json:"members,omitempty"`
-	// qualified is the qualified name of the declaration, as Instant.Time for the method Time of
-	// Instant, which [Narrow] matches beside the name. It is not part of the answer.
-	qualified string
+	// Line is the line on which the declaration starts, counted from one.
+	Line int       `json:"line"`
+	Kind sema.Kind `json:"kind"`
+	// Visibility is the visibility of a declaration that is not [sema.Exported].
+	Visibility sema.Visibility `json:"visibility,omitempty"`
 }
 
 // Declared returns the declarations of items at the level d, each nested under the smallest
@@ -160,7 +160,7 @@ func declared(items []sema.Symbol, d Detail, include engine.Bindings, rooted boo
 		}
 		return out
 	}
-	out := []Declaration{}
+	out := make([]Declaration, 0, len(roots))
 	for _, i := range roots {
 		out = append(out, build(i))
 	}

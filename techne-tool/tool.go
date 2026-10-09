@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool
@@ -43,21 +43,21 @@ type Tool interface {
 // Result is the output of a tool and whether a caller reads it as a failure. A transport
 // reads Failed without decoding the payload.
 type Result struct {
-	// Payload is the encoded output. A failure has one too, which states the reason.
-	Payload json.RawMessage
-
 	// Rendered is the output as text, which a transport sends as the unstructured part of a
 	// result. It is empty for an output that does not implement [Renderer], and a transport
 	// then sends the payload.
 	Rendered string
 
-	// Failed reports that the operation did not do what was asked: no engine serves the
-	// language, or the request was refused. A caller can correct either.
-	Failed bool
+	// Payload is the encoded output. A failure has one too, which states the reason.
+	Payload json.RawMessage
 
 	// Waited is the time that the engines of the call waited for processes outside techne, as
 	// [engine.Waited] sums it.
 	Waited time.Duration
+
+	// Failed reports that the operation did not do what was asked: no engine serves the
+	// language, or the request was refused. A caller can correct either.
+	Failed bool
 }
 
 // WaitedMeta is the key of the _meta of a result of MCP whose value is the time, in whole
@@ -146,6 +146,9 @@ func aliasesOf(t reflect.Type, schema *jsonschema.Schema) (map[string]string, er
 	return out, nil
 }
 
+// typeString is the JSON Schema type of a string.
+const typeString = "string"
+
 // marshalled are the schemas of the types that encode as one word of a vocabulary, which
 // their Go types do not state: [sema.Kind] is a uint8 that encodes as a word. Each enum comes
 // from the list of its vocabulary, so every schema lists a word added to the list. The schema
@@ -155,7 +158,7 @@ var marshalled = map[reflect.Type]*jsonschema.Schema{
 	reflect.TypeFor[sema.Kind]():       enumOf(sema.Kinds()),
 	reflect.TypeFor[sema.Visibility](): enumOf(sema.Visibilities()),
 	reflect.TypeFor[diag.Severity]():   enumOf(diag.Severities()),
-	reflect.TypeFor[KindWord]():        {Type: "string"},
+	reflect.TypeFor[KindWord]():        {Type: typeString},
 	reflect.TypeFor[RelationWord]():    enumOf(sema.RelationKinds()),
 	reflect.TypeFor[FidelityWord]():    enumOf(trust.Fidelities()),
 	reflect.TypeFor[Detail]():          enumOf(Levels()),
@@ -192,18 +195,18 @@ func enumOf[T fmt.Stringer](values []T) *jsonschema.Schema {
 	for _, v := range values {
 		out = append(out, v.String())
 	}
-	return &jsonschema.Schema{Type: "string", Enum: out}
+	return &jsonschema.Schema{Type: typeString, Enum: out}
 }
 
 // typed is the tool that [New] returns for one handler.
 type typed[In, Out any] struct {
+	in  *jsonschema.Schema
+	out *jsonschema.Schema
+	// aliases maps each alias to the input field that [AliasTag] names it for.
+	aliases     map[string]string
+	run         func(context.Context, In) (Out, error)
 	name        string
 	description string
-	in          *jsonschema.Schema
-	out         *jsonschema.Schema
-	// aliases maps each alias to the input field that [AliasTag] names it for.
-	aliases map[string]string
-	run     func(context.Context, In) (Out, error)
 }
 
 func (t *typed[In, Out]) Name() string                     { return t.name }

@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool
@@ -13,13 +13,13 @@ import (
 
 // RenameInput is the input of the rename.symbol tool.
 type RenameInput struct {
+	DryRun   *bool    `json:"dry_run,omitempty"  jsonschema:"preview only, true by default"`
 	Scope    string   `json:"scope"              jsonschema:"file or directory of the declaration, relative to the root"`
 	Name     string   `json:"name"               jsonschema:"the declaration, qualified as Type.Method when ambiguous"                alias:"symbol"`
 	NewName  string   `json:"new_name"           jsonschema:"the new name"`
 	Kind     KindWord `json:"kind,omitempty"     jsonschema:"its kind, such as function, method or struct, when the name has several"`
-	Line     int      `json:"line,omitempty"     jsonschema:"a line of it, counted from one, when the name has several declarations"`
 	Language string   `json:"language,omitempty" jsonschema:"a language to ask instead of the scope's"`
-	DryRun   *bool    `json:"dry_run,omitempty"  jsonschema:"preview only, true by default"`
+	Line     int      `json:"line,omitempty"     jsonschema:"a line of it, counted from one, when the name has several declarations"`
 }
 
 // Rename returns the tool that renames one declaration and every reference to it. It refuses

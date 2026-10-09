@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool_test
@@ -125,15 +125,17 @@ func TestWorkspace(t *testing.T) {
 
 		t.Run("returns the first units that fit the budget with a truncation caveat", func(t *testing.T) {
 			t.Parallel()
-			var found []sema.Symbol
-			for i := range 40 {
+			const units = 40
+			found := make([]sema.Symbol, 0, units)
+			for i := range units {
 				found = append(found, declaring(fmt.Sprintf("unit%02d", i), fmt.Sprintf("unit%02d/a.fx", i),
 					"Store", sema.KindStruct, 0, ""))
 			}
 			got := mapped(t, `{"max_tokens":100}`, found...)
-			assert.InRange(t, len(got.Items), -1<<63, 39, "the units within 100 tokens")
+			assert.InRange(t, len(got.Items), -1<<63, units-1, "the units within 100 tokens")
 			assert.Equal(t, truncations(got.Provenance), []string{fmt.Sprintf(
-				"%d of 40 units returned within the token budget, those with the most declarations", len(got.Items))},
+				"%d of %d units returned within the token budget, those with the most declarations", len(got.Items),
+				units)},
 				"the notes of the truncation caveats")
 		})
 
@@ -175,8 +177,10 @@ func TestWorkspace(t *testing.T) {
 
 		t.Run("aligns the counts of units of one and of two digits", func(t *testing.T) {
 			t.Parallel()
-			found := []sema.Symbol{declaring("a", "a/x.fx", "One", sema.KindStruct, 0, "")}
-			for i := range 10 {
+			const files = 10
+			found := make([]sema.Symbol, 0, 1+files)
+			found = append(found, declaring("a", "a/x.fx", "One", sema.KindStruct, 0, ""))
+			for i := range files {
 				found = append(found, declaring("b", fmt.Sprintf("b/%d.fx", i), "Two", sema.KindStruct, 0, ""))
 			}
 			got := mapped(t, `{}`, found...).Render()

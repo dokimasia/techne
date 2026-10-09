@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool
@@ -33,7 +33,7 @@ func Directed(t Tool, about string, elsewhere Elsewhere) (Tool, error) {
 	if in.Properties == nil {
 		in.Properties = map[string]*jsonschema.Schema{}
 	}
-	in.Properties[WorkingDirectory] = &jsonschema.Schema{Type: "string", Description: about}
+	in.Properties[WorkingDirectory] = &jsonschema.Schema{Type: typeString, Description: about}
 	in.PropertyOrder = append(slices.Clone(in.PropertyOrder), WorkingDirectory)
 	return &directed{Tool: t, in: in, elsewhere: elsewhere}, nil
 }

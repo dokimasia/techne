@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool
@@ -15,13 +15,13 @@ import (
 // without comment markers. The tool writes the markers of the language, at the indentation and
 // the place that the language uses.
 type DocumentInput struct {
+	DryRun   *bool    `json:"dry_run,omitempty"  jsonschema:"preview only, true by default"`
 	Scope    string   `json:"scope"              jsonschema:"file or directory of the declaration, relative to the root"`
 	Name     string   `json:"name"               jsonschema:"the declaration, qualified as Type.Method when ambiguous"                alias:"symbol"`
 	Doc      string   `json:"doc"                jsonschema:"the documentation, without comment markers"`
 	Kind     KindWord `json:"kind,omitempty"     jsonschema:"its kind, such as function, method or struct, when the name has several"`
-	Line     int      `json:"line,omitempty"     jsonschema:"a line of it, counted from one, when the name has several declarations"`
 	Language string   `json:"language,omitempty" jsonschema:"a language to ask instead of the scope's"`
-	DryRun   *bool    `json:"dry_run,omitempty"  jsonschema:"preview only, true by default"`
+	Line     int      `json:"line,omitempty"     jsonschema:"a line of it, counted from one, when the name has several declarations"`
 }
 
 // Document returns the tool that writes documentation onto one declaration. It refuses an

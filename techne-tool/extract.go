@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool
@@ -17,12 +17,12 @@ import (
 // the function: a selection inside a class becomes a method of the class, and one at the top
 // level a function.
 type ExtractInput struct {
+	DryRun    *bool  `json:"dry_run,omitempty"  jsonschema:"preview only, true by default"`
 	Path      string `json:"path"               jsonschema:"the file, relative to the root"`
-	FirstLine int    `json:"first_line"         jsonschema:"the first line, counted from one"`
-	LastLine  int    `json:"last_line"          jsonschema:"the last line, included"`
 	NewName   string `json:"new_name"           jsonschema:"the name of the new function"`
 	Language  string `json:"language,omitempty" jsonschema:"a language to ask instead of the file's"`
-	DryRun    *bool  `json:"dry_run,omitempty"  jsonschema:"preview only, true by default"`
+	FirstLine int    `json:"first_line"         jsonschema:"the first line, counted from one"`
+	LastLine  int    `json:"last_line"          jsonschema:"the last line, included"`
 }
 
 // Extract returns the tool that moves a run of lines into a new function and calls the

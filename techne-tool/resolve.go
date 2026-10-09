@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool
@@ -15,13 +15,13 @@ import (
 // and a compiler report a position.
 type ResolveInput struct {
 	Scope     string       `json:"scope"                        jsonschema:"the file of the position, relative to the root"`
-	Line      int          `json:"line"                         jsonschema:"line, counted from one"`
-	Column    int          `json:"column"                       jsonschema:"column in bytes, counted from one"`
 	Language  string       `json:"language,omitempty"           jsonschema:"a language to ask instead of the file's"`
 	Detail    Detail       `json:"detail,omitempty"             jsonschema:"signatures by default"`
-	Include   []Include    `json:"include,omitempty"            jsonschema:"bindings to add"`
-	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"answer ceiling in tokens, 6000 by default"`
 	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence wanted; the answer states its own fidelity"`
+	Include   []Include    `json:"include,omitempty"            jsonschema:"bindings to add"`
+	Line      int          `json:"line"                         jsonschema:"line, counted from one"`
+	Column    int          `json:"column"                       jsonschema:"column in bytes, counted from one"`
+	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"answer ceiling in tokens, 6000 by default"`
 }
 
 // Resolve returns the tool that reports the declarations that the name at a position

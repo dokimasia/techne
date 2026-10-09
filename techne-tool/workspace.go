@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool
@@ -29,10 +29,10 @@ type WorkspaceInput struct {
 // Units is the output of the workspace tool: the units of a directory, such as the packages of
 // Go, in the order of their paths.
 type Units struct {
+	Error      *Failure   `json:"error,omitempty"`
 	Scope      Scope      `json:"scope"`
 	Items      []Unit     `json:"items"`
 	Provenance Provenance `json:"provenance"`
-	Error      *Failure   `json:"error,omitempty"`
 }
 
 // Unit is one unit of a language: its path, its language, the number of its files and of its
@@ -40,13 +40,13 @@ type Units struct {
 type Unit struct {
 	Unit     string `json:"unit"`
 	Language string `json:"language"`
-	Files    int    `json:"files"`
-	// Declarations counts the declarations at the top level of the files of the unit that are
-	// visible outside it, or all of them for an input with private.
-	Declarations int `json:"declarations"`
 	// Summary is the first sentence of the documentation of the package or the module that
 	// the unit declares, or empty for none.
 	Summary string `json:"summary,omitempty"`
+	Files   int    `json:"files"`
+	// Declarations counts the declarations at the top level of the files of the unit that are
+	// visible outside it, or all of them for an input with private.
+	Declarations int `json:"declarations"`
 }
 
 // Failed reports whether the output has an Error.

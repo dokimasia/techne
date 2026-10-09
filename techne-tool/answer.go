@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool
@@ -33,11 +33,11 @@ type Scope struct {
 // the evidence of the engine in Provenance, and an Error when no engine served the request.
 // There is no status field.
 type Answer struct {
+	// Error is the reason that the request was not served, or nil.
+	Error      *Failure      `json:"error,omitempty"`
 	Scope      Scope         `json:"scope"`
 	Items      []Declaration `json:"items"`
 	Provenance Provenance    `json:"provenance"`
-	// Error is the reason that the request was not served, or nil.
-	Error *Failure `json:"error,omitempty"`
 	// ByFile reports that the render writes the declarations of each file under a line with
 	// its path, as the outline of a directory does. A ranked answer, such as a search, writes
 	// the path of each declaration on its line instead. The render reads it, and the JSON of
@@ -59,13 +59,13 @@ func (a Answer) Failed() bool { return a.Error != nil }
 
 // Provenance is the evidence behind an answer, with each tier as a word.
 type Provenance struct {
-	Engine       string `json:"engine,omitempty"`
-	Fidelity     string `json:"fidelity"`
-	Completeness string `json:"completeness"`
+	Engine       string   `json:"engine,omitempty"`
+	Fidelity     string   `json:"fidelity"`
+	Completeness string   `json:"completeness"`
+	Caveats      []Caveat `json:"caveats,omitempty"`
 	// SupportsNegativeClaim reports whether an empty answer proves that there are none, which
 	// needs resolved binding over total coverage.
-	SupportsNegativeClaim bool     `json:"supportsNegativeClaim"`
-	Caveats               []Caveat `json:"caveats,omitempty"`
+	SupportsNegativeClaim bool `json:"supportsNegativeClaim"`
 }
 
 // Caveat is a limit on an answer that its tier does not state.

@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool
@@ -19,18 +19,18 @@ import (
 // language runs by default.
 type VerifyInput struct {
 	Scope     string       `json:"scope"                        jsonschema:"file or directory, relative to the root"`
-	Suites    []string     `json:"suites,omitempty"             jsonschema:"checks to run, in the words of the language"`
 	Language  string       `json:"language,omitempty"           jsonschema:"a language to ask instead of the scope's"`
-	MaxIssues int          `json:"max_issues,omitempty"         jsonschema:"most issues to return, all by default"`
 	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence wanted; the answer states its own fidelity"`
+	Suites    []string     `json:"suites,omitempty"             jsonschema:"checks to run, in the words of the language"`
+	MaxIssues int          `json:"max_issues,omitempty"         jsonschema:"most issues to return, all by default"`
 }
 
 // VerifyOutput is the output of the verify tool.
 type VerifyOutput struct {
+	Error      *Failure   `json:"error,omitempty"`
 	Scope      Scope      `json:"scope"`
 	Items      []Reported `json:"items"`
 	Provenance Provenance `json:"provenance"`
-	Error      *Failure   `json:"error,omitempty"`
 }
 
 // Reported is one issue that a check reported. At is the source line of the issue. Fix is the
@@ -42,20 +42,20 @@ type Reported struct {
 	Source   string `json:"source,omitempty"`
 	Message  string `json:"message"`
 	Path     string `json:"path"`
+	At       string `json:"at,omitempty"`
+	Fix      []Fix  `json:"fix,omitempty"`
 	Line     int    `json:"line"`
 	// Column is the column of the issue in bytes, counted from one, which tells apart two issues
 	// with one message on one line, as two uses of one undefined name are.
-	Column int    `json:"column"`
-	At     string `json:"at,omitempty"`
-	Fix    []Fix  `json:"fix,omitempty"`
+	Column int `json:"column"`
 }
 
 // Fix is one range that a remedy writes: its file, the line on which it starts, counted from
 // one, and the text.
 type Fix struct {
 	Path string `json:"path"`
-	Line int    `json:"line"`
 	Now  string `json:"now"`
+	Line int    `json:"line"`
 }
 
 // Failed reports whether the output has an Error. Issues are no failure: a check that ran and

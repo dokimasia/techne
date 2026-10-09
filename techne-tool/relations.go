@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool
@@ -24,39 +24,39 @@ type RelationsInput struct {
 	Name      string       `json:"name"                         jsonschema:"the declaration, qualified as Type.Method when ambiguous"                alias:"symbol"`
 	Relation  RelationWord `json:"relation"                     jsonschema:"the direction of the relations"`
 	Kind      KindWord     `json:"kind,omitempty"               jsonschema:"its kind, such as function, method or struct, when the name has several"`
-	Line      int          `json:"line,omitempty"               jsonschema:"a line of it, counted from one, when the name has several declarations"`
 	Language  string       `json:"language,omitempty"           jsonschema:"a language to ask instead of the scope's"`
+	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence wanted; the answer states its own fidelity"`
+	Line      int          `json:"line,omitempty"               jsonschema:"a line of it, counted from one, when the name has several declarations"`
 	Limit     int          `json:"limit,omitempty"              jsonschema:"most relations to return, 50 by default"`
 	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"answer ceiling in tokens, 6000 by default"`
-	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence wanted; the answer states its own fidelity"`
 }
 
 // RelationsOutput is the output of the relations tool. It states the declaration and the
 // direction once, and every relation runs in that direction.
 type RelationsOutput struct {
+	Error      *Failure    `json:"error,omitempty"`
 	Scope      Scope       `json:"scope"`
 	Of         string      `json:"of"`
 	Relation   string      `json:"relation"`
 	Items      []Connected `json:"items"`
 	Provenance Provenance  `json:"provenance"`
-	Error      *Failure    `json:"error,omitempty"`
 }
 
 // Connected is one relation: the declaration at its far end, and its site. Path and Line are
 // the site of the relation, such as a call, and not the declaration.
 type Connected struct {
-	Name string    `json:"name"`
-	Kind sema.Kind `json:"kind"`
+	Name string `json:"name"`
 	// In is the qualified name of the declaration that contains the far end, or empty at the
 	// top level of a file.
 	In   string `json:"in,omitempty"`
 	Path string `json:"path"`
+	// Via is the source line of the site.
+	Via  string `json:"via,omitempty"`
 	Line int    `json:"line"`
 	// Column is the column of the site in bytes, counted from one, which tells apart two sites
 	// on one line, as the opening and the closing tag of a JSX element are.
-	Column int `json:"column"`
-	// Via is the source line of the site.
-	Via string `json:"via,omitempty"`
+	Column int       `json:"column"`
+	Kind   sema.Kind `json:"kind"`
 }
 
 // Failed reports whether the output has an Error.

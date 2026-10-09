@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool
@@ -18,21 +18,21 @@ import (
 // Written is what every write tool returns. Applied reports whether the change was written,
 // and the other fields describe the change either way.
 type Written struct {
-	Scope     Scope  `json:"scope"`
-	Operation string `json:"operation"`
-	// Target is the declaration or the file that the change is about.
-	Target  string `json:"target,omitempty"`
-	Applied bool   `json:"applied"`
-	// Items are the files that the change touches, one each.
-	Items []Changed `json:"items"`
 	// Verified is the gate that checked the change, or nil when no gate checked it.
-	Verified *Gate `json:"verified,omitempty"`
-	// Provenance is the evidence of the engine that planned the change.
-	Provenance Provenance `json:"provenance"`
+	Verified  *Gate    `json:"verified,omitempty"`
+	Error     *Failure `json:"error,omitempty"`
+	Scope     Scope    `json:"scope"`
+	Operation string   `json:"operation"`
+	// Target is the declaration or the file that the change is about.
+	Target string `json:"target,omitempty"`
 	// Handle applies a preview with the apply.change tool without planning it again. A
 	// preview that cannot be applied has none.
-	Handle string   `json:"handle,omitempty"`
-	Error  *Failure `json:"error,omitempty"`
+	Handle string `json:"handle,omitempty"`
+	// Items are the files that the change touches, one each.
+	Items []Changed `json:"items"`
+	// Provenance is the evidence of the engine that planned the change.
+	Provenance Provenance `json:"provenance"`
+	Applied    bool       `json:"applied"`
 }
 
 // Changed is one file that a change touches, including a file that it moves, creates or
@@ -40,22 +40,22 @@ type Written struct {
 type Changed struct {
 	Path string `json:"path"`
 	// To is the destination of a file that the change moves.
-	To string `json:"to,omitempty"`
+	To      string    `json:"to,omitempty"`
+	Changes []Rewrite `json:"changes,omitempty"`
+	// Sites is the number of ranges of the file that the change rewrites.
+	Sites int `json:"sites"`
 	// Gone reports a file that the change deletes.
 	Gone bool `json:"gone,omitempty"`
 	// Made reports a file that the change creates.
 	Made bool `json:"made,omitempty"`
-	// Sites is the number of ranges of the file that the change rewrites.
-	Sites   int       `json:"sites"`
-	Changes []Rewrite `json:"changes,omitempty"`
 }
 
 // Rewrite is one run of lines of a file that a change rewrites, with the lines before the change
 // and the lines that replace them. Line is the one-based line on which the run starts.
 type Rewrite struct {
-	Line int    `json:"line"`
 	Was  string `json:"was,omitempty"`
 	Now  string `json:"now"`
+	Line int    `json:"line"`
 }
 
 // Gate is the check that judged a change before the write: its kind, the engine that ran it,
@@ -203,11 +203,12 @@ func (g Gate) line() string {
 // diffed returns the lines of one rewrite as a diff: each line that it replaces after a minus,
 // and each line that it writes after a plus.
 func diffed(one Rewrite) []string {
-	var out []string
-	for _, line := range lines(one.Was) {
+	was, now := lines(one.Was), lines(one.Now)
+	out := make([]string, 0, len(was)+len(now))
+	for _, line := range was {
 		out = append(out, "- "+line)
 	}
-	for _, line := range lines(one.Now) {
+	for _, line := range now {
 		out = append(out, "+ "+line)
 	}
 	return out

@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool
@@ -13,10 +13,10 @@ import (
 
 // MoveInput is the input of the move.file tool.
 type MoveInput struct {
+	DryRun   *bool  `json:"dry_run,omitempty"  jsonschema:"preview only, true by default"`
 	Path     string `json:"path"               jsonschema:"the file to move, relative to the root"`
 	To       string `json:"to"                 jsonschema:"its destination, relative to the root"`
 	Language string `json:"language,omitempty" jsonschema:"a language to ask instead of the file's"`
-	DryRun   *bool  `json:"dry_run,omitempty"  jsonschema:"preview only, true by default"`
 }
 
 // Move returns the tool that moves a file and rewrites the references to it. A file is its

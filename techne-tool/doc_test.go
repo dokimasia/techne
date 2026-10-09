@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool_test
@@ -51,8 +51,7 @@ func TestDoc(t *testing.T) {
 func every(t *testing.T) []tool.Tool {
 	t.Helper()
 	over := addressable()
-	var out []tool.Tool
-	for _, build := range []func() (tool.Tool, error){
+	builders := []func() (tool.Tool, error){
 		func() (tool.Tool, error) { return tool.Outline(over) },
 		func() (tool.Tool, error) { return tool.Search(over) },
 		func() (tool.Tool, error) { return tool.Resolve(over) },
@@ -64,7 +63,9 @@ func every(t *testing.T) []tool.Tool {
 		func() (tool.Tool, error) { return tool.Move(&recorder{}) },
 		func() (tool.Tool, error) { return tool.Extract(&recorder{}) },
 		func() (tool.Tool, error) { return tool.Apply(&committer{}) },
-	} {
+	}
+	out := make([]tool.Tool, 0, len(builders))
+	for _, build := range builders {
 		built, err := build()
 		assert.NoError(t, err, "the error of a tool constructor")
 		out = append(out, built)

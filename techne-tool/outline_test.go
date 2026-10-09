@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool_test
@@ -247,7 +247,7 @@ func TestOutline(t *testing.T) {
 
 		t.Run("narrows the answer to each kind word", func(t *testing.T) {
 			t.Parallel()
-			var found []sema.Symbol
+			found := make([]sema.Symbol, 0, len(sema.Kinds()))
 			for _, kind := range sema.Kinds() {
 				one := function(kind.String(), "")
 				one.Kind = kind

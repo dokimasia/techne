@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool
@@ -22,21 +22,21 @@ type SearchInput struct {
 	Scope     string       `json:"scope,omitempty"              jsonschema:"file or directory, relative to the root"`
 	Language  string       `json:"language,omitempty"           jsonschema:"a language to ask instead of the scope's"`
 	Kind      KindWord     `json:"kind,omitempty"               jsonschema:"keep one kind, such as function, method, struct or interface"`
-	Private   bool         `json:"private,omitempty"            jsonschema:"include unexported declarations, which a search without an exported match includes"`
-	Limit     int          `json:"limit,omitempty"              jsonschema:"most matches to return, all by default"`
 	Detail    Detail       `json:"detail,omitempty"             jsonschema:"docs for one match and names for more by default"`
-	Include   []Include    `json:"include,omitempty"            jsonschema:"bindings to add"`
-	Tests     bool         `json:"tests,omitempty"              jsonschema:"include test files"`
-	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"answer ceiling in tokens, 6000 by default"`
 	Preferred FidelityWord `json:"preferred_fidelity,omitempty" jsonschema:"weakest evidence wanted; the answer states its own fidelity"`
+	Include   []Include    `json:"include,omitempty"            jsonschema:"bindings to add"`
+	Limit     int          `json:"limit,omitempty"              jsonschema:"most matches to return, all by default"`
+	MaxTokens int          `json:"max_tokens,omitempty"         jsonschema:"answer ceiling in tokens, 6000 by default"`
+	Private   bool         `json:"private,omitempty"            jsonschema:"include unexported declarations, which a search without an exported match includes"`
+	Tests     bool         `json:"tests,omitempty"              jsonschema:"include test files"`
 }
 
 // Matches is the output of the search tool.
 type Matches struct {
-	Answer
-
 	// Text is the text of the search.
 	Text string `json:"text"`
+
+	Answer
 
 	// Ambiguous reports that the answer has more than one declaration. The engine ranks
 	// them, and each has its name, its kind and its line.

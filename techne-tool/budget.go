@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool
@@ -119,8 +119,8 @@ func cut(a Answer) bool {
 // fit is an answer that [Fit] thins: each declaration once, in the order of the answer with
 // the members of each after it, and the bytes that the render of each takes.
 type fit struct {
-	a     Answer
 	nodes []node
+	a     Answer
 	// limit is the largest render in bytes that fits the budget.
 	limit int
 	// fixed is the bytes of the render outside the declarations, except for the count of the

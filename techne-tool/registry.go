@@ -1,9 +1,10 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -14,8 +15,8 @@ const maxNameLength = 128
 // Registry is the set of tools that a server offers. A composition root adds the tools before
 // the server serves a request, so the registry is safe for concurrent reads after that.
 type Registry struct {
-	tools []Tool
 	named map[string]Tool
+	tools []Tool
 }
 
 // NewRegistry returns a registry without tools.
@@ -57,7 +58,7 @@ func (r *Registry) Tools() []Tool {
 func validName(name string) error {
 	switch {
 	case name == "":
-		return fmt.Errorf("tool: a tool must be named")
+		return errors.New("tool: a tool must be named")
 	case len(name) > maxNameLength:
 		return fmt.Errorf("tool: %q is %d characters, over the %d the protocol allows",
 			name, len(name), maxNameLength)

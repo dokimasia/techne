@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package tool_test
@@ -77,8 +77,9 @@ func TestRegistry(t *testing.T) {
 			for _, name := range []string{"b.tool", "a.tool", "c.tool"} {
 				assert.NoError(t, r.Add(namedTool(t, name)), "the error of Add for "+name)
 			}
-			var got []string
-			for _, one := range r.Tools() {
+			tools := r.Tools()
+			got := make([]string, 0, len(tools))
+			for _, one := range tools {
 				got = append(got, one.Name())
 			}
 			assert.Equal(t, got, []string{"b.tool", "a.tool", "c.tool"}, "the names of the tools")
