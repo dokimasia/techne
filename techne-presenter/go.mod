@@ -1,6 +1,9 @@
+// Copyright Dokimasia B.V. 2026
+// SPDX-License-Identifier: MIT
+
 module go.dokimi.dev/techne/presenter
 
-go 1.27.0
+go 1.27.2
 
 require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
@@ -19,7 +22,3 @@ require (
 	golang.org/x/sys v0.41.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 )
-
-replace go.dokimi.dev/techne/core => ../techne-core
-
-replace go.dokimi.dev/techne/tool => ../techne-tool

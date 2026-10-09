@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package presenter_test
@@ -126,7 +126,7 @@ func failing(context.Context, answerIn) (answerOut, error) {
 
 // panicking panics with fault.
 func panicking(context.Context, answerIn) (answerOut, error) {
-	panic(fault)
+	panic(fault) //nolint:forbidigo // the cases check that the server recovers from a tool that panics
 }
 
 // registered returns a registry of the tools that the cases call:
@@ -164,11 +164,12 @@ type record struct {
 	text bytes.Buffer
 }
 
-// Write appends p to the record.
+// Write appends p to the record. It returns no error, because a bytes.Buffer returns none.
 func (r *record) Write(p []byte) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.text.Write(p)
+	r.text.Write(p)
+	return len(p), nil
 }
 
 // String returns the content of the record.
@@ -242,7 +243,7 @@ func TestServer(t *testing.T) {
 			t.Parallel()
 			listed, err := connected(t, io.Discard, presenter.Text).ListTools(t.Context(), nil)
 			assert.NoError(t, err, "the error of ListTools")
-			var names []string
+			names := make([]string, 0, len(listed.Tools))
 			for _, one := range listed.Tools {
 				names = append(names, one.Name)
 				assert.Equal(t, one.Description, "PREFER OVER reading a file.", "the description of "+one.Name)

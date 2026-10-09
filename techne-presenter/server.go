@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package presenter
@@ -115,7 +115,10 @@ func failure(reason string) *mcp.CallToolResult {
 }
 
 // Serve runs s over standard input and output. It returns nil when the client closes standard
-// input, and the error of ctx when ctx is done.
+// input, and an error that wraps the error of ctx when ctx is done.
 func Serve(ctx context.Context, s *mcp.Server) error {
-	return s.Run(ctx, &mcp.StdioTransport{})
+	if err := s.Run(ctx, &mcp.StdioTransport{}); err != nil {
+		return fmt.Errorf("presenter: serve: %w", err)
+	}
+	return nil
 }
