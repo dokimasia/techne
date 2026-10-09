@@ -1,3 +1,6 @@
+; Copyright Dokimasia B.V. 2026
+; SPDX-License-Identifier: MIT
+
 ;; Everything Rust declares, at any depth. Nothing is anchored: an item
 ;; inside a function is still an item, and a caller wanting only a
 ;; crate's surface filters on Kind.Declares and Symbol.Parent.
