@@ -194,14 +194,23 @@ func (v *view) file(pos token.Pos) *ast.File {
 // cannot be read. A column that a line directive leaves unknown is the start of its line. The
 // position of any other file is its own, also where a line directive of the file names another.
 func (v *view) placed(at token.Pos) (string, source.Position) {
-	own := v.fset.PositionFor(at, false)
+	own := native(v.fset.PositionFor(at, false))
 	if !v.generates(own.Filename) {
 		return own.Filename, source.Position{Offset: own.Offset, Line: own.Line - 1, Column: own.Column - 1}
 	}
-	named := v.fset.Position(at)
+	named := native(v.fset.Position(at))
 	line, column := named.Line-1, max(named.Column-1, 0)
 	content, _ := os.ReadFile(named.Filename)
 	return named.Filename, source.Position{Offset: byteAt(content, line, column), Line: line, Column: column}
+}
+
+// native returns p with the name of its file in the form of the system. On Windows the compiler
+// writes the names of the files of export data with slashes, while the loader and the parser
+// write the names of the same files with backslashes.
+func native(p token.Position) token.Position {
+	//dokimi:mutate-skip sbr-delete: only Windows writes the names of the files of export data in another form
+	p.Filename = filepath.FromSlash(p.Filename)
+	return p
 }
 
 // sourceOf returns the path of the file of pkg whose syntax is the i-th file of the syntax of

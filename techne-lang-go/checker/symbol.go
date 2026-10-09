@@ -93,7 +93,7 @@ func (v *view) same(one, other types.Object) bool {
 	case v.file(one.Pos()) != nil && v.file(other.Pos()) != nil:
 		return false
 	}
-	a, b := v.fset.Position(one.Pos()), v.fset.Position(other.Pos())
+	a, b := native(v.fset.Position(one.Pos())), native(v.fset.Position(other.Pos()))
 	return a.IsValid() && a.Filename == b.Filename && a.Line == b.Line
 }
 
@@ -102,7 +102,7 @@ func (v *view) same(one, other types.Object) bool {
 // syntax the view has. It returns of for an object with syntax, and for a file that no package
 // of the view type-checks, such as a file of the standard library.
 func (v *view) sourced(of types.Object) types.Object {
-	at := v.fset.Position(of.Pos())
+	at := native(v.fset.Position(of.Pos()))
 	if v.file(of.Pos()) != nil || !v.compiles(at.Filename) {
 		return of
 	}
