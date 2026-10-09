@@ -118,8 +118,10 @@ func (r *Root) Remove(p source.Path) error {
 
 // resolved returns the path that a write to p changes: p, or the file that p links to when
 // p is a symbolic link, through at most [links] symbolic links. An absolute link target is
-// mapped into the directory. A relative target out of the directory fails when it is
-// written, because [os.Root] refuses the path.
+// mapped into the directory after the symbolic links of its parent directory are resolved, as
+// [Open] resolves the directory of the root. A target in a parent directory that does not
+// exist is mapped as written. A relative target out of the directory fails when it is written,
+// because [os.Root] refuses the path.
 func (r *Root) resolved(p string) (string, error) {
 	for range links {
 		info, err := r.root.Lstat(p)
@@ -138,6 +140,10 @@ func (r *Root) resolved(p string) (string, error) {
 		if !filepath.IsAbs(target) {
 			p = path.Join(path.Dir(p), filepath.ToSlash(target))
 			continue
+		}
+		dir, err := filepath.EvalSymlinks(filepath.Dir(target))
+		if err == nil {
+			target = filepath.Join(dir, filepath.Base(target))
 		}
 		inside, err := filepath.Rel(r.dir, target)
 		if err != nil || !filepath.IsLocal(inside) {

@@ -182,6 +182,30 @@ func TestRoot(t *testing.T) {
 			assertfiles.LinksTo(t, filepath.Join(dir, "link.go"), "real.go", "the link at link.go")
 		})
 
+		t.Run("writes through an absolute symbolic link whose target resolves into the directory", func(t *testing.T) {
+			t.Parallel()
+			root, dir := opened(t)
+			written(t, dir, "real.go", "old\n", 0o644)
+			alias := filepath.Join(t.TempDir(), "alias")
+			assert.NoError(t, os.Symlink(dir, alias), "Symlink of the alias of the workspace")
+			target := filepath.Join(alias, "real.go")
+			assert.NoError(t, os.Symlink(target, filepath.Join(dir, "link.go")), "Symlink of link.go")
+			assert.NoError(t, root.Write("link.go", []byte("new\n")), "Write of link.go")
+			assert.Equal(t, read(t, dir, "real.go"), "new\n", "the content of real.go")
+			assertfiles.LinksTo(t, filepath.Join(dir, "link.go"), target, "the link at link.go")
+		})
+
+		t.Run("creates the target of a dangling absolute symbolic link in a new directory", func(t *testing.T) {
+			t.Parallel()
+			root, dir := opened(t)
+			resolved, err := filepath.EvalSymlinks(dir)
+			assert.NoError(t, err, "EvalSymlinks of the workspace")
+			target := filepath.Join(resolved, "new", "real.go")
+			assert.NoError(t, os.Symlink(target, filepath.Join(dir, "link.go")), "Symlink of link.go")
+			assert.NoError(t, root.Write("link.go", []byte("new\n")), "Write of link.go")
+			assert.Equal(t, read(t, dir, filepath.Join("new", "real.go")), "new\n", "the content of new/real.go")
+		})
+
 		t.Run("refuses a symbolic link out of the directory", func(t *testing.T) {
 			t.Parallel()
 			root, dir := opened(t)
