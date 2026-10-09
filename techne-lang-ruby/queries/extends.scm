@@ -1,3 +1,6 @@
+; Copyright Dokimasia B.V. 2026
+; SPDX-License-Identifier: MIT
+
 ;; Everything Ruby declares, at any depth.
 ;;
 ;; Upstream captures a class, a module and a method and stops: no

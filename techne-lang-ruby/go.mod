@@ -1,6 +1,9 @@
+// Copyright Dokimasia B.V. 2026
+// SPDX-License-Identifier: MIT
+
 module go.dokimi.dev/techne/lang/ruby
 
-go 1.27.0
+go 1.27.2
 
 require (
 	github.com/tree-sitter/go-tree-sitter v0.25.0
@@ -18,7 +21,3 @@ require (
 	go.lsp.dev/protocol v1.0.1 // indirect
 	go.lsp.dev/uri v1.0.1 // indirect
 )
-
-replace go.dokimi.dev/techne/core => ../techne-core
-
-replace go.dokimi.dev/techne/lang => ../techne-lang
