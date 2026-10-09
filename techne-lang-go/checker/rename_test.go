@@ -19,26 +19,27 @@ import (
 )
 
 // renamedFiles returns a module whose files that the build constraints exclude use the
-// declarations of the package p:
+// declarations of the package p. The excluded files are files of freebsd and plan9, which no
+// system that runs the tests builds by default:
 //
 //   - p declares Old, the struct T with the field Field and the method Method, the struct E,
 //     which the struct S embeds and to which the struct P embeds a pointer, F, an alias of E,
 //     which the struct A embeds, and the struct U with the field Value of type E
-//   - p/p_windows.go, a file of windows, uses Old, Field, Method, the field E of an S and of a
+//   - p/p_freebsd.go, a file of freebsd, uses Old, Field, Method, the field E of an S and of a
 //     P, the field F of an A and the field Value of a U, and p/p_plan9.go, a file of plan9, uses
 //     Old twice
-//   - p/local_windows.go declares a local variable Old, and p/nocgo_windows.go, which a build of
-//     windows includes with cgo off, uses Old
-//   - p/never.go, which no build includes, and p/cgo_windows.go, which imports C, use Old
-//   - p/broken_windows.go uses Old and has a type error
-//   - p/clash_windows.go declares the methods Method and Other of its own type, and
-//     p/iface_windows.go an interface with the methods Method and Other, and both use the Method
+//   - p/local_freebsd.go declares a local variable Old, and p/nocgo_freebsd.go, which a build of
+//     freebsd includes with cgo off, uses Old
+//   - p/never.go, which no build includes, and p/cgo_freebsd.go, which imports C, use Old
+//   - p/broken_freebsd.go uses Old and has a type error
+//   - p/clash_freebsd.go declares the methods Method and Other of its own type, and
+//     p/iface_freebsd.go an interface with the methods Method and Other, and both use the Method
 //     of T
-//   - p/sized_windows.go declares a function Method, an interface with a method Size and a
+//   - p/sized_freebsd.go declares a function Method, an interface with a method Size and a
 //     method Area, and calls the Method of T
-//   - q imports p and uses Old, q/q_windows.go declares a method Old and calls Old through p,
+//   - q imports p and uses Old, q/q_freebsd.go declares a method Old and calls Old through p,
 //     and q/q_plan9.go uses Old through p
-//   - every file of win is a file of windows, and win uses Old through p
+//   - every file of bare is a file of freebsd, and bare uses Old through p
 //   - odd/odd_plan9.go uses Old in a package of a name that the other files of odd do not have,
 //     so the build of plan9 does not load odd
 //   - twin/twin.go declares Twin in every build but plan9, and twin/twin_plan9.go declares a Twin
@@ -52,47 +53,47 @@ func renamedFiles() map[string]string {
 			"// P embeds a pointer to E.\ntype P struct{ *E }\n\n" +
 			"// F is E under another name.\ntype F = E\n\n// A embeds F.\ntype A struct{ F }\n\n" +
 			"// U has a field of type E.\ntype U struct{ Value E }\n",
-		"p/p_windows.go": "package p\n\nvar _ = Old()\n\nvar _ = T{Field: 1}.Method()\n\nvar _ = S{}.E\n\n" +
+		"p/p_freebsd.go": "package p\n\nvar _ = Old()\n\nvar _ = T{Field: 1}.Method()\n\nvar _ = S{}.E\n\n" +
 			"var _ = P{}.E\n\nvar _ = A{}.F\n\nvar _ = U{}.Value\n",
 		"p/p_plan9.go":        "package p\n\nvar _ = Old\n\nvar _ = Old()\n",
-		"p/local_windows.go":  "package p\n\nfunc local() int {\n\tOld := 3\n\treturn Old\n}\n",
-		"p/nocgo_windows.go":  "//go:build !cgo\n\npackage p\n\nvar _ = Old\n",
+		"p/local_freebsd.go":  "package p\n\nfunc local() int {\n\tOld := 3\n\treturn Old\n}\n",
+		"p/nocgo_freebsd.go":  "//go:build !cgo\n\npackage p\n\nvar _ = Old\n",
 		"p/never.go":          never + "package p\n\nvar _ = Old\n",
-		"p/cgo_windows.go":    "package p\n\nimport \"C\"\n\nvar _ = Old\n",
-		"p/broken_windows.go": "package p\n\nvar _ = Old\n\nvar _ int = \"broken\"\n",
-		"p/clash_windows.go": "package p\n\ntype other struct{}\n\nfunc (other) Method() int { return 3 }\n\n" +
+		"p/cgo_freebsd.go":    "package p\n\nimport \"C\"\n\nvar _ = Old\n",
+		"p/broken_freebsd.go": "package p\n\nvar _ = Old\n\nvar _ int = \"broken\"\n",
+		"p/clash_freebsd.go": "package p\n\ntype other struct{}\n\nfunc (other) Method() int { return 3 }\n\n" +
 			"func (other) Other() int { return 5 }\n\nvar _ = T{}.Method\n",
-		"p/iface_windows.go": "package p\n\ntype actor interface {\n\tMethod() int\n\tOther() int\n}\n\n" +
+		"p/iface_freebsd.go": "package p\n\ntype actor interface {\n\tMethod() int\n\tOther() int\n}\n\n" +
 			"var _ = T{}.Method\n",
-		"p/sized_windows.go": "package p\n\ntype sizer interface{ Size() int }\n\ntype box struct{}\n\n" +
+		"p/sized_freebsd.go": "package p\n\ntype sizer interface{ Size() int }\n\ntype box struct{}\n\n" +
 			"func (box) Area() int { return T{}.Method() }\n\nfunc Method() int { return 4 }\n",
 		"q/q.go": "package q\n\nimport \"example.com/p/p\"\n\n// Q is the Old of p.\nvar Q = p.Old\n",
-		"q/q_windows.go": "package q\n\nimport \"example.com/p/p\"\n\ntype r struct{}\n\n" +
+		"q/q_freebsd.go": "package q\n\nimport \"example.com/p/p\"\n\ntype r struct{}\n\n" +
 			"func (r) Old() int { return p.Old() }\n",
 		"q/q_plan9.go":         "package q\n\nimport \"example.com/p/p\"\n\nvar _ = p.Old\n",
-		"win/win_windows.go":   "package win\n\nimport \"example.com/p/p\"\n\nvar _ = p.Old()\n",
+		"bare/bare_freebsd.go": "package bare\n\nimport \"example.com/p/p\"\n\nvar _ = p.Old()\n",
 		"odd/odd.go":           "package odd\n",
 		"odd/odd_plan9.go":     "package other\n\nimport \"example.com/p/p\"\n\nvar _ = p.Old\n",
 		"twin/twin.go":         "//go:build !plan9\n\npackage twin\n\n// Twin returns one.\nfunc Twin() int { return 1 }\n",
 		"twin/twin_plan9.go":   "package twin\n\n// Twin returns two.\nfunc Twin() int { return 2 }\n",
 		"twin/use_plan9.go":    "package twin\n\nvar _ = Twin\n",
 		"lone/lone.go":         "package lone\n\n// Lone returns three.\nfunc Lone() int { return 3 }\n",
-		"lone/lone_windows.go": "package lone\n",
+		"lone/lone_freebsd.go": "package lone\n",
 	}
 }
 
 // workedFiles returns a workspace of two modules, a, which its go.work file lists, and c, which
 // it does not. The package p of each declares Old. The package w of each has only files of
-// windows and uses Old through p.
+// freebsd and uses Old through p.
 func workedFiles() map[string]string {
 	return map[string]string{
 		"go.work":          "go 1.24\n\nuse ./a\n",
 		"a/go.mod":         "module example.com/a\n\ngo 1.24\n",
 		"a/p/p.go":         "package p\n\n// Old returns one.\nfunc Old() int { return 1 }\n",
-		"a/w/w_windows.go": "package w\n\nimport \"example.com/a/p\"\n\nvar _ = p.Old()\n",
+		"a/w/w_freebsd.go": "package w\n\nimport \"example.com/a/p\"\n\nvar _ = p.Old()\n",
 		"c/go.mod":         "module example.com/c\n\ngo 1.24\n",
 		"c/p/p.go":         "package p\n\n// Old returns two.\nfunc Old() int { return 2 }\n",
-		"c/w/w_windows.go": "package w\n\nimport \"example.com/c/p\"\n\nvar _ = p.Old()\n",
+		"c/w/w_freebsd.go": "package w\n\nimport \"example.com/c/p\"\n\nvar _ = p.Old()\n",
 	}
 }
 
@@ -108,14 +109,14 @@ func TestRename(t *testing.T) {
 			got, _, err := over(t, root).Renamed(t.Context(), renaming("p/p.go", "Old", sema.KindFunction), "New")
 			assert.NoError(t, err, "Renamed of Old")
 			assert.Equal(t, afterRename(t, root, got), map[source.Path]string{
-				"p/nocgo_windows.go": "//go:build !cgo\n\npackage p\n\nvar _ = New\n",
-				"p/p_plan9.go":       "package p\n\nvar _ = New\n\nvar _ = New()\n",
-				"p/p_windows.go": "package p\n\nvar _ = New()\n\nvar _ = T{Field: 1}.Method()\n\nvar _ = S{}.E\n\n" +
+				"bare/bare_freebsd.go": "package bare\n\nimport \"example.com/p/p\"\n\nvar _ = p.New()\n",
+				"p/nocgo_freebsd.go":   "//go:build !cgo\n\npackage p\n\nvar _ = New\n",
+				"p/p_plan9.go":         "package p\n\nvar _ = New\n\nvar _ = New()\n",
+				"p/p_freebsd.go": "package p\n\nvar _ = New()\n\nvar _ = T{Field: 1}.Method()\n\nvar _ = S{}.E\n\n" +
 					"var _ = P{}.E\n\nvar _ = A{}.F\n\nvar _ = U{}.Value\n",
 				"q/q_plan9.go": "package q\n\nimport \"example.com/p/p\"\n\nvar _ = p.New\n",
-				"q/q_windows.go": "package q\n\nimport \"example.com/p/p\"\n\ntype r struct{}\n\n" +
+				"q/q_freebsd.go": "package q\n\nimport \"example.com/p/p\"\n\ntype r struct{}\n\n" +
 					"func (r) Old() int { return p.New() }\n",
-				"win/win_windows.go": "package win\n\nimport \"example.com/p/p\"\n\nvar _ = p.New()\n",
 			}, "the excluded files after the rename")
 		})
 
@@ -125,8 +126,8 @@ func TestRename(t *testing.T) {
 				renaming("p/p.go", "Old", sema.KindFunction), "New")
 			assert.NoError(t, err, "Renamed of Old")
 			assert.Equal(t, changed(engine.Result[edit.Change]{Items: got}), []source.Path{
-				"p/nocgo_windows.go", "p/p_plan9.go", "p/p_windows.go", "q/q_plan9.go", "q/q_windows.go",
-				"win/win_windows.go",
+				"bare/bare_freebsd.go", "p/nocgo_freebsd.go", "p/p_freebsd.go", "p/p_plan9.go", "q/q_freebsd.go",
+				"q/q_plan9.go",
 			}, "the paths of the changes")
 		})
 
@@ -136,7 +137,7 @@ func TestRename(t *testing.T) {
 				renaming("p/p.go", "Old", sema.KindFunction), "New")
 			assert.NoError(t, err, "Renamed of Old")
 			assert.Equal(t, pathsOf(got, trust.CaveatUnrewritten),
-				[]source.Path{"odd/odd_plan9.go", "p/broken_windows.go", "p/cgo_windows.go", "p/never.go"},
+				[]source.Path{"odd/odd_plan9.go", "p/broken_freebsd.go", "p/cgo_freebsd.go", "p/never.go"},
 				"the files of the caveat")
 		})
 
@@ -156,9 +157,9 @@ func TestRename(t *testing.T) {
 			got, _, err := over(t, root).Renamed(t.Context(), renaming("p/p.go", "T.Method", sema.KindMethod), "Act")
 			assert.NoError(t, err, "Renamed of Method")
 			assert.Equal(t, afterRename(t, root, got), map[source.Path]string{
-				"p/p_windows.go": "package p\n\nvar _ = Old()\n\nvar _ = T{Field: 1}.Act()\n\nvar _ = S{}.E\n\n" +
+				"p/p_freebsd.go": "package p\n\nvar _ = Old()\n\nvar _ = T{Field: 1}.Act()\n\nvar _ = S{}.E\n\n" +
 					"var _ = P{}.E\n\nvar _ = A{}.F\n\nvar _ = U{}.Value\n",
-				"p/sized_windows.go": "package p\n\ntype sizer interface{ Size() int }\n\ntype box struct{}\n\n" +
+				"p/sized_freebsd.go": "package p\n\ntype sizer interface{ Size() int }\n\ntype box struct{}\n\n" +
 					"func (box) Area() int { return T{}.Act() }\n\nfunc Method() int { return 4 }\n",
 			}, "the excluded files after the rename")
 		})
@@ -171,8 +172,8 @@ func TestRename(t *testing.T) {
 			assert.Equal(t, got, []trust.Caveat{{
 				Code: trust.CaveatUnrewritten,
 				Note: "the plan does not rename the declaration in 2 files that the build constraints exclude from " +
-					"the build that the plan reads, such as p/clash_windows.go",
-				Paths: []source.Path{"p/clash_windows.go", "p/iface_windows.go"},
+					"the build that the plan reads, such as p/clash_freebsd.go",
+				Paths: []source.Path{"p/clash_freebsd.go", "p/iface_freebsd.go"},
 			}}, "the caveats")
 		})
 
@@ -182,7 +183,7 @@ func TestRename(t *testing.T) {
 			got, _, err := over(t, root).Renamed(t.Context(), renaming("p/p.go", "T.Field", sema.KindField), "Count")
 			assert.NoError(t, err, "Renamed of Field")
 			assert.Equal(t, afterRename(t, root, got), map[source.Path]string{
-				"p/p_windows.go": "package p\n\nvar _ = Old()\n\nvar _ = T{Count: 1}.Method()\n\nvar _ = S{}.E\n\n" +
+				"p/p_freebsd.go": "package p\n\nvar _ = Old()\n\nvar _ = T{Count: 1}.Method()\n\nvar _ = S{}.E\n\n" +
 					"var _ = P{}.E\n\nvar _ = A{}.F\n\nvar _ = U{}.Value\n",
 			}, "the excluded files after the rename")
 		})
@@ -193,7 +194,7 @@ func TestRename(t *testing.T) {
 			got, _, err := over(t, root).Renamed(t.Context(), renaming("p/p.go", "E", sema.KindStruct), "Embedded")
 			assert.NoError(t, err, "Renamed of E")
 			assert.Equal(t, afterRename(t, root, got), map[source.Path]string{
-				"p/p_windows.go": "package p\n\nvar _ = Old()\n\nvar _ = T{Field: 1}.Method()\n\nvar _ = S{}.Embedded\n\n" +
+				"p/p_freebsd.go": "package p\n\nvar _ = Old()\n\nvar _ = T{Field: 1}.Method()\n\nvar _ = S{}.Embedded\n\n" +
 					"var _ = P{}.Embedded\n\nvar _ = A{}.F\n\nvar _ = U{}.Value\n",
 			}, "the excluded files after the rename")
 		})
@@ -204,7 +205,7 @@ func TestRename(t *testing.T) {
 			got, _, err := over(t, root).Renamed(t.Context(), renaming("p/p.go", "F", sema.KindType), "G")
 			assert.NoError(t, err, "Renamed of F")
 			assert.Equal(t, afterRename(t, root, got), map[source.Path]string{
-				"p/p_windows.go": "package p\n\nvar _ = Old()\n\nvar _ = T{Field: 1}.Method()\n\nvar _ = S{}.E\n\n" +
+				"p/p_freebsd.go": "package p\n\nvar _ = Old()\n\nvar _ = T{Field: 1}.Method()\n\nvar _ = S{}.E\n\n" +
 					"var _ = P{}.E\n\nvar _ = A{}.G\n\nvar _ = U{}.Value\n",
 			}, "the excluded files after the rename")
 		})
@@ -225,7 +226,7 @@ func TestRename(t *testing.T) {
 			got, _, err := over(t, root).Renamed(t.Context(), renaming("a/p/p.go", "Old", sema.KindFunction), "New")
 			assert.NoError(t, err, "Renamed of the Old of a")
 			assert.Equal(t, afterRename(t, root, got), map[source.Path]string{
-				"a/w/w_windows.go": "package w\n\nimport \"example.com/a/p\"\n\nvar _ = p.New()\n",
+				"a/w/w_freebsd.go": "package w\n\nimport \"example.com/a/p\"\n\nvar _ = p.New()\n",
 			}, "the excluded files after the rename")
 		})
 
@@ -235,7 +236,7 @@ func TestRename(t *testing.T) {
 			got, _, err := over(t, root).Renamed(t.Context(), renaming("c/p/p.go", "Old", sema.KindFunction), "New")
 			assert.NoError(t, err, "Renamed of the Old of c")
 			assert.Equal(t, afterRename(t, root, got), map[source.Path]string{
-				"c/w/w_windows.go": "package w\n\nimport \"example.com/c/p\"\n\nvar _ = p.New()\n",
+				"c/w/w_freebsd.go": "package w\n\nimport \"example.com/c/p\"\n\nvar _ = p.New()\n",
 			}, "the excluded files after the rename")
 		})
 

@@ -6,6 +6,7 @@ package checker_test
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -56,8 +57,12 @@ func TestVerify(t *testing.T) {
 
 		t.Run("returns the file of an error in a directory whose name contains a colon", func(t *testing.T) {
 			t.Parallel()
-			root := filepath.Join(t.TempDir(), "with:colon")
-			assert.NoError(t, os.Mkdir(root, 0o755), "Mkdir with:colon")
+			// Windows refuses a colon in a name, and the drive letter of each path there contains one.
+			root := t.TempDir()
+			if runtime.GOOS != "windows" {
+				root = filepath.Join(root, "with:colon")
+				assert.NoError(t, os.Mkdir(root, 0o755), "Mkdir with:colon")
+			}
 			for name, body := range map[string]string{"go.mod": module, "store.go": store, "broken.go": broken} {
 				assert.NoError(t, os.WriteFile(filepath.Join(root, name), []byte(body), 0o644), "WriteFile "+name)
 			}

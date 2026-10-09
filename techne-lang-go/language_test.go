@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -237,7 +238,7 @@ func TestLanguage(t *testing.T) {
 
 		t.Run("returns an error for a root that is not a directory", func(t *testing.T) {
 			t.Parallel()
-			file := t.TempDir() + "/file"
+			file := filepath.Join(t.TempDir(), "file")
 			assert.NoError(t, os.WriteFile(file, nil, 0o600), "WriteFile of "+file)
 			err := golang.Register(lang.Workspace{FS: fstest.MapFS{}, Root: file},
 				lang.NewRegistry(), engine.NewCatalog())
