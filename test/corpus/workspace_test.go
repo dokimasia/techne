@@ -4,6 +4,7 @@
 package corpus_test
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"os/exec"
@@ -45,6 +46,24 @@ func TestWorkspace(t *testing.T) {
 			w := opened(t, repository)
 			assert.Equal(t, git(t, w.Root, "rev-parse", "HEAD"), head, "the commit of the clone")
 			assert.Equal(t, read(t, w.Root, "a.go"), "package a\n", "the content of a.go")
+		})
+
+		t.Run("clones a repository with the line endings of its commit when core.autocrlf is on", func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeFile(t, dir, "gitconfig", "[core]\n\tautocrlf = true\n")
+			converting := repository
+			converting.Env = map[string]string{"GIT_CONFIG_GLOBAL": filepath.Join(dir, "gitconfig")}
+			w := opened(t, converting)
+			assert.Equal(t, read(t, w.Root, "a.go"), "package a\n", "the content of a.go")
+		})
+
+		t.Run("writes each command to the log", func(t *testing.T) {
+			t.Parallel()
+			var log bytes.Buffer
+			w, err := corpus.Open(t.Context(), t.TempDir(), "", repository, &log)
+			assert.NoError(t, err, "Open")
+			assert.Contains(t, log.String(), "$ git init --quiet "+w.Root+"\n", "the log of Open")
 		})
 
 		t.Run("returns ErrForeign for a directory that a run did not clone", func(t *testing.T) {
@@ -160,6 +179,17 @@ func TestWorkspace(t *testing.T) {
 			assert.Equal(t, got, []string{"a.go"}, "the files that differ from the commit")
 		})
 
+		t.Run("returns a changed tracked file when git writes to its standard error", func(t *testing.T) {
+			t.Parallel()
+			tracing := repository
+			tracing.Env = map[string]string{"GIT_TRACE": "1"}
+			w := opened(t, tracing)
+			writeFile(t, w.Root, "a.go", "package changed\n")
+			got, err := w.Dirty(t.Context(), nil)
+			assert.NoError(t, err, "Dirty")
+			assert.Equal(t, got, []string{"a.go"}, "the files that differ from the commit")
+		})
+
 		t.Run("returns a deleted tracked file", func(t *testing.T) {
 			t.Parallel()
 			w := opened(t, repository)
@@ -244,6 +274,21 @@ func TestWorkspace(t *testing.T) {
 			}
 			_, err := w.Ignored(t.Context(), "a.go")
 			assert.HasError(t, err, "Ignored outside a repository")
+		})
+
+		t.Run("returns an error with the standard error of git outside a repository", func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			// git looks for a repository no further up than root, and writes its messages in English.
+			env := map[string]string{"GIT_CEILING_DIRECTORIES": filepath.Dir(root), "LC_ALL": "C"}
+			w := &corpus.Workspace{
+				Repository: corpus.Repository{Name: "local", Path: "local", Env: env},
+				Root:       root,
+				Log:        io.Discard,
+			}
+			_, err := w.Ignored(t.Context(), "a.go")
+			assert.HasError(t, err, "Ignored outside a repository")
+			assert.Contains(t, err.Error(), "not a git repository", "the error of Ignored")
 		})
 	})
 
@@ -342,6 +387,16 @@ func TestWorkspace(t *testing.T) {
 			out, err := w.Build(t.Context())
 			assert.NoError(t, err, "Build")
 			assert.Equal(t, string(out), "built\n", "the output of the build")
+		})
+
+		t.Run("runs the build command with the variables of the repository", func(t *testing.T) {
+			t.Parallel()
+			probing := repository
+			probing.Env = map[string]string{"TECHNE_PROBE": "probed"}
+			probing.Build = []string{"sh", "-c", "echo $TECHNE_PROBE"}
+			out, err := opened(t, probing).Build(t.Context())
+			assert.NoError(t, err, "Build")
+			assert.Equal(t, string(out), "probed\n", "the output of the build")
 		})
 
 		t.Run("returns an error with the output of a failed command", func(t *testing.T) {

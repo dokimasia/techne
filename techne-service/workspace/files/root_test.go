@@ -206,9 +206,11 @@ func TestRoot(t *testing.T) {
 			t.Parallel()
 			root, dir := opened(t)
 			written(t, dir, "run.sh", "#!/bin/sh\n", 0o755)
+			// Windows has no executable bit, so the mode before the move is the mode to keep.
+			before := mode(t, dir, "run.sh")
 			assert.NoError(t, root.Move("run.sh", "bin/run.sh"), "Move of run.sh")
 			assert.Equal(t, read(t, dir, "bin/run.sh"), "#!/bin/sh\n", "the content of bin/run.sh")
-			assert.Equal(t, mode(t, dir, "bin/run.sh"), fs.FileMode(0o755), "the mode of bin/run.sh")
+			assert.Equal(t, mode(t, dir, "bin/run.sh"), before, "the mode of bin/run.sh")
 			assertfiles.Absent(t, filepath.Join(dir, "run.sh"), "the file at run.sh")
 		})
 

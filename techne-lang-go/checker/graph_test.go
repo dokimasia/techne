@@ -144,16 +144,22 @@ func TestGraphEnv(t *testing.T) {
 				builds = filepath.Join(user, "go-build")
 			}
 			t.Setenv("GOCACHE", builds)
+			// os.UserCacheDir reads XDG_CACHE_HOME on Linux, HOME on macOS and LocalAppData on
+			// Windows.
 			t.Setenv("XDG_CACHE_HOME", cache)
+			t.Setenv("HOME", cache)
+			t.Setenv("LocalAppData", cache)
 			t.Setenv("GOTMPDIR", "")
 			// -work keeps the work directory of the go command after it exits.
 			t.Setenv("GOFLAGS", "-work")
+			user, err := os.UserCacheDir()
+			assert.NoError(t, err, "the cache directory of the test")
 
 			changed := strings.Replace(files["a/a.go"], "func F()", "func F2()", 1)
 			got, err := e.Check(t.Context(), map[source.Path][]byte{"a/a.go": []byte(changed)})
 			assert.NoError(t, err, "Check of a change to a/a.go")
 			assert.Equal(t, faulty(got.Items), []source.Path{"b/b.go"}, "the files with errors")
-			kept, err := filepath.Glob(filepath.Join(cache, "techne", "go", "go-build*"))
+			kept, err := filepath.Glob(filepath.Join(user, "techne", "go", "go-build*"))
 			assert.NoError(t, err, "the work directories under the cache directory")
 			assert.NotEmpty(t, kept, "the work directories under the cache directory")
 		})

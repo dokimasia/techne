@@ -46,9 +46,8 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	binary = filepath.Join(dir, "techne")
 	code := 2
-	if err := build(binary); err != nil {
+	if binary, err = build(dir); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	} else {
 		code = m.Run()
@@ -57,37 +56,45 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// build builds the command into path with the -X flags of the release configuration, each with
-// its value in stamps. It returns an error for a field that stamps does not have, and for a
-// configuration without a flag for each field of stamps.
-func build(path string) error {
+// build builds the command into the directory dir with the -X flags of the release
+// configuration, each with its value in stamps, and returns the path of the binary. go build
+// names the binary after the command, with the suffix of executables of the system, such as .exe
+// on Windows. It returns an error for a field that stamps does not have, and for a configuration
+// without a flag for each field of stamps.
+func build(dir string) (string, error) {
 	release, err := os.ReadFile(filepath.Join("..", "..", ".goreleaser.yml"))
 	if err != nil {
-		return fmt.Errorf("read the release configuration: %w", err)
+		return "", fmt.Errorf("read the release configuration: %w", err)
 	}
 	var flags []string
 	for _, match := range stamp.FindAllStringSubmatch(string(release), -1) {
 		value, known := stamps[match[2]]
 		if !known {
-			return fmt.Errorf("the release configuration stamps the field %s, which the tests do not set", match[2])
+			return "", fmt.Errorf("the release configuration stamps the field %s, which the tests do not set",
+				match[2])
 		}
 		flags = append(flags, "-X "+match[1]+"="+value)
 	}
 	if len(flags) != len(stamps) {
-		return fmt.Errorf("the release configuration has %d -X flags for the %d fields of the tests",
+		return "", fmt.Errorf("the release configuration has %d -X flags for the %d fields of the tests",
 			len(flags), len(stamps))
 	}
 	// TestMain builds the command once for every test, so the build has no test's context.
 	out, err := exec.CommandContext(context.Background(), "go", "build", "-ldflags", strings.Join(flags, " "), "-o",
-		path, ".").CombinedOutput()
+		dir, ".").CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("go build: %w\n%s", err, out)
+		return "", fmt.Errorf("go build: %w\n%s", err, out)
 	}
-	return nil
+	built, err := exec.LookPath(filepath.Join(dir, "techne"))
+	if err != nil {
+		return "", fmt.Errorf("find the build: %w", err)
+	}
+	return built, nil
 }
 
 // environment returns the variables of this process without TECHNE_MOCK, with a cache directory
-// of the test and with the variables of extra.
+// of the test and with the variables of extra. os.UserCacheDir reads XDG_CACHE_HOME on Linux,
+// HOME on macOS and LocalAppData on Windows.
 func environment(t *testing.T, extra ...string) []string {
 	t.Helper()
 	var out []string
@@ -96,7 +103,8 @@ func environment(t *testing.T, extra ...string) []string {
 			out = append(out, one)
 		}
 	}
-	return append(append(out, "XDG_CACHE_HOME="+t.TempDir()), extra...)
+	cache := t.TempDir()
+	return append(append(out, "XDG_CACHE_HOME="+cache, "HOME="+cache, "LocalAppData="+cache), extra...)
 }
 
 // ran runs the command with args and the variables of env, with an empty standard input, and

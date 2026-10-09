@@ -386,10 +386,22 @@ func (w *Workspace) gitFile(name string) string {
 	return filepath.Join(w.Root, ".git", name)
 }
 
-// git runs git in the root of the repository, and leaves its output out of
-// the log.
+// git runs git in the root of the repository and returns its standard
+// output, which it leaves out of the log. It turns core.autocrlf off and sets
+// core.eol to lf, so a clone has the line endings of its commit on every
+// system, as on Linux. Git for Windows turns core.autocrlf on. The error of a
+// failed command ends with the last lines of the standard error.
 func (w *Workspace) git(ctx context.Context, args ...string) ([]byte, error) {
-	return w.command(ctx, w.Root, io.Discard, append([]string{"git"}, args...)...)
+	argv := append([]string{"git", "-c", "core.autocrlf=false", "-c", "core.eol=lf"}, args...)
+	out, err := w.commandOf(ctx, w.Root, argv).Output()
+	if err != nil {
+		var stderr []byte
+		if exit, failed := errors.AsType[*exec.ExitError](err); failed {
+			stderr = exit.Stderr
+		}
+		return out, fmt.Errorf("corpus: %s: %w\n%s", strings.Join(argv, " "), err, Tail(stderr, 20))
+	}
+	return out, nil
 }
 
 // run runs argv in the root of the repository, and writes its output to the
@@ -399,15 +411,11 @@ func (w *Workspace) run(ctx context.Context, argv ...string) ([]byte, error) {
 }
 
 // command runs argv in dir with the environment of the repository and
-// returns its output. It writes the command to the log and the output to
+// returns its output, the standard error included. It writes the output to
 // echo. The error of a failed command ends with the last lines of the
 // output.
 func (w *Workspace) command(ctx context.Context, dir string, echo io.Writer, argv ...string) ([]byte, error) {
-	fmt.Fprintf(w.Log, "$ %s\n", strings.Join(argv, " "))
-	// The manifest names the commands of each repository.
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // the manifest's command
-	cmd.Dir = dir
-	cmd.Env = w.Environ()
+	cmd := w.commandOf(ctx, dir, argv)
 	var out bytes.Buffer
 	cmd.Stdout = io.MultiWriter(&out, echo)
 	cmd.Stderr = cmd.Stdout
@@ -415,6 +423,17 @@ func (w *Workspace) command(ctx context.Context, dir string, echo io.Writer, arg
 		return out.Bytes(), fmt.Errorf("corpus: %s: %w\n%s", strings.Join(argv, " "), err, Tail(out.Bytes(), 20))
 	}
 	return out.Bytes(), nil
+}
+
+// commandOf returns the command of argv in dir with the environment of the
+// repository, and writes the command to the log.
+func (w *Workspace) commandOf(ctx context.Context, dir string, argv []string) *exec.Cmd {
+	fmt.Fprintf(w.Log, "$ %s\n", strings.Join(argv, " "))
+	// The manifest names the commands of each repository.
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // the manifest's command
+	cmd.Dir = dir
+	cmd.Env = w.Environ()
+	return cmd
 }
 
 // Tail returns the last n lines of output.

@@ -6,6 +6,7 @@ package corpus_test
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 
@@ -33,6 +34,16 @@ func TestSession(t *testing.T) {
 		t.Cleanup(func() { _ = s.Close() })
 		return s
 	}
+
+	t.Run("Binary", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns an error for a directory that does not exist", func(t *testing.T) {
+			t.Parallel()
+			_, err := corpus.Binary(t.Context(), root, filepath.Join(t.TempDir(), "absent"))
+			assert.HasError(t, err, "Binary into a directory that does not exist")
+		})
+	})
 
 	t.Run("Call", func(t *testing.T) {
 		t.Parallel()

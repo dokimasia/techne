@@ -32,14 +32,19 @@ func ModuleRoot(ctx context.Context) (string, error) {
 	return filepath.Dir(strings.TrimSpace(string(module))), nil
 }
 
-// Binary builds cmd/techne of the module at root into dir, and returns the
-// path of the binary.
+// Binary builds cmd/techne of the module at root into dir, an existing
+// directory, and returns the path of the binary. go build names the binary
+// after the command, with the suffix of executables of the system, such as
+// .exe on Windows.
 func Binary(ctx context.Context, root, dir string) (string, error) {
-	binary := filepath.Join(dir, "techne")
-	build := exec.CommandContext(ctx, "go", "build", "-o", binary, "./cmd/techne")
+	build := exec.CommandContext(ctx, "go", "build", "-o", dir, "./cmd/techne")
 	build.Dir = root
 	if out, err := build.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("corpus: build techne: %w\n%s", err, out)
+	}
+	binary, err := exec.LookPath(filepath.Join(dir, "techne"))
+	if err != nil {
+		return "", fmt.Errorf("corpus: find the build of techne: %w", err)
 	}
 	return binary, nil
 }

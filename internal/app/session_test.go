@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"testing/synctest"
 
@@ -189,8 +190,8 @@ func TestSession(t *testing.T) {
 			})
 			_, err := execute(t, s, "outline", map[string]any{"scope": projectFile, tool.WorkingDirectory: outside})
 			assert.HasError(t, err, "the error of the outline")
-			assert.Equal(t, err.Error(), `app: the working directory "`+outside+`" is under no trusted folder: `+
-				resolved(t, trusted), "the error of the outline")
+			assert.Equal(t, err.Error(), "app: the working directory "+strconv.Quote(outside)+
+				" is under no trusted folder: "+resolved(t, trusted), "the error of the outline")
 		})
 
 		t.Run("returns an error for a wd that links out of the trusted folders", func(t *testing.T) {
@@ -216,7 +217,7 @@ func TestSession(t *testing.T) {
 			})
 			_, err := execute(t, s, "outline", map[string]any{"scope": projectFile, tool.WorkingDirectory: file})
 			assert.HasError(t, err, "the error of the outline")
-			assert.Equal(t, err.Error(), `app: the working directory "`+file+`" is not a directory`,
+			assert.Equal(t, err.Error(), "app: the working directory "+strconv.Quote(file)+" is not a directory",
 				"the error of the outline")
 		})
 
@@ -229,7 +230,8 @@ func TestSession(t *testing.T) {
 			nowhere := filepath.Join(trusted, "nowhere")
 			_, err := execute(t, s, "outline", map[string]any{"scope": projectFile, tool.WorkingDirectory: nowhere})
 			assert.HasError(t, err, "the error of the outline")
-			assert.HasPrefix(t, err.Error(), `app: the working directory "`+nowhere+`": `, "the error of the outline")
+			assert.HasPrefix(t, err.Error(), "app: the working directory "+strconv.Quote(nowhere)+": ",
+				"the error of the outline")
 		})
 
 		t.Run("adds wd to every tool for a trusted folder", func(t *testing.T) {
@@ -356,7 +358,8 @@ func TestSession(t *testing.T) {
 			nowhere := filepath.Join(t.TempDir(), "nowhere")
 			_, err := app.Open(t.Context(), app.Command{Root: t.TempDir(), Trusted: []string{nowhere}}, mockLanguage)
 			assert.HasError(t, err, "the error of Open")
-			assert.HasPrefix(t, err.Error(), `app: the trusted folder "`+nowhere+`": `, "the error of Open")
+			assert.HasPrefix(t, err.Error(), "app: the trusted folder "+strconv.Quote(nowhere)+": ",
+				"the error of Open")
 		})
 
 		t.Run("returns an error for a trusted folder that is a file", func(t *testing.T) {
@@ -364,7 +367,8 @@ func TestSession(t *testing.T) {
 			file := filepath.Join(project(t, t.TempDir(), "away", "Away"), projectFile)
 			_, err := app.Open(t.Context(), app.Command{Root: t.TempDir(), Trusted: []string{file}}, mockLanguage)
 			assert.HasError(t, err, "the error of Open")
-			assert.Equal(t, err.Error(), `app: the trusted folder "`+file+`" is not a directory`, "the error of Open")
+			assert.Equal(t, err.Error(), "app: the trusted folder "+strconv.Quote(file)+" is not a directory",
+				"the error of Open")
 		})
 
 		t.Run("returns an error for a root that does not exist", func(t *testing.T) {
