@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package corpus
@@ -30,7 +30,7 @@ func Spans(content []byte, items []tool.Declaration) []string {
 		s := d.Span
 		switch {
 		case s == nil:
-			out = append(out, fmt.Sprintf("%s has no span", d.Name))
+			out = append(out, d.Name+" has no span")
 			return
 		case s.Start.Offset < 0 || s.Start.Offset > s.End.Offset || s.End.Offset > len(content):
 			out = append(out, fmt.Sprintf("%s spans bytes %d to %d of a file of %d bytes",
@@ -50,7 +50,7 @@ func Spans(content []byte, items []tool.Declaration) []string {
 				line+1, column+1))
 		}
 		if within != nil && (s.Start.Offset < within.Start.Offset || s.End.Offset > within.End.Offset) {
-			out = append(out, fmt.Sprintf("%s leaves the span of the declaration that contains it", d.Name))
+			out = append(out, d.Name+" leaves the span of the declaration that contains it")
 		}
 		for _, member := range d.Members {
 			visit(member, s)
@@ -146,7 +146,7 @@ func pasted(line, name string) bool {
 			start++
 			continue
 		}
-		end := start
+		end := start + 1
 		for identifying(line, end) {
 			end++
 		}

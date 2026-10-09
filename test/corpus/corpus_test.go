@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 //go:build corpus
@@ -279,7 +279,10 @@ func drive(t *testing.T, m corpus.Manifest, r corpus.Repository, dir, root, bina
 					if _, err := os.Stat(at); os.IsNotExist(err) {
 						// A rename of a type moves the file that the type names, as jdtls moves
 						// ClassReader.java to ClassReaderCorpus.java.
-						at = filepath.Join(filepath.Dir(at), strings.Replace(filepath.Base(at), target.item.Name, renamed, 1))
+						at = filepath.Join(
+							filepath.Dir(at),
+							strings.Replace(filepath.Base(at), target.item.Name, renamed, 1),
+						)
 					}
 					content, err := os.ReadFile(at)
 					written, _ := corpus.Line(content, site.Line)

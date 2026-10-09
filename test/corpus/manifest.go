@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package corpus
@@ -16,6 +16,8 @@ import (
 
 // Manifest lists the repositories of the corpus and the settings of a run.
 type Manifest struct {
+	// Repositories are the repositories, in the order that a run drives them.
+	Repositories []Repository `json:"repositories"`
 	// Budget is the longest time that a warm call of a read tool may take.
 	Budget Duration `json:"budget"`
 	// Sample is the number of files that a run samples per repository. Half
@@ -23,8 +25,6 @@ type Manifest struct {
 	Sample int `json:"sample"`
 	// Seed draws the same files on every run.
 	Seed uint64 `json:"seed"`
-	// Repositories are the repositories, in the order that a run drives them.
-	Repositories []Repository `json:"repositories"`
 }
 
 // Repository is one repository of the corpus.
@@ -127,7 +127,7 @@ var commit = regexp.MustCompile(`^[0-9a-f]{40}$`)
 func (r Repository) check(names []string) error {
 	switch {
 	case r.Name == "" || r.Language == "":
-		return fmt.Errorf("a repository has no name or no language")
+		return fmt.Errorf("the repository %d has no name or no language", len(names)+1)
 	case slices.Contains(names, r.Name):
 		return fmt.Errorf("two repositories are named %s", r.Name)
 	case (r.URL == "") == (r.Path == ""):
@@ -175,11 +175,11 @@ type Duration time.Duration
 func (d *Duration) UnmarshalJSON(b []byte) error {
 	var s string
 	if err := json.Unmarshal(b, &s); err != nil {
-		return err
+		return fmt.Errorf("corpus: a duration: %w", err)
 	}
 	parsed, err := time.ParseDuration(s)
 	if err != nil {
-		return err
+		return fmt.Errorf("corpus: a duration: %w", err)
 	}
 	*d = Duration(parsed)
 	return nil
@@ -187,5 +187,9 @@ func (d *Duration) UnmarshalJSON(b []byte) error {
 
 // MarshalJSON writes the duration in the form of time.Duration.String.
 func (d Duration) MarshalJSON() ([]byte, error) {
-	return json.Marshal(time.Duration(d).String())
+	b, err := json.Marshal(time.Duration(d).String())
+	if err != nil {
+		return nil, fmt.Errorf("corpus: a duration: %w", err)
+	}
+	return b, nil
 }

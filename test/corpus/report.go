@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package corpus
@@ -16,24 +16,25 @@ import (
 
 // Report collects what a run measured.
 type Report struct {
+	sections []Section
+
 	// Budget is the budget of a warm call of a read tool.
 	Budget time.Duration
 
-	mu       sync.Mutex
-	sections []Section
+	mu sync.Mutex
 }
 
 // Section is what a run measured over one repository.
 type Section struct {
+	// Calls are the tool calls of the session.
+	Calls []Call
+	// Outcomes are the changes that the run applied or tried.
+	Outcomes []Outcome
 	// Repository is the entry of the manifest.
 	Repository Repository
 	// Settled is how long the language server took to answer with total
 	// coverage, and zero when it did not within the warmup.
 	Settled time.Duration
-	// Calls are the tool calls of the session.
-	Calls []Call
-	// Outcomes are the changes that the run applied or tried.
-	Outcomes []Outcome
 }
 
 // Outcome is what happened to one change that a run tried.
@@ -155,7 +156,7 @@ func tools(calls []Call) []string {
 // counted returns the counts of tiers, such as "resolved total 6, indexed
 // total 2", in the order of the tiers.
 func counted(tiers map[string]int) string {
-	var out []string
+	out := make([]string, 0, len(tiers))
 	for _, tier := range slices.Sorted(maps.Keys(tiers)) {
 		out = append(out, fmt.Sprintf("%s %d", tier, tiers[tier]))
 	}

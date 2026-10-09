@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package corpus_test
@@ -53,7 +53,9 @@ func TestDoc(t *testing.T) {
 			t.Parallel()
 			out, err := exec.CommandContext(t.Context(), "go", "list", "-json", ".").Output()
 			assert.NoError(t, err, "go list of the package")
-			var listed struct{ Imports []string }
+			var listed struct {
+				Imports []string `json:"Imports"`
+			}
 			assert.NoError(t, json.Unmarshal(out, &listed), "the output of go list")
 			assert.NotEmpty(t, listed.Imports, "the imports of the package")
 			for _, one := range listed.Imports {

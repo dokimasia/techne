@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package corpus_test
@@ -72,8 +72,9 @@ func TestSession(t *testing.T) {
 				_, err := s.Call(t.Context(), call.name, call.arguments, &answer)
 				assert.NoError(t, err, "Call of "+call.name)
 			}
-			var got []string
-			for _, c := range s.Calls() {
+			calls := s.Calls()
+			got := make([]string, 0, len(calls))
+			for _, c := range calls {
 				got = append(got, c.Tool)
 			}
 			assert.Equal(t, got, []string{"outline", "search"}, "the tools of the calls")
@@ -89,8 +90,9 @@ func TestSession(t *testing.T) {
 			returned, err := s.Call(t.Context(), "outline", map[string]any{"scope": "a.mock"}, &answer)
 			assert.NoError(t, err, "the warm Call")
 			assert.True(t, returned.Warm, "the warmth of the returned call")
-			var warm []bool
-			for _, c := range s.Calls() {
+			calls := s.Calls()
+			warm := make([]bool, 0, len(calls))
+			for _, c := range calls {
 				warm = append(warm, c.Warm)
 			}
 			assert.Equal(t, warm, []bool{false, true}, "the warmth of the recorded calls")

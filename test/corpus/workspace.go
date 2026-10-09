@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package corpus
@@ -40,15 +40,15 @@ var ErrReadOnly = errors.New("corpus: the repository is read-only")
 
 // Workspace is the directory of one repository of the corpus.
 type Workspace struct {
-	// Repository is the entry of the manifest.
-	Repository Repository
+	// Log receives each command and its output.
+	Log io.Writer
 	// Root is the directory of the repository.
 	Root string
 	// Tools is the directory into which the prepare steps install tools,
 	// outside Root. A read-only repository has none.
 	Tools string
-	// Log receives each command and its output.
-	Log io.Writer
+	// Repository is the entry of the manifest.
+	Repository Repository
 }
 
 // Open returns the workspace of r.
@@ -78,7 +78,7 @@ func Open(ctx context.Context, dir, base string, r Repository, log io.Writer) (*
 		Tools:      filepath.Join(dir, r.Name+".tools"),
 		Log:        log,
 	}
-	if err := os.MkdirAll(w.Tools, 0o755); err != nil {
+	if err := os.MkdirAll(w.Tools, 0o750); err != nil {
 		return nil, fmt.Errorf("corpus: %w", err)
 	}
 	switch _, missing := os.Stat(w.Root); {
@@ -107,37 +107,6 @@ func Open(ctx context.Context, dir, base string, r Repository, log io.Writer) (*
 	return w, nil
 }
 
-// clone makes and marks an empty repository at the root. It then checks out
-// the commit of the repository.
-func (w *Workspace) clone(ctx context.Context) error {
-	if _, err := w.command(ctx, filepath.Dir(w.Root), w.Log, "git", "init", "--quiet", w.Root); err != nil {
-		return err
-	}
-	if _, err := w.git(ctx, "remote", "add", "origin", w.Repository.URL); err != nil {
-		return err
-	}
-	if err := os.WriteFile(w.gitFile(marked), []byte(w.Repository.URL+"\n"), 0o644); err != nil {
-		return fmt.Errorf("corpus: %w", err)
-	}
-	return w.checkout(ctx)
-}
-
-// checkout fetches the commit of the repository alone, without its history,
-// and checks it out.
-func (w *Workspace) checkout(ctx context.Context) error {
-	if _, err := w.git(ctx, "fetch", "--quiet", "--depth", "1", "origin", w.Repository.Commit); err != nil {
-		return err
-	}
-	_, err := w.git(ctx, "checkout", "--quiet", "--force", "--detach", w.Repository.Commit)
-	return err
-}
-
-// marked reports whether a run cloned the root.
-func (w *Workspace) marked() bool {
-	_, err := os.Stat(w.gitFile(marked))
-	return err == nil
-}
-
 // Prepare runs the prepare steps of the repository, once for each commit and
 // set of steps. It records the untracked files that the steps leave, which
 // Reset keeps. Prepare does nothing for a read-only repository.
@@ -159,29 +128,10 @@ func (w *Workspace) Prepare(ctx context.Context) error {
 		return err
 	}
 	record := append([]string{digest}, slices.Sorted(maps.Keys(untracked))...)
-	return os.WriteFile(w.gitFile(prepared), []byte(strings.Join(record, "\n")+"\n"), 0o644)
-}
-
-// digest returns a digest of the commit and the prepare steps.
-func (w *Workspace) digest() string {
-	encoded, _ := json.Marshal([]any{w.Repository.Commit, w.Repository.Prepare})
-	sum := sha256.Sum256(encoded)
-	return hex.EncodeToString(sum[:])
-}
-
-// preparedBy returns the digest of the prepare steps that ran and the
-// untracked files that they left.
-func (w *Workspace) preparedBy() (string, map[string]bool) {
-	content, err := os.ReadFile(w.gitFile(prepared))
-	if err != nil {
-		return "", nil
+	if err := os.WriteFile(w.gitFile(prepared), []byte(strings.Join(record, "\n")+"\n"), 0o600); err != nil {
+		return fmt.Errorf("corpus: %w", err)
 	}
-	lines := strings.Split(strings.TrimRight(string(content), "\n"), "\n")
-	left := map[string]bool{}
-	for _, p := range lines[1:] {
-		left[p] = true
-	}
-	return lines[0], left
+	return nil
 }
 
 // Build runs the build command of the repository and returns its output.
@@ -218,19 +168,6 @@ func (w *Workspace) Untracked(ctx context.Context) (map[string]bool, error) {
 // rule covers, such as the output of a build.
 func (w *Workspace) IgnoredFiles(ctx context.Context) (map[string]bool, error) {
 	return w.listed(ctx, "--others", "--ignored", "--exclude-standard")
-}
-
-// listed returns the paths that git ls-files lists with args.
-func (w *Workspace) listed(ctx context.Context, args ...string) (map[string]bool, error) {
-	listed, err := w.git(ctx, append([]string{"ls-files", "-z"}, args...)...)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]bool{}
-	for _, p := range separated(listed) {
-		out[p] = true
-	}
-	return out, nil
 }
 
 // Sweep removes each file that an ignore rule covers, that before does not
@@ -297,24 +234,6 @@ func (w *Workspace) Dirty(ctx context.Context, keep map[string]bool) ([]string, 
 	return slices.Sorted(slices.Values(append(separated(changed), strays...))), nil
 }
 
-// strays returns the untracked files that neither keep nor the prepare steps
-// list, in path order.
-func (w *Workspace) strays(ctx context.Context, keep map[string]bool) ([]string, error) {
-	untracked, err := w.Untracked(ctx)
-	if err != nil {
-		return nil, err
-	}
-	_, left := w.preparedBy()
-	var out []string
-	for p := range untracked {
-		if !keep[p] && !left[p] {
-			out = append(out, p)
-		}
-	}
-	slices.Sort(out)
-	return out, nil
-}
-
 // Files returns the tracked files of the repository that end in one of
 // extensions, outside the prefixes that the manifest excludes, in path
 // order.
@@ -359,6 +278,90 @@ func (w *Workspace) Environ() []string {
 	return env
 }
 
+// clone makes and marks an empty repository at the root. It then checks out
+// the commit of the repository.
+func (w *Workspace) clone(ctx context.Context) error {
+	if _, err := w.command(ctx, filepath.Dir(w.Root), w.Log, "git", "init", "--quiet", w.Root); err != nil {
+		return err
+	}
+	if _, err := w.git(ctx, "remote", "add", "origin", w.Repository.URL); err != nil {
+		return err
+	}
+	if err := os.WriteFile(w.gitFile(marked), []byte(w.Repository.URL+"\n"), 0o600); err != nil {
+		return fmt.Errorf("corpus: %w", err)
+	}
+	return w.checkout(ctx)
+}
+
+// checkout fetches the commit of the repository alone, without its history,
+// and checks it out.
+func (w *Workspace) checkout(ctx context.Context) error {
+	if _, err := w.git(ctx, "fetch", "--quiet", "--depth", "1", "origin", w.Repository.Commit); err != nil {
+		return err
+	}
+	_, err := w.git(ctx, "checkout", "--quiet", "--force", "--detach", w.Repository.Commit)
+	return err
+}
+
+// marked reports whether a run cloned the root.
+func (w *Workspace) marked() bool {
+	_, err := os.Stat(w.gitFile(marked))
+	return err == nil
+}
+
+// digest returns a digest of the commit and the prepare steps.
+func (w *Workspace) digest() string {
+	encoded, _ := json.Marshal([]any{w.Repository.Commit, w.Repository.Prepare})
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:])
+}
+
+// preparedBy returns the digest of the prepare steps that ran and the
+// untracked files that they left.
+func (w *Workspace) preparedBy() (string, map[string]bool) {
+	content, err := os.ReadFile(w.gitFile(prepared))
+	if err != nil {
+		return "", nil
+	}
+	lines := strings.Split(strings.TrimRight(string(content), "\n"), "\n")
+	left := map[string]bool{}
+	for _, p := range lines[1:] {
+		left[p] = true
+	}
+	return lines[0], left
+}
+
+// listed returns the paths that git ls-files lists with args.
+func (w *Workspace) listed(ctx context.Context, args ...string) (map[string]bool, error) {
+	listed, err := w.git(ctx, append([]string{"ls-files", "-z"}, args...)...)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, p := range separated(listed) {
+		out[p] = true
+	}
+	return out, nil
+}
+
+// strays returns the untracked files that neither keep nor the prepare steps
+// list, in path order.
+func (w *Workspace) strays(ctx context.Context, keep map[string]bool) ([]string, error) {
+	untracked, err := w.Untracked(ctx)
+	if err != nil {
+		return nil, err
+	}
+	_, left := w.preparedBy()
+	var out []string
+	for p := range untracked {
+		if !keep[p] && !left[p] {
+			out = append(out, p)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
 // expand replaces the placeholders of the manifest in s.
 func (w *Workspace) expand(s string) string {
 	return strings.NewReplacer(
@@ -401,7 +404,8 @@ func (w *Workspace) run(ctx context.Context, argv ...string) ([]byte, error) {
 // output.
 func (w *Workspace) command(ctx context.Context, dir string, echo io.Writer, argv ...string) ([]byte, error) {
 	fmt.Fprintf(w.Log, "$ %s\n", strings.Join(argv, " "))
-	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	// The manifest names the commands of each repository.
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...) //nolint:gosec // the manifest's command
 	cmd.Dir = dir
 	cmd.Env = w.Environ()
 	var out bytes.Buffer

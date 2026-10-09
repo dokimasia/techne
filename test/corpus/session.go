@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package corpus
@@ -49,15 +49,21 @@ func Binary(ctx context.Context, root, dir string) (string, error) {
 type Session struct {
 	session *mcp.ClientSession
 
-	mu    sync.Mutex
-	warm  bool
 	calls []Call
+
+	mu sync.Mutex
+
+	warm bool
 }
 
 // Call is one tool call of a session.
 type Call struct {
 	// Tool is the name of the tool.
 	Tool string
+	// Fidelity and Completeness are the provenance of the answer, and empty
+	// for an answer without one.
+	Fidelity     string
+	Completeness string
 	// Took is the time from the request to the result.
 	Took time.Duration
 	// Server is the part of Took that techne waited for processes outside
@@ -68,10 +74,6 @@ type Call struct {
 	// Failed reports a call that failed, or a tool that returned an error
 	// result.
 	Failed bool
-	// Fidelity and Completeness are the provenance of the answer, and empty
-	// for an answer without one.
-	Fidelity     string
-	Completeness string
 }
 
 // Own returns the part of Took that techne spent itself: Took without Server, and zero when the
@@ -94,7 +96,8 @@ const structured = "--structured"
 // over its standard input and output. The standard error of the process goes
 // to stderr.
 func Start(ctx context.Context, binary, root string, env []string, stderr io.Writer) (*Session, error) {
-	cmd := exec.Command(binary, structured, root)
+	// The process lives until Close, so it runs on a context that does not end with ctx.
+	cmd := exec.CommandContext(context.WithoutCancel(ctx), binary, structured, root)
 	cmd.Env = env
 	cmd.Stderr = stderr
 	client := mcp.NewClient(&mcp.Implementation{Name: "techne-corpus", Version: "1"}, nil)
@@ -155,13 +158,6 @@ func texts(content []mcp.Content) string {
 	return strings.Join(out, " ")
 }
 
-// record appends call to the calls of the session.
-func (s *Session) record(call *Call) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.calls = append(s.calls, *call)
-}
-
 // Warm marks the calls that follow as warm.
 func (s *Session) Warm() {
 	s.mu.Lock()
@@ -178,5 +174,15 @@ func (s *Session) Calls() []Call {
 
 // Close ends the session and waits for the techne process to exit.
 func (s *Session) Close() error {
-	return s.session.Close()
+	if err := s.session.Close(); err != nil {
+		return fmt.Errorf("corpus: close the session: %w", err)
+	}
+	return nil
+}
+
+// record appends call to the calls of the session.
+func (s *Session) record(call *Call) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, *call)
 }
