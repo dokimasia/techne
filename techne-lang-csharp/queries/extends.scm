@@ -1,3 +1,6 @@
+; Copyright Dokimasia B.V. 2026
+; SPDX-License-Identifier: MIT
+
 ;; Everything C# declares, at any depth.
 ;;
 ;; Upstream captures a class, an interface, a method and a namespace and
