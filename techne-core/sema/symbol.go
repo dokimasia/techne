@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package sema
@@ -29,25 +29,25 @@ type Annotation struct {
 type Symbol struct {
 	ID       ID              `json:"id"`
 	Name     string          `json:"name"`
-	Kind     Kind            `json:"kind"`
 	Language source.Language `json:"language"`
-	Span     source.Span     `json:"span"`
 	// Parent is the ID of the enclosing declaration, or empty at the top
 	// level of a unit.
 	Parent ID `json:"parent,omitempty"`
-	// Visibility is always encoded, because VisibilityUnknown is a result.
-	Visibility Visibility `json:"visibility"`
-	// Modifiers are the keywords on the declaration, in source order, such
-	// as static, final, async, pub, or export.
-	Modifiers []string `json:"modifiers,omitempty"`
-	// Annotations are the annotations attached to the declaration.
-	Annotations []Annotation `json:"annotations,omitempty"`
 	// Signature is the declaration without its body.
 	Signature string `json:"signature,omitempty"`
 	// Doc is the documentation comment.
 	Doc string `json:"doc,omitempty"`
 	// Snippet is the source text of the declaration.
 	Snippet string `json:"snippet,omitempty"`
+	// Modifiers are the keywords on the declaration, in source order, such
+	// as static, final, async, pub, or export.
+	Modifiers []string `json:"modifiers,omitempty"`
+	// Annotations are the annotations attached to the declaration.
+	Annotations []Annotation `json:"annotations,omitempty"`
+	Span        source.Span  `json:"span"`
+	Kind        Kind         `json:"kind"`
+	// Visibility is always encoded, because VisibilityUnknown is a result.
+	Visibility Visibility `json:"visibility"`
 }
 
 // File returns the file at p of the language l as a declaration: the far end of a relation

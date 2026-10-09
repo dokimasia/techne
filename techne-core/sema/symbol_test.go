@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package sema_test
@@ -299,6 +299,7 @@ func pairwise(symbols []sema.Symbol) []int {
 			if i == j || outer.Span.Path != inner.Span.Path || width(outer) <= width(inner) ||
 				outer.Span.Start.Offset > inner.Span.Start.Offset ||
 				outer.Span.End.Offset < inner.Span.End.Offset {
+
 				continue
 			}
 			if out[i] < 0 || width(outer) < width(symbols[out[i]]) {

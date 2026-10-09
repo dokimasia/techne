@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package engine
@@ -17,8 +17,8 @@ import (
 // use. Build the catalog before serving requests, after which every other
 // method is safe for concurrent use.
 type Catalog struct {
-	engines []Engine
 	named   map[named]bool
+	engines []Engine
 }
 
 // named identifies an engine within one language.
@@ -69,14 +69,14 @@ func (c *Catalog) For(ctx context.Context, lang source.Language, role Role) []En
 // Capability is one role that one engine serves for one language.
 type Capability struct {
 	Language source.Language
-	Role     Role
 	Engine   string
-	Fidelity trust.Fidelity
-	Cost     Cost
-	// Available reports whether the engine can run now.
-	Available bool
 	// Unavailable is the reason the engine cannot run, or empty.
 	Unavailable string
+	Role        Role
+	Fidelity    trust.Fidelity
+	Cost        Cost
+	// Available reports whether the engine can run now.
+	Available bool
 }
 
 // Capabilities returns one Capability for every role that each engine

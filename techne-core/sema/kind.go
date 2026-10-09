@@ -1,9 +1,13 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package sema
 
 import "go.dokimi.dev/techne/core/internal/wire"
+
+// unknown is the wire string of the unknown value of each enum of the package: [KindUnknown],
+// [RelationUnknown] and [VisibilityUnknown].
+const unknown = "unknown"
 
 // Kind classifies a declaration. The zero value is KindUnknown. Each
 // language module maps the declaration kinds of its grammar onto the closest
@@ -70,7 +74,7 @@ const (
 // kindWords are the wire strings of the kinds. IDs embed them, so changing
 // one invalidates every stored ID.
 var kindWords = wire.New(KindUnknown, map[Kind]string{
-	KindUnknown:        "unknown",
+	KindUnknown:        unknown,
 	KindModule:         "module",
 	KindPackage:        "package",
 	KindFile:           "file",

@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package core_test
@@ -46,9 +46,9 @@ func TestDoc(t *testing.T) {
 
 // listed is one package as go list -json reports it.
 type listed struct {
-	ImportPath string
-	Imports    []string
-	CgoFiles   []string
+	ImportPath string   `json:"ImportPath"`
+	Imports    []string `json:"Imports"`
+	CgoFiles   []string `json:"CgoFiles"`
 }
 
 // packages returns every package of the module as the go command lists it,

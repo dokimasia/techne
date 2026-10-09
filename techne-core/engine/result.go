@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package engine
@@ -12,12 +12,12 @@ import "go.dokimi.dev/techne/core/trust"
 type Result[T any] struct {
 	Items []T
 
-	// Completeness is how much of the requested scope the engine examined.
-	Completeness trust.Completeness
-
 	// Caveats are limits on this answer, such as files the engine did not
 	// read.
 	Caveats []trust.Caveat
+
+	// Completeness is how much of the requested scope the engine examined.
+	Completeness trust.Completeness
 
 	// Lowered is a tier below the engine's declared one, for an answer worth
 	// less than usual, such as a type check of code that does not compile.

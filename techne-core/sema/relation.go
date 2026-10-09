@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package sema
@@ -53,7 +53,7 @@ var inverses = map[RelationKind]RelationKind{
 }
 
 var relationWords = wire.New(RelationUnknown, map[RelationKind]string{
-	RelationUnknown: "unknown",
+	RelationUnknown: unknown,
 	Calls:           "calls",
 	CalledBy:        "called-by",
 	Implements:      "implements",
@@ -97,12 +97,12 @@ func (r *RelationKind) UnmarshalJSON(b []byte) error { return relationWords.Unma
 // the far end only, because the near end is the same for every edge in an
 // answer.
 type Relation struct {
-	// Kind is the direction the caller asked for.
-	Kind RelationKind `json:"kind"`
-	// To is the declaration at the far end of the edge.
-	To Symbol `json:"to"`
-	// At is the source range of the call or reference.
-	At source.Span `json:"at"`
 	// Via is the trimmed source line that At starts on.
 	Via string `json:"via,omitempty"`
+	// At is the source range of the call or reference.
+	At source.Span `json:"at"`
+	// To is the declaration at the far end of the edge.
+	To Symbol `json:"to"`
+	// Kind is the direction the caller asked for.
+	Kind RelationKind `json:"kind"`
 }

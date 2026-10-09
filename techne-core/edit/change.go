@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package edit
@@ -38,15 +38,14 @@ const (
 
 // TextEdit replaces one byte range with New. An empty range inserts New.
 type TextEdit struct {
-	Span source.Span
 	New  string
+	Span source.Span
 }
 
 // Change is what one operation does to one path. Only the field that
 // matches Kind is set: Edits for ChangeEdit, Content for ChangeCreate, and To
 // for ChangeMove. Building a Change never touches disk.
 type Change struct {
-	Kind ChangeKind
 	Path source.Path
 	// To is the destination of a ChangeMove.
 	To source.Path
@@ -54,6 +53,7 @@ type Change struct {
 	Edits []TextEdit
 	// Content is the body of a ChangeCreate.
 	Content []byte
+	Kind    ChangeKind
 }
 
 // Apply applies edits to content in one pass and returns the result. Each

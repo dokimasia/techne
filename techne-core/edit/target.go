@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package edit
@@ -30,8 +30,8 @@ const (
 // declaration lists share its span, as the parameters have and want of
 // func growCap(have, want int) do. The other fields are zero.
 type Target struct {
-	Kind   TargetKind
 	Symbol sema.ID
 	Path   source.Path
 	Span   source.Span
+	Kind   TargetKind
 }

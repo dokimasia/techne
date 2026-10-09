@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package diag
@@ -52,14 +52,14 @@ func Severities() []Severity {
 
 // Diagnostic is one problem a verifier reported in one span of code.
 type Diagnostic struct {
-	Severity Severity
 	// Code is the reporting tool's identifier for the rule, such as a lint
 	// check name. Callers suppress by it.
 	Code    string
 	Message string
-	Span    source.Span
 	// Source names the reporting tool, such as a compiler or a linter.
 	Source string
 	// Snippet is the source line the diagnostic is about.
-	Snippet string
+	Snippet  string
+	Span     source.Span
+	Severity Severity
 }

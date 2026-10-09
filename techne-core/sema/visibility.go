@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package sema
@@ -25,7 +25,7 @@ const (
 )
 
 var visibilityWords = wire.New(VisibilityUnknown, map[Visibility]string{
-	VisibilityUnknown: "unknown",
+	VisibilityUnknown: unknown,
 	Unexported:        "unexported",
 	Exported:          "exported",
 })

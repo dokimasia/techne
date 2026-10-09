@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package engine
@@ -17,14 +17,14 @@ import (
 // an engine ran, and [trust.Provenance.SupportsNegativeClaim] reports whether
 // an empty list proves that none exist.
 type Answer[T any] struct {
-	Items      []T
-	Status     trust.Status
-	Provenance trust.Provenance
-
 	// Language is the language of the engine that published the answer. It is
 	// empty for an answer that a service merged from the answers of several
 	// languages.
 	Language source.Language
+
+	Items      []T
+	Provenance trust.Provenance
+	Status     trust.Status
 
 	// Skipped is [Result.Skipped] of the engine that answered. Services use it
 	// to leave the answer out of a merge across languages. Callers read
@@ -42,13 +42,11 @@ type Request struct {
 	// languages that [Languages] returns for Scope.
 	Language source.Language
 
-	// Preferred is the lowest tier the caller wants. An answer below it is
-	// published as [trust.Degraded], not refused.
-	Preferred trust.Fidelity
-
-	// Tests includes the files the language treats as tests. The language
-	// module defines which paths those are.
-	Tests bool
+	// Declared is the span of the declaration that [Relator.Relate] starts
+	// from, as the outline of the caller reports it, or the zero span. An
+	// engine whose own declarations do not match the ID can find the
+	// declaration at this span.
+	Declared source.Span
 
 	// Limit is the number of relations that the caller keeps from
 	// [Relator.Relate], and zero keeps every relation. An engine may return
@@ -57,11 +55,13 @@ type Request struct {
 	// found.
 	Limit int
 
-	// Declared is the span of the declaration that [Relator.Relate] starts
-	// from, as the outline of the caller reports it, or the zero span. An
-	// engine whose own declarations do not match the ID can find the
-	// declaration at this span.
-	Declared source.Span
+	// Preferred is the lowest tier the caller wants. An answer below it is
+	// published as [trust.Degraded], not refused.
+	Preferred trust.Fidelity
+
+	// Tests includes the files the language treats as tests. The language
+	// module defines which paths those are.
+	Tests bool
 }
 
 // Query is a search for declarations.

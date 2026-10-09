@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package trust
@@ -12,9 +12,9 @@ type Provenance struct {
 	// Engine is the name of the engine that answered. A merged answer lists
 	// every contributing engine.
 	Engine       string
+	Caveats      []Caveat
 	Fidelity     Fidelity
 	Completeness Completeness
-	Caveats      []Caveat
 }
 
 // SupportsNegativeClaim reports whether an empty answer with this provenance

@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package engine_test
@@ -127,8 +127,9 @@ func TestCatalog(t *testing.T) {
 		t.Run("lists every role an engine offers", func(t *testing.T) {
 			t.Parallel()
 			c := catalog(t, complete{name: "complete", fidelity: trust.Resolved})
-			var roles []engine.Role
-			for _, capability := range c.Capabilities(t.Context()) {
+			capabilities := c.Capabilities(t.Context())
+			roles := make([]engine.Role, 0, len(capabilities))
+			for _, capability := range capabilities {
 				roles = append(roles, capability.Role)
 			}
 			assert.Equal(t, roles, engine.Roles(), "roles")

@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package wire
@@ -25,12 +25,12 @@ func New[T comparable](fallback T, words map[T]string) Names[T] {
 	values := make(map[string]T, len(words))
 	for v, word := range words {
 		if _, taken := values[word]; taken {
-			panic(fmt.Sprintf("wire: %q maps to two values", word))
+			panic(fmt.Sprintf("wire: %q maps to two values", word)) //nolint:forbidigo // a programming error
 		}
 		values[word] = v
 	}
 	if _, ok := words[fallback]; !ok {
-		panic("wire: fallback has no string")
+		panic("wire: fallback has no string") //nolint:forbidigo // a programming error
 	}
 	return Names[T]{words: words, values: values, fallback: fallback}
 }
@@ -56,7 +56,11 @@ func (n Names[T]) Parse(s string) (T, bool) {
 
 // Marshal returns the JSON encoding of the wire string of v.
 func (n Names[T]) Marshal(v T) ([]byte, error) {
-	return json.Marshal(n.String(v))
+	b, err := json.Marshal(n.String(v))
+	if err != nil {
+		return nil, fmt.Errorf("wire: %w", err)
+	}
+	return b, nil
 }
 
 // Unmarshal decodes a JSON string into *into. Unknown strings decode to the
