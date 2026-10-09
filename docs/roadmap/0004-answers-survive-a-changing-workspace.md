@@ -10,6 +10,11 @@ prd: none
 rfc: RFC-0002
 ---
 
+<!--
+  ~ Copyright Dokimasia B.V. 2026
+  ~ SPDX-License-Identifier: MIT
+-->
+
 # Milestone 0004: Answers survive a changing workspace
 
 ## Goal

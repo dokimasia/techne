@@ -1,15 +1,32 @@
+<!--
+  ~ Copyright Dokimasia B.V. 2026
+  ~ SPDX-License-Identifier: MIT
+-->
+
 # Contributing to techne
 
 ## Setup
 
-You need Go 1.27.0 or later and a C compiler. The grammars are C, and techne builds them with
-cgo. Every `go.mod` and `go.work` pins that Go version, and CI reads it from there.
+You need Go 1.27.2 or later, a C compiler, ergon and pre-commit. The grammars are C, and techne
+builds them with cgo. `go.work` and every `go.mod` pin that Go version, and CI reads it from
+`go.work`.
+
+Install ergon with Homebrew, or with Go from source:
 
 ```sh
-make bootstrap    # installs gofumpt, gci, golangci-lint, govulncheck, go-license
-make install      # downloads and verifies dependencies
-pre-commit install --hook-type pre-commit --hook-type commit-msg
+brew install --cask dokimasia/tap/ergon
+go install go.dokimi.dev/ergon/cmd/ergon@latest
 ```
+
+The targets of the Makefile run their tools through `ergon tool run`. On its first run, ergon
+installs each tool at the version that `.ergon.yaml` pins. Install the git hooks once:
+
+```sh
+pre-commit install
+```
+
+The hooks run `make lint` and `make test` before each commit, `make check` before each push, and
+commitlint on each commit message.
 
 ## Before you open a PR
 
@@ -17,21 +34,45 @@ pre-commit install --hook-type pre-commit --hook-type commit-msg
 make check
 ```
 
-That runs `ergon check`, which verifies the modules, lints them, runs the tests and checks the
-coverage of each module. CI runs the same command, and so does the pre-commit hook.
+`make check` runs the gate of Go in every module of `go.work`. The gate runs golangci-lint with
+its format check and ergon-go-vet, the tests, the tests under the race detector, and govulncheck.
+CI runs the same gate on Linux, macOS and Windows. CI also checks the commit messages, the
+changesets, the license headers, the Markdown files and the managed files.
 
 While you work, run the narrower targets:
 
 ```sh
-make fmt          # SPDX headers, the Go formatters and markdownlint
-make lint-go      # golangci-lint only
-make test         # go test, per module
-make build        # compile every module
-make help         # every target
+make fmt            # the formatters of .golangci.yml
+make lint-go        # golangci-lint, its format check and ergon-go-vet
+make test           # go test, per module
+make help           # every target
+ergon license fix   # the SPDX header of every file
 ```
 
-ergon runs golangci-lint once per module, from each module directory. Every module reads the one
-`.golangci.yml` at the repository root.
+The Makefile runs golangci-lint once per module, from the directory of the module. Every module
+reads the one `.golangci.yml` at the repository root.
+
+## Managed files
+
+ergon writes the Makefile, `.golangci.yml`, the workflows and every other file whose first line
+starts with `Managed by ergon init`. Do not edit these files. Put a setting of techne into the
+file of the same path under `.ergon/local/`, run `ergon init sync`, and commit both files. The
+Baseline job of CI runs `ergon init check`, which fails when a managed file differs from the file
+that ergon writes.
+
+## Changesets
+
+A pull request that changes a module adds a changeset to `.changeset/`. The changeset contains
+each module that the change releases with its bump, and a summary. The summary becomes the entry
+in the changelog of each module:
+
+```sh
+ergon release add --bump go.dokimi.dev/techne/lang=minor -m "Add the rename of a module."
+```
+
+A change that releases nothing, such as a change to the tests or the documentation alone, adds a
+changeset without modules with `ergon release add --empty`. The Changeset job of CI runs `ergon
+release status`, which fails a pull request that changes a module without a changeset for it.
 
 ## Modules
 
@@ -52,22 +93,18 @@ belongs to and what each module may import.
 
 ## Commits
 
-Write Conventional Commits. The commit-msg hook runs `ergon check commit-msg`, which rejects a
-type outside this list: `feat`, `fix`, `docs`, `refactor`, `test`, `ci`, `chore`, `perf`, `build`
-and `revert`.
+Write Conventional Commits. The commit-msg hook and the Commits job of CI run commitlint with the
+rules of `.commitlint.yaml`. commitlint rejects a type outside this list: `feat`, `fix`, `docs`,
+`refactor`, `test`, `ci`, `chore`, `perf`, `build` and `revert`.
 
 Name the scope after the module without its `techne-` or `techne-lang-` prefix, such as `tool`,
 `lsp` or `go`. Leave the scope off for a change of the whole repository and for documentation
 alone. Keep the subject to 72 bytes and each body line to 100 bytes. State what changed and why.
 The diff shows how.
 
-## Tests and coverage
+## Tests
 
-Put test files beside what they test. `make test` runs each test three times, so a test that
-passes in one order only fails here before it fails in CI.
-
-Each module has a floor of line coverage under `checks.coverage.packages` in `.ergon.yaml`, and
-`make check` fails a module below its floor.
+Put test files beside what they test.
 
 Each language module runs the conformance suite of `techne-lang/conformance` over a fixture of
 its language. Add a case to the suite, and every language runs it.

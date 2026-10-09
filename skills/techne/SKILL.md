@@ -11,6 +11,11 @@ description: >-
   from a search that something does not exist.
 ---
 
+<!--
+  ~ Copyright Dokimasia B.V. 2026
+  ~ SPDX-License-Identifier: MIT
+-->
+
 # techne
 
 techne is a server of the Model Context Protocol. It returns what a language's parser, language

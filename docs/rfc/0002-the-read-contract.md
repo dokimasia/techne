@@ -11,6 +11,11 @@ superseded-by: none
 produces-adr: ADR-0003
 ---
 
+<!--
+  ~ Copyright Dokimasia B.V. 2026
+  ~ SPDX-License-Identifier: MIT
+-->
+
 # RFC-0002: The read contract
 
 ## Summary

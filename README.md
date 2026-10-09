@@ -1,3 +1,8 @@
+<!--
+  ~ Copyright Dokimasia B.V. 2026
+  ~ SPDX-License-Identifier: MIT
+-->
+
 # techne
 
 techne is a server of the Model Context Protocol that gives an AI agent the code navigation and
@@ -141,14 +146,12 @@ A project can also include the skill in its own `.claude/skills/` directory.
 
 ## Development
 
-The repository uses [ergon](https://go.thesmos.sh/ergon) for the build, test, lint and release
-lifecycle.
+The repository uses [ergon](https://github.com/dokimasia/ergon) for its checks and its releases.
+[CONTRIBUTING.md](CONTRIBUTING.md) states the setup.
 
 ```sh
-make bootstrap    # install dev tools
-make install      # go mod download
-make check        # full pre-merge gate (mod verify + lint + test + checks)
-make build        # compile every module's source
+make check        # the gate: lint, tests, race detector and vulnerability scan of every module
+make test         # the tests of every module
 make corpus       # drive the binary over large repositories, hours on a first run
 ```
 

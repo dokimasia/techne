@@ -10,6 +10,11 @@ prd: none
 rfc: RFC-0001, RFC-0002, RFC-0003, RFC-0005
 ---
 
+<!--
+  ~ Copyright Dokimasia B.V. 2026
+  ~ SPDX-License-Identifier: MIT
+-->
+
 # Milestone 0001: Every language outlines a file over MCP
 
 ## Goal

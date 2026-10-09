@@ -8,6 +8,11 @@ superseded-by: none
 rfc: RFC-0001
 ---
 
+<!--
+  ~ Copyright Dokimasia B.V. 2026
+  ~ SPDX-License-Identifier: MIT
+-->
+
 # ADR-0004: core holds the ports, not their consumers
 
 ## Status

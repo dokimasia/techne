@@ -10,6 +10,11 @@ prd: none
 rfc: RFC-0002
 ---
 
+<!--
+  ~ Copyright Dokimasia B.V. 2026
+  ~ SPDX-License-Identifier: MIT
+-->
+
 # Milestone 0002: Every language answers at the strongest tier it can reach
 
 ## Goal

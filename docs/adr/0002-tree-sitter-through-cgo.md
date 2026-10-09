@@ -8,6 +8,11 @@ superseded-by: none
 rfc: RFC-0001
 ---
 
+<!--
+  ~ Copyright Dokimasia B.V. 2026
+  ~ SPDX-License-Identifier: MIT
+-->
+
 # ADR-0002: tree-sitter grammars through the cgo bindings
 
 ## Status

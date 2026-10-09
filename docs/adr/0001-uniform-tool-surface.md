@@ -8,6 +8,11 @@ superseded-by: none
 rfc: none
 ---
 
+<!--
+  ~ Copyright Dokimasia B.V. 2026
+  ~ SPDX-License-Identifier: MIT
+-->
+
 # ADR-0001: One tool per operation, with fidelity on the answer
 
 ## Status

@@ -10,6 +10,11 @@ prd: none
 rfc: RFC-0001, RFC-0002, RFC-0004
 ---
 
+<!--
+  ~ Copyright Dokimasia B.V. 2026
+  ~ SPDX-License-Identifier: MIT
+-->
+
 # Milestone 0000: Contracts and module rules
 
 ## Goal

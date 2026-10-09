@@ -10,6 +10,11 @@ prd: none
 rfc: RFC-0004, RFC-0005
 ---
 
+<!--
+  ~ Copyright Dokimasia B.V. 2026
+  ~ SPDX-License-Identifier: MIT
+-->
+
 # Milestone 0003: A change is all or nothing
 
 ## Goal

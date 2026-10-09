@@ -1,3 +1,8 @@
+<!--
+  ~ Copyright Dokimasia B.V. 2026
+  ~ SPDX-License-Identifier: MIT
+-->
+
 # Package layout
 
 This document lists the packages of the 17 modules of techne, what each package contains, and
