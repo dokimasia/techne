@@ -58,3 +58,22 @@ require (
 
 // The fork of the Go grammar parses a method with type parameters.
 replace github.com/tree-sitter/tree-sitter-go => github.com/dokimasia/tree-sitter-go v0.0.0-20261008091630-10115b8fc25d
+
+replace (
+	go.dokimi.dev/techne/core => ./techne-core
+	go.dokimi.dev/techne/lang => ./techne-lang
+	go.dokimi.dev/techne/lang/c => ./techne-lang-c
+	go.dokimi.dev/techne/lang/csharp => ./techne-lang-csharp
+	go.dokimi.dev/techne/lang/go => ./techne-lang-go
+	go.dokimi.dev/techne/lang/java => ./techne-lang-java
+	go.dokimi.dev/techne/lang/javascript => ./techne-lang-javascript
+	go.dokimi.dev/techne/lang/mock => ./techne-lang-mock
+	go.dokimi.dev/techne/lang/python => ./techne-lang-python
+	go.dokimi.dev/techne/lang/ruby => ./techne-lang-ruby
+	go.dokimi.dev/techne/lang/rust => ./techne-lang-rust
+	go.dokimi.dev/techne/lang/scala => ./techne-lang-scala
+	go.dokimi.dev/techne/lang/typescript => ./techne-lang-typescript
+	go.dokimi.dev/techne/presenter => ./techne-presenter
+	go.dokimi.dev/techne/service => ./techne-service
+	go.dokimi.dev/techne/tool => ./techne-tool
+)

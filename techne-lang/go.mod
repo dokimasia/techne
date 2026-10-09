@@ -19,3 +19,5 @@ require (
 	go.lsp.dev/protocol v1.0.1
 	go.lsp.dev/uri v1.0.1
 )
+
+replace go.dokimi.dev/techne/core => ../techne-core

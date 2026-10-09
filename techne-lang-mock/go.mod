@@ -10,3 +10,8 @@ require (
 	go.dokimi.dev/techne/core v0.0.0
 	go.dokimi.dev/techne/lang v0.0.0
 )
+
+replace (
+	go.dokimi.dev/techne/core => ../techne-core
+	go.dokimi.dev/techne/lang => ../techne-lang
+)

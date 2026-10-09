@@ -22,3 +22,8 @@ require (
 	go.lsp.dev/protocol v1.0.1 // indirect
 	go.lsp.dev/uri v1.0.1 // indirect
 )
+
+replace (
+	go.dokimi.dev/techne/core => ../techne-core
+	go.dokimi.dev/techne/lang => ../techne-lang
+)

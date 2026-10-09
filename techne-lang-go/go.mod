@@ -27,3 +27,8 @@ require (
 
 // The fork of the Go grammar parses a method with type parameters.
 replace github.com/tree-sitter/tree-sitter-go => github.com/dokimasia/tree-sitter-go v0.0.0-20261008091630-10115b8fc25d
+
+replace (
+	go.dokimi.dev/techne/core => ../techne-core
+	go.dokimi.dev/techne/lang => ../techne-lang
+)

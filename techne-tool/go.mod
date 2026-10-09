@@ -10,3 +10,5 @@ require (
 	go.dokimi.dev/assert v0.0.0-20261007133442-6f235714117b
 	go.dokimi.dev/techne/core v0.0.0
 )
+
+replace go.dokimi.dev/techne/core => ../techne-core
