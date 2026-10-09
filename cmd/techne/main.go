@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package main
@@ -27,11 +27,11 @@ func run(args []string) int {
 		return 2
 	}
 	if command.Help {
-		fmt.Print(app.Usage)
+		fmt.Fprint(os.Stdout, app.Usage)
 		return 0
 	}
 	if command.Version {
-		fmt.Println(version.Full())
+		fmt.Fprintln(os.Stdout, version.Full())
 		return 0
 	}
 

@@ -1,10 +1,11 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package main_test
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -62,7 +63,7 @@ func TestMain(m *testing.M) {
 func build(path string) error {
 	release, err := os.ReadFile(filepath.Join("..", "..", ".goreleaser.yml"))
 	if err != nil {
-		return err
+		return fmt.Errorf("read the release configuration: %w", err)
 	}
 	var flags []string
 	for _, match := range stamp.FindAllStringSubmatch(string(release), -1) {
@@ -76,7 +77,9 @@ func build(path string) error {
 		return fmt.Errorf("the release configuration has %d -X flags for the %d fields of the tests",
 			len(flags), len(stamps))
 	}
-	out, err := exec.Command("go", "build", "-ldflags", strings.Join(flags, " "), "-o", path, ".").CombinedOutput()
+	// TestMain builds the command once for every test, so the build has no test's context.
+	out, err := exec.CommandContext(context.Background(), "go", "build", "-ldflags", strings.Join(flags, " "), "-o",
+		path, ".").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("go build: %w\n%s", err, out)
 	}

@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package main_test
@@ -48,8 +48,9 @@ func relatedIn(t *testing.T, client *mcp.ClientSession, wd string) []any {
 	})
 	assert.NoError(t, err, "the error of CallTool")
 	assert.False(t, got.IsError, "IsError of the result")
-	var paths []any
-	for _, item := range got.StructuredContent.(map[string]any)["items"].([]any) {
+	items := got.StructuredContent.(map[string]any)["items"].([]any)
+	paths := make([]any, 0, len(items))
+	for _, item := range items {
 		paths = append(paths, item.(map[string]any)["path"])
 	}
 	return paths
