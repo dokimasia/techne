@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package mock_test
@@ -40,7 +40,7 @@ func declared(t *testing.T, items []sema.Symbol, name string) sema.Symbol {
 
 // codes returns the code of each caveat, in order.
 func codes(caveats []trust.Caveat) []trust.CaveatCode {
-	var out []trust.CaveatCode
+	out := make([]trust.CaveatCode, 0, len(caveats))
 	for _, one := range caveats {
 		out = append(out, one.Code)
 	}

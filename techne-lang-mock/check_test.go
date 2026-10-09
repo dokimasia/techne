@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package mock_test
@@ -65,7 +65,7 @@ func TestCheck(t *testing.T) {
 			}
 			got, err := built(t).Check(t.Context(), files)
 			assert.NoError(t, err, "Check of six files")
-			var paths []source.Path
+			paths := make([]source.Path, 0, len(got.Items))
 			for _, one := range got.Items {
 				paths = append(paths, one.Diagnostic.Span.Path)
 			}

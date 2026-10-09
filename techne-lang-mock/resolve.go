@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package mock
@@ -106,6 +106,8 @@ func (e *Engine) Relate(
 		out = toward(w, found[0], kind)
 	case sema.Calls, sema.References:
 		out = from(w, found[0], kind)
+	default:
+		// The language has no other edge, so another kind gets an empty result.
 	}
 	return result(e, out, w, req.Scope), nil
 }

@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package mock
@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"go.dokimi.dev/techne/core/sema"
 	"go.dokimi.dev/techne/core/source"
@@ -15,8 +16,6 @@ import (
 
 // Line is one declaration or one use of a mock file, as [Parse] reads it.
 type Line struct {
-	// Kind is the kind of a declaration, and [sema.KindUnknown] for a use.
-	Kind sema.Kind
 	// Name is the name that a declaration declares, and empty for a use.
 	Name string
 	// Uses is the name that a use names, and empty for a declaration.
@@ -24,13 +23,15 @@ type Line struct {
 	// Doc is the documentation of a declaration: the lines above it that start with ;;, without
 	// the marker.
 	Doc string
-	// Depth is the indentation of the line, in levels of two spaces.
-	Depth int
 	// Span covers the line from its first character after the indentation to its end, without
 	// the line terminator.
 	Span source.Span
 	// At covers the name alone, which a rename rewrites.
 	At source.Span
+	// Depth is the indentation of the line, in levels of two spaces.
+	Depth int
+	// Kind is the kind of a declaration, and [sema.KindUnknown] for a use.
+	Kind sema.Kind
 }
 
 // declares maps each word that opens a declaration to the kind of the declaration.
@@ -67,9 +68,11 @@ func Parse(p source.Path, content []byte) ([]Line, []source.Span) {
 	var (
 		out    []Line
 		broken []source.Span
-		doc    []string
 		at     int
 	)
+	// doc collects the documentation lines above a declaration. It is empty again after a blank
+	// line and after each declaration, and keeps its capacity.
+	doc := make([]string, 0, 1)
 	for number, raw := range strings.Split(string(content), "\n") {
 		text := strings.TrimSuffix(raw, "\r")
 		body := strings.TrimLeft(text, " ")
@@ -83,18 +86,18 @@ func Parse(p source.Path, content []byte) ([]Line, []source.Span) {
 
 		switch {
 		case body == "":
-			doc = nil
+			doc = doc[:0]
 		case strings.HasPrefix(body, documents):
 			doc = append(doc, strings.TrimSpace(strings.TrimPrefix(body, documents)))
 		default:
 			one, ok := read(body, line)
 			if !ok {
 				broken = append(broken, line)
-				doc = nil
+				doc = doc[:0]
 				continue
 			}
 			one.Doc = strings.Join(doc, "\n")
-			doc = nil
+			doc = doc[:0]
 			out = append(out, one)
 		}
 	}
@@ -148,7 +151,7 @@ func Visibility(name string) sema.Visibility {
 	if name == "" {
 		return sema.VisibilityUnknown
 	}
-	if unicode.IsUpper([]rune(name)[0]) {
+	if first, _ := utf8.DecodeRuneInString(name); unicode.IsUpper(first) {
 		return sema.Exported
 	}
 	return sema.Unexported

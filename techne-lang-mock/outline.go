@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package mock
@@ -55,6 +55,7 @@ func (e *Engine) Search(
 	for i, one := range w.symbols {
 		if q.Kind != sema.KindUnknown && one.Kind != q.Kind || !q.Private && one.Visibility == sema.Unexported ||
 			!q.Include.Keeps(one.Kind, locals[i]) {
+
 			continue
 		}
 		name := strings.ToLower(one.Name)

@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package mock
@@ -106,7 +106,7 @@ func (e *Engine) Verify(
 			out = append(out, edit.Finding{Diagnostic: diag.Diagnostic{
 				Severity: diag.SeverityError,
 				Code:     "unresolved",
-				Message:  fmt.Sprintf("no declaration of the workspace is named %s", one.Uses),
+				Message:  "no declaration of the workspace is named " + one.Uses,
 				Span:     one.At,
 				Source:   e.Name(),
 				Snippet:  text(one),

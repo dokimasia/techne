@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package mock
@@ -20,11 +20,11 @@ import (
 // Engine is safe for concurrent use.
 type Engine struct {
 	fsys     fs.FS
+	missing  string
 	declared lang.Declaration
 	fidelity trust.Fidelity
 	coverage trust.Completeness
 	cost     engine.Cost
-	missing  string
 }
 
 // New returns an engine over the workspace in fsys for the language that d declares, with

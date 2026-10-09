@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package mock
@@ -56,6 +56,8 @@ func (e *Engine) Plan(
 		out, err = documenting(w, target, args[edit.ArgDoc])
 	case edit.MoveFile:
 		out, err = moving(w, target, strings.TrimSpace(args[edit.ArgDestination]))
+	default:
+		// The first switch declines every other operation.
 	}
 	if err != nil {
 		return engine.Result[edit.Change]{}, err
@@ -220,7 +222,10 @@ func pointed(w workspace, target edit.Target) (sema.Symbol, error) {
 // changes returns the edits of at as one change per file, in path order, with the edits of
 // each file sorted by offset, as the write path applies them.
 func changes(at map[source.Path][]edit.TextEdit) engine.Result[edit.Change] {
-	var out []edit.Change
+	if len(at) == 0 {
+		return engine.Result[edit.Change]{}
+	}
+	out := make([]edit.Change, 0, len(at))
 	for _, p := range slices.Sorted(maps.Keys(at)) {
 		edits := at[p]
 		slices.SortFunc(edits, func(a, b edit.TextEdit) int { return a.Span.Start.Offset - b.Span.Start.Offset })
