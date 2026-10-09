@@ -1,4 +1,4 @@
-// Copyright ThesmOS B.V. 2026
+// Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
 package typescript
@@ -22,6 +22,10 @@ import (
 // index has stored.
 const Language source.Language = "typescript"
 
+// tsx is the extension of a TypeScript file with JSX, which the TSX grammar parses and a server
+// opens as typescriptreact.
+const tsx = ".tsx"
+
 // extendsQuery is the tags query of the module, for the forms of JavaScript
 // that the TypeScript grammar inherits and the forms that TypeScript adds.
 // The module keeps the two upstream queries in queries to compare them with
@@ -44,7 +48,7 @@ var shorthandsQuery string
 func Declaration() lang.Declaration {
 	return lang.Declaration{
 		Language:   Language,
-		Extensions: []string{".ts", ".mts", ".cts", ".tsx"},
+		Extensions: []string{".ts", ".mts", ".cts", tsx},
 		// The manifest of an npm package, and the configuration file of the
 		// TypeScript compiler.
 		Manifests: []string{"package.json", "tsconfig.json"},
@@ -68,7 +72,7 @@ func Grammar() treesitter.Grammar {
 	return treesitter.Grammar{
 		Language: ts.NewLanguage(binding.LanguageTypescript()),
 		Dialects: map[string]*ts.Language{
-			".tsx": ts.NewLanguage(binding.LanguageTSX()),
+			tsx: ts.NewLanguage(binding.LanguageTSX()),
 		},
 		Tags:       extendsQuery,
 		Shorthands: shorthandsQuery,
@@ -96,7 +100,7 @@ func Server() lsp.Server {
 		Name:       server,
 		Command:    []string{server, stdio},
 		LanguageID: lsp.IdentityTypeScript,
-		Dialects:   map[string]string{".tsx": lsp.IdentityTypeScriptReact},
+		Dialects:   map[string]string{tsx: lsp.IdentityTypeScriptReact},
 		Serves:     lsp.Binding(),
 		Extracts: lsp.Refactor{
 			Kind:   "refactor.extract.function",
@@ -148,7 +152,7 @@ func Native() lsp.Server {
 		Name:       native,
 		Command:    []string{native, "--lsp", stdio},
 		LanguageID: lsp.IdentityTypeScript,
-		Dialects:   map[string]string{".tsx": lsp.IdentityTypeScriptReact},
+		Dialects:   map[string]string{tsx: lsp.IdentityTypeScriptReact},
 		Serves:     lsp.Binding(),
 		Scoped:     true,
 		// A rename rewrites every use of a re-exported declaration.

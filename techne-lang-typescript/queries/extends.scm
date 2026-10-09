@@ -1,3 +1,6 @@
+; Copyright Dokimasia B.V. 2026
+; SPDX-License-Identifier: MIT
+
 ;; Everything TypeScript declares, at any depth.
 ;;
 ;; The TypeScript grammar inherits JavaScript's, so this covers both: the

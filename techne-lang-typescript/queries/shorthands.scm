@@ -1,3 +1,6 @@
+; Copyright Dokimasia B.V. 2026
+; SPDX-License-Identifier: MIT
+
 ;; The name of each shorthand property of an object literal, which is the
 ;; key and the value of the property at once, as file in { file }.
 ;;
