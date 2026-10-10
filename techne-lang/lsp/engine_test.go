@@ -310,6 +310,10 @@ func TestEngine(t *testing.T) {
 
 		t.Run("returns while a child of the server keeps its stderr open", func(t *testing.T) {
 			t.Parallel()
+			// The child runs the binary of the test for OrphanTime, and Windows does not delete a
+			// binary that a process runs. The test ends after the child, so that go test can delete
+			// the binary.
+			t.Cleanup(func() { time.Sleep(lsptest.OrphanTime) })
 			e := serving(t, lsptest.Orphans, sample())
 			_, err := e.Resolve(t.Context(), engine.Request{Scope: "a.fake"}, store())
 			assert.NoError(t, err, "Resolve starts the server")
