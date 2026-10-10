@@ -192,7 +192,7 @@ func TestRoot(t *testing.T) {
 			assert.NoError(t, os.Symlink(target, filepath.Join(dir, "link.go")), "Symlink of link.go")
 			assert.NoError(t, root.Write("link.go", []byte("new\n")), "Write of link.go")
 			assert.Equal(t, read(t, dir, "real.go"), "new\n", "the content of real.go")
-			assertfiles.LinksTo(t, filepath.Join(dir, "link.go"), target, "the link at link.go")
+			assertfiles.LinksTo(t, filepath.Join(dir, "link.go"), filepath.ToSlash(target), "the link at link.go")
 		})
 
 		t.Run("creates the target of a dangling absolute symbolic link in a new directory", func(t *testing.T) {
