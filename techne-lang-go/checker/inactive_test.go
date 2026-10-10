@@ -67,8 +67,13 @@ func gated() map[string]string {
 	}
 }
 
-// lockedFile is the file of [locked] that nobody can read.
-const lockedFile = "ported/locked_plan9.go"
+// The files that [locked] makes unreadable.
+const (
+	// lockedFile is a file of plan9.
+	lockedFile = "ported/locked_plan9.go"
+	// sealedFile is a file of the default build.
+	sealedFile = "ported/sealed.go"
+)
 
 // walking is the start of the error of a walk of the workspace that fails, which the checker
 // returns before it runs the go command.
@@ -338,7 +343,7 @@ func TestInactive(t *testing.T) {
 			func(t *testing.T) {
 				t.Parallel()
 				req := engine.Request{Scope: "ported", Declared: source.Span{Path: "ported/ported.go"}}
-				got, err := locked(t).Unread(t.Context(), req,
+				got, err := locked(t, lockedFile).Unread(t.Context(), req,
 					sema.NewID(golang.Language, "ported", "Ported", sema.KindFunction), sema.ReferencedBy)
 				assert.NoError(t, err, "Unread of the uses of Ported")
 				assert.Equal(t, unreadIn(got), []source.Path{lockedFile, "ported/ported_plan9.go"},
@@ -418,9 +423,16 @@ func TestInactive(t *testing.T) {
 
 		t.Run("returns an excluded file that cannot be read", func(t *testing.T) {
 			t.Parallel()
-			got, err := locked(t).Unverified(t.Context(), engine.Request{Scope: lockedFile})
+			got, err := locked(t, lockedFile).Unverified(t.Context(), engine.Request{Scope: lockedFile})
 			assert.NoError(t, err, "Unverified of "+lockedFile)
 			assert.Equal(t, unreadIn(got), []source.Path{lockedFile}, "the files of the caveat")
+		})
+
+		t.Run("leaves out a file of the default build that cannot be read", func(t *testing.T) {
+			t.Parallel()
+			got, err := locked(t, sealedFile).Unverified(t.Context(), engine.Request{Scope: sealedFile})
+			assert.NoError(t, err, "Unverified of "+sealedFile)
+			assert.Empty(t, got, "the caveats")
 		})
 
 		t.Run("leaves out a file of each port of the go command", func(t *testing.T) {
@@ -502,10 +514,10 @@ func TestInactiveEnv(t *testing.T) {
 	})
 }
 
-// locked returns the checker over [gated] with lockedFile, a file of plan9 that nobody can read.
-// It skips the test for root, which reads a file without read permission, and on Windows, where
-// os.Chmod sets only the read-only attribute and the file stays readable.
-func locked(t *testing.T) *checker.Engine {
+// locked returns the checker over [gated] with a file at name that nobody can read. It skips the
+// test for root, which reads a file without read permission, and on Windows, where os.Chmod sets
+// only the read-only attribute, so the file is still readable.
+func locked(t *testing.T, name string) *checker.Engine {
 	t.Helper()
 	if os.Geteuid() == 0 {
 		t.Skip("root reads a file without read permission")
@@ -514,9 +526,9 @@ func locked(t *testing.T) *checker.Engine {
 		t.Skip("windows reads a file without read permission")
 	}
 	files := gated()
-	files[lockedFile] = "package ported\n"
+	files[name] = "package ported\n"
 	root := workspace(t, files)
-	assert.NoError(t, os.Chmod(filepath.Join(root, filepath.FromSlash(lockedFile)), 0), "Chmod of "+lockedFile)
+	assert.NoError(t, os.Chmod(filepath.Join(root, filepath.FromSlash(name)), 0), "Chmod of "+name)
 	return over(t, root)
 }
 

@@ -5,6 +5,7 @@ package checker
 
 import (
 	"context"
+	"go/build"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -15,10 +16,11 @@ import (
 
 // listing is the template of go list that writes one package per line, with tabs between the
 // fields: the import path, the directory, the packages that the package and its tests import,
-// and then each Go file of the directory that the build constraints exclude, such as a file of
-// another operating system.
+// the Go files of the directory that go list reports as invalid, and then each Go file of the
+// directory that the build constraints exclude, such as a file of another operating system. A
+// slash separates two invalid files, because no file name contains one.
 const listing = `{{.ImportPath}}	{{.Dir}}	{{join .Imports " "}} {{join .TestImports " "}} ` +
-	`{{join .XTestImports " "}}	{{join .IgnoredGoFiles "\t"}}`
+	`{{join .XTestImports " "}}	{{join .InvalidGoFiles "/"}}	{{join .IgnoredGoFiles "\t"}}`
 
 // entry is the line of one package in the output of go list with the template listing: the
 // import path, the directory, the import paths that the package and its tests import, and the
@@ -33,13 +35,27 @@ type entry struct {
 
 // entries returns the packages of out, the output of go list with the template listing, in the
 // order of its lines.
+//
+// The excluded files of a package are the files that go list ignores, and the invalid files
+// that the default build excludes by their names or their build constraints. go list reads a
+// package from the index of the go command once every file of its directory is two seconds
+// old. The index reports a file whose header it cannot read as invalid, also when the name of
+// the file excludes it. A file of plan9 without read permission is such a file. go/build does
+// not read a file that its name excludes, so MatchFile reports such a file as excluded without
+// an error.
 func entries(out string) []entry {
 	var found []entry
 	for line := range strings.Lines(out) {
 		path, rest, _ := strings.Cut(strings.TrimSuffix(line, "\n"), "\t")
 		dir, rest, _ := strings.Cut(rest, "\t")
-		imported, ignored, _ := strings.Cut(rest, "\t")
+		imported, rest, _ := strings.Cut(rest, "\t")
+		invalid, ignored, _ := strings.Cut(rest, "\t")
 		pkg := entry{path: path, dir: dir, imports: strings.Fields(imported)}
+		for name := range strings.SplitSeq(invalid, "/") {
+			if match, err := build.Default.MatchFile(dir, name); name != "" && err == nil && !match {
+				pkg.ignored = append(pkg.ignored, filepath.Join(dir, name))
+			}
+		}
 		for name := range strings.SplitSeq(ignored, "\t") {
 			if name != "" {
 				pkg.ignored = append(pkg.ignored, filepath.Join(dir, name))

@@ -74,14 +74,21 @@ func Broken() int {
 // module is the go.mod file of the fixtures of one module.
 const module = "module example.com/p\n\ngo 1.24\n"
 
-// written writes files to a new directory and returns it.
+// age is how long ago [written] dates the files that it writes. The go command reads a package
+// from its index once every file of the directory is two seconds old, as it reads the packages
+// of a workspace on disk.
+const age = time.Hour
+
+// written writes files to a new directory and returns it. It dates each file [age] ago.
 func written(t *testing.T, files map[string]string) string {
 	t.Helper()
 	dir := t.TempDir()
+	past := time.Now().Add(-age)
 	for name, body := range files {
 		full := filepath.Join(dir, filepath.FromSlash(name))
 		assert.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755), "MkdirAll "+name)
 		assert.NoError(t, os.WriteFile(full, []byte(body), 0o644), "WriteFile "+name)
+		assert.NoError(t, os.Chtimes(full, past, past), "Chtimes "+name)
 	}
 	return dir
 }
