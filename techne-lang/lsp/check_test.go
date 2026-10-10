@@ -6,6 +6,7 @@ package lsp_test
 import (
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -49,15 +50,18 @@ func TestCheck(t *testing.T) {
 			request := engine.Request{Scope: "a.fake"}
 			_, err := e.Resolve(t.Context(), request, store())
 			assert.NoError(t, err, "Resolve, which starts the server")
-			related := make(chan time.Time, 1)
+			// ends numbers the end of the question and the end of the check in the order in which they
+			// happen.
+			var ends atomic.Int32
+			related := make(chan int32, 1)
 			go func() {
 				_, _ = e.Relate(t.Context(), request, declared("Store", sema.KindStruct), sema.ReferencedBy)
-				related <- time.Now()
+				related <- ends.Add(1)
 			}()
 			time.Sleep(asking)
 			_, _ = e.Check(t.Context(), map[source.Path][]byte{"a.fake": []byte(lsptest.Content)})
-			checked := time.Now()
-			assert.True(t, (<-related).Before(checked), "the question ended before the check")
+			checked := ends.Add(1)
+			assert.Equal(t, <-related, checked-1, "the question ended before the check")
 		})
 
 		t.Run("returns nothing for content that compiles", func(t *testing.T) {
