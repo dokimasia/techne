@@ -1,5 +1,5 @@
 {
-  "ergon": "0.6.0",
+  "ergon": "0.7.0",
   "files": [
     {
       "path": ".commitlint.yaml",
@@ -59,7 +59,7 @@
     {
       "path": ".github/workflows/ci.yml",
       "producer": "github",
-      "sha256": "ebf16882134292c2844708818463bc4c450d2e133986dce562376082bf1989c2"
+      "sha256": "2a905205d987b481713e2e56aa158c0a1af4e4eda1bbc052f605d29e6d3436cf"
     },
     {
       "path": ".github/workflows/codeql.yml",
@@ -92,7 +92,7 @@
       "path": ".golangci.yml",
       "producer": "go",
       "local": "16bdc76736c8e09555c847f1e56e4763763831520f8d0d0bc76aa74df56b1e20",
-      "sha256": "05f7854366deff743a466d73a2588dd8a02f5d1bb3751adf6043550c0f884ef1"
+      "sha256": "86fb805877a2ed86c73e2532c07d4ef23736d7a2d47025cebd8e9ffbd04cc3a6"
     },
     {
       "path": ".markdownlint.yml",
@@ -118,7 +118,7 @@
       "path": "Makefile",
       "producer": "common",
       "local": "f2c96a3fede76b5cb7dc626d8d7be89f606aaaec06c6fff7718db154759d895e",
-      "sha256": "c9acd9612377ddea963f9dbe7ef7b1a94cc193b0c2dd269f37ad611a71b2c1e1"
+      "sha256": "09c0ef77d7e7db1e47916681e0c1d4574fb2409bd63c04d88f1589aa9fecdeb3"
     }
   ],
   "settings": {
@@ -208,6 +208,7 @@
     ],
     "go.homebrew.tap": "",
     "go.lint.exclude": [],
+    "go.lint.plugins": {},
     "go.mutate.args": [],
     "go.mutate.timeout": "0s",
     "go.mutate.workers": 1,

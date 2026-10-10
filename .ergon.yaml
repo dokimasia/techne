@@ -145,7 +145,8 @@ go:
   # with go install, as <module>@<version>, and a release binary by its version and the SHA-256 of
   # the asset of each platform.
   tools:
-    # The linter and the formatter of lint-go and fmt-go, with the rules of .golangci.yml.
+    # The linter and the formatter of lint-go and fmt-go, with the rules of .golangci.yml and the
+    # module plugins of lint.plugins.
     golangci-lint: github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
     # The vulnerability scan of audit-go, which reports a known vulnerability that the code calls.
     govulncheck: golang.org/x/vuln/cmd/govulncheck@v1.8.0
@@ -206,6 +207,13 @@ go:
   # The options of lint-go, which runs golangci-lint with the rules of .golangci.yml and
   # ergon-go-vet in every module.
   lint:
+    # The module plugins of golangci-lint, by the name of the linter that each registers, in
+    # lowercase, as <package>@<version> of the package that registers it, such as assertlint:
+    # go.dokimi.dev/assert/lint/golangci@v0.1.0. ergon tool run builds them into golangci-lint with
+    # golangci-lint custom, and .golangci.yml enables each linter. The local .golangci.yml sets the
+    # settings of a plugin under linters.settings.custom.<name>.settings.
+    plugins:
+      assertlint: go.dokimi.dev/assert/lint/golangci@v0.1.0
     # The package patterns that ergon-go-vet skips, such as ./internal/legacy/....
     exclude: []
   # test-go runs go test with args.
@@ -247,9 +255,10 @@ go:
   # The commands whose binaries each release of their module attaches, which the job pack of
   # release.yml builds, signs and attests with GoReleaser: name, the binary and its archives,
   # packages and cask; module, the directory of the module in go.work, . for the root; main, the
-  # package of the command in the module; description, one line; platforms, every platform when
-  # empty; completions, true for a cobra program; packages, from deb, rpm and apk; homebrew, true
-  # for a cask in homebrew.tap; license, the license of the repository when empty.
+  # package of the command in the module; description, one line, and for a cask one that brew audit
+  # accepts, such as one without a full stop at its end; platforms, every platform when empty;
+  # completions, true for a cobra program; packages, from deb, rpm and apk; homebrew, true for a
+  # cask in homebrew.tap; license, the license of the repository when empty.
   binaries: []
   # The options of the casks of the commands under binaries whose homebrew is true.
   homebrew:
