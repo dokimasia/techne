@@ -34,7 +34,7 @@ replace (
 	go.dokimi.dev/techne/lang v0.0.1 => ./techne-lang
 	go.dokimi.dev/techne/lang/c v0.0.1 => ./techne-lang-c
 	go.dokimi.dev/techne/lang/csharp v0.0.1 => ./techne-lang-csharp
-	go.dokimi.dev/techne/lang/go v0.0.1 => ./techne-lang-go
+	go.dokimi.dev/techne/lang/go v0.0.2 => ./techne-lang-go
 	go.dokimi.dev/techne/lang/java v0.0.1 => ./techne-lang-java
 	go.dokimi.dev/techne/lang/javascript v0.0.1 => ./techne-lang-javascript
 	go.dokimi.dev/techne/lang/mock v0.0.1 => ./techne-lang-mock

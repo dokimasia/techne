@@ -12,7 +12,7 @@ require (
 	go.dokimi.dev/techne/lang v0.0.1
 	go.dokimi.dev/techne/lang/c v0.0.1
 	go.dokimi.dev/techne/lang/csharp v0.0.1
-	go.dokimi.dev/techne/lang/go v0.0.1
+	go.dokimi.dev/techne/lang/go v0.0.2
 	go.dokimi.dev/techne/lang/java v0.0.1
 	go.dokimi.dev/techne/lang/javascript v0.0.1
 	go.dokimi.dev/techne/lang/mock v0.0.1
