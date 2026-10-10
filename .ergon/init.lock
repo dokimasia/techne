@@ -1,5 +1,5 @@
 {
-  "ergon": "0.7.0",
+  "ergon": "0.8.2",
   "files": [
     {
       "path": ".commitlint.yaml",
@@ -59,12 +59,17 @@
     {
       "path": ".github/workflows/ci.yml",
       "producer": "github",
-      "sha256": "2a905205d987b481713e2e56aa158c0a1af4e4eda1bbc052f605d29e6d3436cf"
+      "sha256": "d7e80f511dd26aae04d5869605db3314057fbe07e01fa967a6c6bcfb2de1b46a"
     },
     {
       "path": ".github/workflows/codeql.yml",
       "producer": "github",
-      "sha256": "73258c4feacff149ac50c7cfb695871a474076c17835059e1a6d70200cfdbcec"
+      "sha256": "219b2a3e23e5b10b2e7ea9e33cb6bfb937d97c93ac9886df9d86793370e4af8b"
+    },
+    {
+      "path": ".github/workflows/nightly.yml",
+      "producer": "github",
+      "sha256": "79be51dcbe60f5ef9197ca4c11d9d400dd0bef45c9ac981f1fad7059c816f2c5"
     },
     {
       "path": ".github/workflows/release.yml",
@@ -92,7 +97,7 @@
       "path": ".golangci.yml",
       "producer": "go",
       "local": "16bdc76736c8e09555c847f1e56e4763763831520f8d0d0bc76aa74df56b1e20",
-      "sha256": "86fb805877a2ed86c73e2532c07d4ef23736d7a2d47025cebd8e9ffbd04cc3a6"
+      "sha256": "fcdca01b06f917ad453ead78447488c4f19f2f14c2c8db89b4c6d13c690050f3"
     },
     {
       "path": ".markdownlint.yml",
@@ -102,7 +107,7 @@
     {
       "path": ".pre-commit-config.yaml",
       "producer": "common",
-      "sha256": "8768894c14bfb5c186c82619793914a242df2e1ab16e375d0f100e20dee424d6"
+      "sha256": "ecaa2fc2648601525a24707cf06193b20f5e8db8df7d0b1264caaeb9e629b4c2"
     },
     {
       "path": "CODE_OF_CONDUCT.md",
@@ -118,7 +123,7 @@
       "path": "Makefile",
       "producer": "common",
       "local": "f2c96a3fede76b5cb7dc626d8d7be89f606aaaec06c6fff7718db154759d895e",
-      "sha256": "09c0ef77d7e7db1e47916681e0c1d4574fb2409bd63c04d88f1589aa9fecdeb3"
+      "sha256": "477f2630aa53411552733bfeac6d31d9d2b8d61d909e161db872016f7f45ec32"
     }
   ],
   "settings": {
@@ -126,6 +131,9 @@
     "common.ci.actions.markdownlint.release": "v24.2.0",
     "common.ci.actions.markdownlint.uses": "DavidAnson/markdownlint-cli2-action",
     "common.ci.timeout": 10,
+    "common.ergon": [
+      "ergon"
+    ],
     "common.hooks.pre-commit": [
       "lint",
       "test"
@@ -207,7 +215,7 @@
       "generate"
     ],
     "go.homebrew.tap": "",
-    "go.lint.exclude": [],
+    "go.lint.analyzers": "go.dokimi.dev/lint/golangci@v0.2.0",
     "go.lint.plugins": {},
     "go.mutate.args": [],
     "go.mutate.timeout": "0s",
@@ -237,7 +245,6 @@
     },
     "go.tools.cosign.version": "3.1.3",
     "go.tools.dokimi-mutate-go": "go.dokimi.dev/mutate/cmd/dokimi-mutate-go@v0.0.0-20261006212535-719083ce3457",
-    "go.tools.ergon-go-vet": "go.dokimi.dev/ergon/lang/go/cmd/ergon-go-vet@v0.2.1",
     "go.tools.golangci-lint": "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0",
     "go.tools.goreleaser.sha256": {
       "darwin/amd64": "5e97d6517f73a0b6f71675a2911b15d3136c03c8907650c2b18e114b1c0f5205",
