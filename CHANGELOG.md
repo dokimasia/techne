@@ -1,5 +1,12 @@
 # go.dokimi.dev/techne
 
+## 0.0.2
+
+### Patch Changes
+
+- Updated dependencies [1937f0d]
+  - go.dokimi.dev/techne/lang/go@0.0.2
+
 ## 0.0.1
 
 ### Patch Changes
