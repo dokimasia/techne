@@ -3,6 +3,6 @@
 
 module go.dokimi.dev/techne/core
 
-go 1.27.2
+go 1.27.3
 
 require go.dokimi.dev/assert v0.2.0

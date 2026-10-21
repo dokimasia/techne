@@ -1,7 +1,7 @@
 // Copyright Dokimasia B.V. 2026
 // SPDX-License-Identifier: MIT
 
-go 1.27.2
+go 1.27.3
 
 // The repository root module (go.dokimi.dev/techne) contains the binary and the composition root.
 // Every other module is listed here, so builds and tests resolve across the modules without the
