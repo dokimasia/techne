@@ -1,5 +1,28 @@
 # go.dokimi.dev/techne
 
+## 0.0.3
+
+### Patch Changes
+
+- Updated dependencies [f7a5bb4]
+- Updated dependencies [f7a5bb4]
+- Updated dependencies [f7a5bb4]
+- Updated dependencies [5bb1574]
+- Updated dependencies [5bb1574]
+- Updated dependencies [5bb1574]
+  - go.dokimi.dev/techne/lang@0.1.0
+  - go.dokimi.dev/techne/lang/python@0.0.2
+  - go.dokimi.dev/techne/lang/c@0.0.2
+  - go.dokimi.dev/techne/lang/csharp@0.0.2
+  - go.dokimi.dev/techne/lang/go@0.0.3
+  - go.dokimi.dev/techne/lang/java@0.0.2
+  - go.dokimi.dev/techne/lang/javascript@0.0.2
+  - go.dokimi.dev/techne/lang/mock@0.0.2
+  - go.dokimi.dev/techne/lang/ruby@0.0.2
+  - go.dokimi.dev/techne/lang/rust@0.0.2
+  - go.dokimi.dev/techne/lang/scala@0.0.2
+  - go.dokimi.dev/techne/lang/typescript@0.0.2
+
 ## 0.0.2
 
 ### Patch Changes

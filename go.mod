@@ -9,18 +9,18 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	go.dokimi.dev/assert v0.2.0
 	go.dokimi.dev/techne/core v0.0.0
-	go.dokimi.dev/techne/lang v0.0.1
-	go.dokimi.dev/techne/lang/c v0.0.1
-	go.dokimi.dev/techne/lang/csharp v0.0.1
-	go.dokimi.dev/techne/lang/go v0.0.2
-	go.dokimi.dev/techne/lang/java v0.0.1
-	go.dokimi.dev/techne/lang/javascript v0.0.1
-	go.dokimi.dev/techne/lang/mock v0.0.1
-	go.dokimi.dev/techne/lang/python v0.0.1
-	go.dokimi.dev/techne/lang/ruby v0.0.1
-	go.dokimi.dev/techne/lang/rust v0.0.1
-	go.dokimi.dev/techne/lang/scala v0.0.1
-	go.dokimi.dev/techne/lang/typescript v0.0.1
+	go.dokimi.dev/techne/lang v0.1.0
+	go.dokimi.dev/techne/lang/c v0.0.2
+	go.dokimi.dev/techne/lang/csharp v0.0.2
+	go.dokimi.dev/techne/lang/go v0.0.3
+	go.dokimi.dev/techne/lang/java v0.0.2
+	go.dokimi.dev/techne/lang/javascript v0.0.2
+	go.dokimi.dev/techne/lang/mock v0.0.2
+	go.dokimi.dev/techne/lang/python v0.0.2
+	go.dokimi.dev/techne/lang/ruby v0.0.2
+	go.dokimi.dev/techne/lang/rust v0.0.2
+	go.dokimi.dev/techne/lang/scala v0.0.2
+	go.dokimi.dev/techne/lang/typescript v0.0.2
 	go.dokimi.dev/techne/presenter v0.0.0
 	go.dokimi.dev/techne/service v0.0.1
 	go.dokimi.dev/techne/tool v0.0.0
