@@ -7,7 +7,7 @@ go 1.27.2
 
 require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
-	go.dokimi.dev/assert v0.0.0-20261007133442-6f235714117b
+	go.dokimi.dev/assert v0.2.0
 	go.dokimi.dev/techne/core v0.0.0
 	go.dokimi.dev/techne/lang v0.0.1
 	go.dokimi.dev/techne/lang/c v0.0.1
@@ -27,7 +27,7 @@ require (
 )
 
 require (
-	github.com/bmatcuk/doublestar/v4 v4.10.2 // indirect
+	github.com/bmatcuk/doublestar/v4 v4.10.3 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260623181947-01eb4420fa68 // indirect
 	github.com/google/jsonschema-go v0.4.3 // indirect
 	github.com/mattn/go-pointer v0.0.1 // indirect
@@ -48,12 +48,12 @@ require (
 	go.lsp.dev/jsonrpc2 v1.0.1 // indirect
 	go.lsp.dev/protocol v1.0.1 // indirect
 	go.lsp.dev/uri v1.0.1 // indirect
-	golang.org/x/mod v0.41.0 // indirect
+	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
-	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/sync v0.24.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	golang.org/x/tools v0.51.0 // indirect
+	golang.org/x/tools v0.52.0 // indirect
 )
 
 // The fork of the Go grammar parses a method with type parameters.
