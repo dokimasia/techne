@@ -6,7 +6,8 @@
 //   - its extensions, project manifests, comment forms and test files
 //   - its visibility rule, which PEP 8 states
 //   - its tree-sitter grammar and tags query
-//   - pyright, its language server
+//   - pyright, its language server, which resolves imports with the
+//     interpreter of the virtual environment of the workspace
 //
 // A composition root calls [Register], which adds Python to a registry and
 // its engines to a catalogue.
