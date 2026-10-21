@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
+	"slices"
 	"sync"
 	"time"
 
@@ -173,18 +175,19 @@ func kill(ctx context.Context, held *session) {
 // [Engine.Close], so a missing server costs one attempt. The context of a question does not end
 // the handshake. The error of a handshake that fails includes the end of the server's stderr.
 //
-// A running server whose process has exited is stopped, and the question starts a new one.
+// A running server whose process has exited is stopped, and the question starts a new one. The
+// question also stops a [Server.Restarts] server after a change of a manifest and starts a new
+// one. [Engine.current] decides whether a manifest changed.
 func (e *Engine) running(ctx context.Context) (*session, error) {
 	e.starting.Lock()
 	defer e.starting.Unlock()
 
-	if e.held != nil && e.held.gone() {
+	if e.held != nil && (e.held.gone() || !e.current(ctx, e.held)) {
 		_ = e.held.stop(ctx)
 		e.held = nil
 	}
 	switch {
 	case e.held != nil:
-		e.current(ctx, e.held)
 		return e.held, nil
 	case e.failed != nil:
 		return nil, e.failed
@@ -330,8 +333,8 @@ func (e *Engine) handshake(ctx context.Context, held *session) error {
 	params.WorkspaceFolders = protocol.NewNullable([]protocol.WorkspaceFolder{
 		{URI: root, Name: filepath.Base(e.root)},
 	})
-	if len(e.server.Settings) > 0 {
-		raw, err := json.Marshal(e.server.Settings)
+	if len(held.settings) > 0 {
+		raw, err := json.Marshal(held.settings)
 		if err != nil {
 			return fmt.Errorf("lsp: %s: settings: %w", e.server.Name, err)
 		}
@@ -407,12 +410,20 @@ func (e *Engine) reading() func() {
 // every buffer whose file is gone. It reads a file only when its stamp differs from the stamp
 // of its buffer. It then sends workspace/didChangeWatchedFiles with the creation, the change
 // and the deletion on disk of each file without a buffer that the server watches, by
-// [watching.changes].
-func (e *Engine) current(ctx context.Context, held *session) {
+// [watching.changes], and reports true.
+//
+// For a [Server.Restarts] server, current reports false when one of those files has a name that
+// matches a manifest of the language, as [Engine.manifest] decides. It then does not send the
+// buffers or the changes.
+func (e *Engine) current(ctx context.Context, held *session) bool {
 	e.showing.Lock()
 	defer e.showing.Unlock()
 
 	buffers := held.buffers()
+	changes := held.watched.changes(buffers)
+	if e.server.Restarts && slices.ContainsFunc(changes, e.manifest) {
+		return false
+	}
 	for full, buffer := range buffers {
 		info, err := os.Stat(full)
 		if err != nil {
@@ -429,9 +440,20 @@ func (e *Engine) current(ctx context.Context, held *session) {
 		}
 		_ = e.told(ctx, held, full, content, stamped)
 	}
-	if changes := held.watched.changes(buffers); len(changes) > 0 {
+	if len(changes) > 0 {
 		_ = held.asks.DidChangeWatchedFiles(ctx, &protocol.DidChangeWatchedFilesParams{Changes: changes})
 	}
+	return true
+}
+
+// manifest reports whether the name of the file of event matches a manifest of the language by
+// the rule of [lang.ProjectOf]. A manifest is a file name or a pattern of [path.Match].
+func (e *Engine) manifest(event protocol.FileEvent) bool {
+	name := filepath.Base(event.URI.FsPath())
+	return slices.ContainsFunc(e.declared.Manifests, func(manifest string) bool {
+		matched, err := path.Match(manifest, name)
+		return err == nil && matched
+	})
 }
 
 // release tells the server that the file at full is gone: textDocument/didClose for its

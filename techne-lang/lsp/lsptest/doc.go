@@ -36,7 +36,7 @@
 // Impls mode inside impl blocks. [Locals] declares a local inside a function, which the Aims
 // mode leaves out of its document symbols. A test writes them into a workspace with
 // [Workspace]. [Declaration] declares [Language], which claims files with the [Extension]
-// suffix.
+// suffix. A file named [Manifest] marks a project of the language.
 //
 // # Engines
 //

@@ -101,11 +101,19 @@ const (
 	Loads Mode = "loads"
 
 	// Asks sends workspace/configuration, workspace/workspaceFolders and
-	// workspace/applyEdit during initialize and waits for each reply. It then requests the
+	// workspace/applyEdit during initialize and waits for each reply. The items of the
+	// configuration request are these:
+	//
+	//   - the section of the settings of its declaration
+	//   - a section that its declaration does not set
+	//   - an item without a section
+	//
+	// It then requests the
 	// indentation of a.fake, of b.fake, of no file and of the file that [Outside] names, under
 	// the sections of its [lsp.Server.Indentation]. It responds to
 	// textDocument/diagnostic with one diagnostic per reply, whose message is the request
-	// name, an equals sign and the reply.
+	// name, an equals sign and the reply, and with one diagnostic whose message is "options="
+	// and the initializationOptions of initialize.
 	Asks Mode = "asks"
 
 	// Cancels responds to textDocument/definition with the error RequestCancelled of LSP 3.17,
@@ -147,6 +155,10 @@ const (
 	// textDocument/implementation with an empty list. metals behaves this way before it has
 	// imported a build.
 	Ungated Mode = "ungated"
+
+	// Unpulled advertises pull diagnostics and refuses each textDocument/diagnostic with an
+	// error response.
+	Unpulled Mode = "unpulled"
 
 	// Thin advertises only textDocument/documentSymbol, and textDocument/rename without
 	// prepareRename.
@@ -194,6 +206,12 @@ const (
 	// It unregisters the watcher of the [Dropped] files at the first event that it receives.
 	// [RecordRequests] records each event as a line that starts with [Watched].
 	Watching Mode = "watching"
+
+	// Manifests reads the file [Manifest] in the workspace root at initialize and at no other
+	// time, as a server reads its configuration when it starts. It registers a watcher of every
+	// file with the extension of [Manifest] at initialize. It responds to textDocument/diagnostic
+	// with one note whose message is "manifest=" and the content that it read.
+	Manifests Mode = "manifests"
 
 	// Opened computes references from its buffers or else from disk, and renames only in its
 	// buffers. It reports the first use of Store in b.fake, and renames that use only while it

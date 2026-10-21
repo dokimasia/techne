@@ -263,6 +263,10 @@ const (
 	asked = 2
 )
 
+// diagnosing is the textDocument/diagnostic request of a.fake, with the id [asked].
+const diagnosing = `{"jsonrpc":"2.0","id":2,"method":"textDocument/diagnostic","params":` +
+	`{"textDocument":{"uri":"file:///tmp/a.fake"}}}`
+
 // referencing is the textDocument/references request at the name Store of a.fake, with the id
 // [asked].
 const referencing = `{"jsonrpc":"2.0","id":2,"method":"textDocument/references","params":` +
@@ -595,6 +599,19 @@ func TestScript(t *testing.T) {
 			p.send(t, asking)
 			assert.Equal(t, p.reports(t), []string{"[]"}, "the reports of the close")
 		})
+
+		t.Run("responds to a diagnostic with the manifest that it read at initialize in the Manifests mode",
+			func(t *testing.T) {
+				t.Parallel()
+				root := t.TempDir()
+				manifest := filepath.Join(root, lsptest.Manifest)
+				assert.NoError(t, os.WriteFile(manifest, []byte("first"), 0o644), "the test writes the manifest")
+				p := run(t, lsptest.Manifests)
+				p.initializeAt(t, root)
+				assert.NoError(t, os.WriteFile(manifest, []byte("second"), 0o644), "the test rewrites the manifest")
+				p.send(t, diagnosing)
+				assert.Contains(t, string(p.reply(t, asked)), `"message":"manifest=first"`, "the reply to diagnostic")
+			})
 
 		t.Run("checks the files on disk after initialized in the DiskChecks mode", func(t *testing.T) {
 			t.Parallel()

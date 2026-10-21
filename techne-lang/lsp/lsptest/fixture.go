@@ -23,6 +23,10 @@ const Language source.Language = "fake"
 // Extension is the suffix of the files that [Language] claims.
 const Extension = ".fake"
 
+// Manifest is the name of the file that marks a project of [Language], which [Declaration]
+// states as its [lang.Declaration.Manifests].
+const Manifest = "fake.toml"
+
 // Content is the file that the answers of the script describe. Line 2 declares Store, line 3
 // its field size, line 6 the method Get, and line 8 the function After, which calls Get.
 // Store is used on line 6 at character 9 and on line 8 at character 28.
@@ -123,6 +127,7 @@ func Declaration() lang.Declaration {
 	return lang.Declaration{
 		Language:   Language,
 		Extensions: []string{Extension},
+		Manifests:  []string{Manifest},
 		Removed:    []byte(Removed),
 		Comment:    lang.CommentStyle{Line: "// "},
 		IsTest:     func(p string) bool { return path.Base(p) == Test },

@@ -92,8 +92,8 @@ func (e *Engine) relocating(
 	risky := lang.Writing(stem, edited(changes))
 	changes = append(changes, edit.Change{Kind: edit.ChangeMove, Path: from, To: to})
 	covered, reaches, caveats := e.reached(ctx, held, from, shown, ready, risky)
-	if short != nil {
-		covered, caveats = trust.ScopePartial, append(caveats, *short)
+	if len(short) > 0 {
+		covered, caveats = trust.ScopePartial, append(caveats, short...)
 	}
 	return engine.Result[edit.Change]{
 		Items:        changes,

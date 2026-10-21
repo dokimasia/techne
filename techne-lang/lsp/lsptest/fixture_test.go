@@ -210,6 +210,11 @@ func TestFixture(t *testing.T) {
 			assert.Equal(t, lsptest.Declaration().Extensions, []string{lsptest.Extension}, "the extensions")
 		})
 
+		t.Run("states Manifest as the manifest of a project", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, lsptest.Declaration().Manifests, []string{lsptest.Manifest}, "the manifests")
+		})
+
 		t.Run("states Removed as the content of a removed file", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, string(lsptest.Declaration().Removed), lsptest.Removed, "the removed content")

@@ -169,6 +169,35 @@ func TestEvidence(t *testing.T) {
 			assert.NoError(t, err, "Relate with an error on a line that does not write Store")
 			assert.Equal(t, got.Lowered, trust.None, "the lowered tier of the answer")
 		})
+
+		t.Run("keeps the tier of an answer when another project has an error on a line that writes the name",
+			func(t *testing.T) {
+				t.Parallel()
+				e := projects(t)
+				_, err := e.Resolve(t.Context(), engine.Request{Scope: "two/b.fake"}, store())
+				assert.NoError(t, err, "Resolve opens two/b.fake")
+				got, err := e.Relate(t.Context(), engine.Request{Scope: "one/a.fake"},
+					sema.NewID(lsptest.Language, "one", "Store", sema.KindStruct), sema.ReferencedBy)
+				assert.NoError(t, err, "Relate of the uses of Store in the project without an error")
+				assert.Equal(t, got.Lowered, trust.None, "the lowered tier of the answer")
+			})
+
+		t.Run("lowers an answer by an error that a server of open files reports in another project",
+			func(t *testing.T) {
+				t.Parallel()
+				root := lsptest.Workspace(t, map[string]string{
+					"one/" + lsptest.Manifest: "", "one/a.fake": lsptest.Content,
+					"two/" + lsptest.Manifest: "", "two/b.fake": "import " + lsptest.Broken + ".Store\n",
+				})
+				server := lsptest.Server(lsptest.Quiet, lsptest.Delaying(2*lsptest.QuietDelay))
+				server.OpenFilesOnly = true
+				got, err := lsptest.Engine(t, root, server).Relate(t.Context(), engine.Request{Scope: "one/a.fake"},
+					sema.NewID(lsptest.Language, "one", "Store", sema.KindStruct), sema.ReferencedBy)
+				assert.NoError(t, err, "Relate of the uses of Store")
+				assert.Equal(t, got.Lowered, trust.Indexed, "the lowered tier of the answer")
+				assert.True(t, caveated(got.Caveats, trust.CaveatBuildBroken, "two/b.fake:1"),
+					"the answer has a build caveat at the error in two/b.fake")
+			})
 	})
 
 	t.Run("Plan", func(t *testing.T) {

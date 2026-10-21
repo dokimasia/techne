@@ -11,6 +11,7 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/techne/core/engine"
 	"go.dokimi.dev/techne/lang"
+	"go.dokimi.dev/techne/lang/lsp"
 	"go.dokimi.dev/techne/lang/lsp/lsptest"
 )
 
@@ -20,22 +21,6 @@ const spaced = "type Store struct {\n  size int\n}\n"
 // secondFile is the file beside a.fake whose width the Asks mode asks for.
 const secondFile = "b.fake"
 
-// replies returns the replies of the client to the requests that the scripted server sends
-// during initialize in the Asks mode over files, by request name.
-func replies(t *testing.T, files map[string]string, options ...lsptest.Option) map[string]string {
-	t.Helper()
-	got, err := serving(t, lsptest.Asks, files, options...).
-		Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
-	assert.NoError(t, err, "Verify in the Asks mode")
-	out := map[string]string{}
-	for _, message := range messages(got.Items) {
-		name, reply, split := strings.Cut(message, "=")
-		assert.True(t, split, "the message "+message+" names a request")
-		out[name] = reply
-	}
-	return out
-}
-
 func TestClient(t *testing.T) {
 	t.Parallel()
 
@@ -44,8 +29,36 @@ func TestClient(t *testing.T) {
 
 		t.Run("returns one value per item in the order of the items", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, replies(t, sample())["configuration"], `[{"strict":true},null]`,
+			assert.Equal(t, replies(t, sample())["configuration"], `[{"strict":true},null,{"fake":{"strict":true}}]`,
 				"the reply to workspace/configuration")
+		})
+
+		t.Run("returns null for every item from a server without settings", func(t *testing.T) {
+			t.Parallel()
+			unsettled := func(s *lsp.Server) { s.Settings = nil }
+			got := replies(t, sample(), unsettled, configuring(nil))
+			assert.Equal(t, got["configuration"], `[null,null,null]`, "the reply to workspace/configuration")
+		})
+
+		t.Run("returns the section that Configure returns in place of the declared section", func(t *testing.T) {
+			t.Parallel()
+			got := replies(t, sample(), configuring(map[string]any{"fake": map[string]any{"strict": false}}))
+			assert.Equal(t, got["configuration"], `[{"strict":false},null,{"fake":{"strict":false}}]`,
+				"the reply to workspace/configuration")
+		})
+
+		t.Run("returns a declared section that Configure does not return", func(t *testing.T) {
+			t.Parallel()
+			got := replies(t, sample(), configuring(map[string]any{"absent": 1}))
+			assert.Equal(t, got["configuration"], `[{"strict":true},1,{"absent":1,"fake":{"strict":true}}]`,
+				"the reply to workspace/configuration")
+		})
+
+		t.Run("returns the settings of Configure for a server without settings of its own", func(t *testing.T) {
+			t.Parallel()
+			unsettled := func(s *lsp.Server) { s.Settings = nil }
+			got := replies(t, sample(), unsettled, configuring(map[string]any{"absent": 1}))
+			assert.Equal(t, got["configuration"], `[null,1,{"absent":1}]`, "the reply to workspace/configuration")
 		})
 
 		t.Run("returns the indentation of a file under each section of the indentation", func(t *testing.T) {

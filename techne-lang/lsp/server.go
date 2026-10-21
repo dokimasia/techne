@@ -36,8 +36,17 @@ type Server struct {
 	Serves map[engine.Role]trust.Fidelity
 
 	// Settings are sent as the initializationOptions of initialize and in reply to
-	// workspace/configuration.
+	// workspace/configuration. A section that [Server.Configure] returns replaces the section
+	// of the same name.
 	Settings map[string]any
+
+	// Configure returns the settings of the workspace at root, or nil for none. pyright receives
+	// the interpreter of the virtual environment of a Python workspace this way. root is the
+	// absolute path of the workspace with its symbolic links resolved. getenv returns the value
+	// of an environment variable of techne, and the empty string for a variable that is not set.
+	// The engine calls Configure at each start of the server. A nil Configure does not add
+	// settings.
+	Configure func(root string, getenv func(key string) string) map[string]any
 
 	// Env are the environment variables that the server runs with, added to the environment of
 	// techne.
@@ -126,9 +135,16 @@ type Server struct {
 	// Before it plans a rename or a move, and before it relates the uses of a declaration that
 	// other files can use, the engine opens the files of the workspace that write the name, so
 	// the server finds the uses in them. For a rename and a relation, a file writes the name on a
-	// line that does not start with //, which starts a line comment of JavaScript and TypeScript,
-	// the languages of a scoped server.
+	// line that does not start with the line comment of the language.
 	Scoped bool
+
+	// OpenFilesOnly reports that the server publishes the diagnostics of the files that it has
+	// open and of no other file, as pyright does with its default diagnosticMode openFilesOnly.
+	// The engine opens the files that write the name of a declaration by the rule of
+	// [Server.Scoped], and waits for their diagnostics, so that an error that hides a use in
+	// one of them lowers the answer. The errors that lower an answer of such a server are those
+	// of the whole workspace, because a use can be in any project of it.
+	OpenFilesOnly bool
 
 	// Quiet reports that the server publishes no report for a change after which a kind of the
 	// diagnostics of a file is still empty, as typescript-language-server 6.0.0 does, so a
@@ -174,6 +190,13 @@ type Server struct {
 	// checker of Go relates the importers of a package by its import path, so gopls does not set
 	// it either.
 	Imports bool
+
+	// Restarts reports that the server applies a change of a manifest of the language in the
+	// background after the event of the change, as pyright does for a pyproject.toml. Until then
+	// the server replies with its old configuration. Before a question, the engine stops such a
+	// server when a file that the server watches and whose name matches a manifest was created,
+	// changed or deleted, and the question starts a new server.
+	Restarts bool
 }
 
 // Refactor names the code action of a server that performs one refactoring.

@@ -95,12 +95,18 @@ const (
 	idDiagnosis     = 9300
 )
 
-// The registration ids of the Watching mode: watchedFiles for the watchers of the files with the
-// [Extension] and the [Fresh] suffixes, and watchedDropped for the watcher of the files with the
-// [Dropped] suffix.
+// The ids of the registrations of watchers.
 const (
-	watchedFiles   = "lsptest/files"
+	// watchedFiles is the id under which the Watching mode registers its watchers of the files with
+	// the [Extension] and the [Fresh] suffixes.
+	watchedFiles = "lsptest/files"
+
+	// watchedDropped is the id under which the Watching mode registers its watcher of the files
+	// with the [Dropped] suffix.
 	watchedDropped = "lsptest/dropped"
+
+	// watchedManifests is the id under which the Manifests mode registers its watcher.
+	watchedManifests = "lsptest/manifests"
 )
 
 // events names each type of event of workspace/didChangeWatchedFiles, as the protocol numbers
@@ -209,6 +215,9 @@ type script struct {
 	copies map[string]string
 
 	mode Mode
+
+	// manifest is the content of the file [Manifest] that the Manifests mode read at initialize.
+	manifest string
 
 	// root is the workspace URI of initialize. seen is the document URI of the latest
 	// request with a text document.
@@ -463,8 +472,8 @@ func emptied(method string) string {
 }
 
 // initialize responds to the handshake. Before the response it sends a log message and a
-// registration, and the Asks, Loading, Created, Stuck and Diagnoses modes send their own
-// requests.
+// registration, which registers the watchers of the Watching and Manifests modes, and the Asks,
+// Loading, Created, Stuck and Diagnoses modes send their own requests.
 func (s *script) initialize(m message) (int, bool) {
 	s.client = m.Params
 	s.root = s.canonical(stringAt(m.Params, "rootUri"))
@@ -489,15 +498,28 @@ func (s *script) initialize(m message) (int, bool) {
 
 	s.send(`{"jsonrpc":"2.0","method":"window/logMessage","params":{"type":3,"message":"starting"}}`)
 	registrations := "[]"
-	if s.mode == Watching {
+	switch s.mode {
+	case Watching:
 		s.copyFiles()
 		registrations = s.watchers()
+	case Manifests:
+		content, _ := os.ReadFile(filepath.Join(uri.URI(s.root).FsPath(), Manifest))
+		s.manifest = string(content)
+		registrations = fmt.Sprintf(`[{"id":%q,"method":"workspace/didChangeWatchedFiles",`+
+			`"registerOptions":{"watchers":[{"globPattern":"**/*%s"}]}}]`, watchedManifests, path.Ext(Manifest))
+	default:
+		// Another mode does not register a watcher.
 	}
 	s.send(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"client/registerCapability",`+
 		`"params":{"registrations":%s}}`, idRegister, registrations))
 	if s.mode == Asks {
+		var held struct {
+			Options json.RawMessage `json:"initializationOptions"`
+		}
+		_ = json.Unmarshal(m.Params, &held)
+		s.replies["options"] = string(held.Options)
 		s.replies["configuration"] = s.ask(idConfiguration, fmt.Sprintf(
-			`"workspace/configuration","params":{"items":[{"section":%q},{"section":"absent"}]}`,
+			`"workspace/configuration","params":{"items":[{"section":%q},{"section":"absent"},{}]}`,
 			configured))
 		s.replies["folders"] = s.ask(idFolders, `"workspace/workspaceFolders","params":null`)
 		s.replies["edit"] = s.ask(idApplyEdit, `"workspace/applyEdit","params":{"edit":{"changes":{}}}`)
@@ -931,6 +953,10 @@ func (s *script) request(m message) {
 	case "textDocument/rename":
 		s.rename(id, m.Params)
 	case "textDocument/diagnostic":
+		if s.mode == Unpulled {
+			s.refuse(id, "the diagnostics of the document failed")
+			return
+		}
 		s.answer(id, `{"kind":"full","items":`+s.diagnose(s.seen)+`}`)
 	case "workspace/diagnostic":
 		s.answer(id, s.workspaceReport())
@@ -1420,10 +1446,12 @@ func (s *script) diagnose(doc string) string {
 		return "[" + strings.Join(s.faults(doc), ",") + "]"
 	case Asks:
 		var out []string
-		for _, name := range []string{"configuration", "folders", "edit", "indentation"} {
+		for _, name := range []string{"configuration", "folders", "edit", "indentation", "options"} {
 			out = append(out, note(name+"="+s.replies[name]))
 		}
 		return "[" + strings.Join(out, ",") + "]"
+	case Manifests:
+		return "[" + note("manifest="+s.manifest) + "]"
 	case Echoes:
 		first, _, _ := strings.Cut(s.holding[doc], "\n")
 		held := make([]string, 0, len(s.holding))

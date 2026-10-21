@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"go.dokimi.dev/techne/core/edit"
 	"go.dokimi.dev/techne/core/engine"
@@ -64,23 +65,28 @@ func (e *Engine) Plan(
 const preloads = 200
 
 // preload opens the files of the workspace that writes reports as writing what, for a
-// [Server.Scoped] server, so that the server finds the uses in them. It skips the file at skip,
-// which the plan has open. preload returns the files that write what, and a caveat when more
-// files write what than it opens, nil otherwise.
+// [Server.Scoped] server, so that the server finds the uses in them, and for a
+// [Server.OpenFilesOnly] server, so that the server reports their errors. It skips the file at
+// skip, which the plan has open. preload returns its caveats and the files that write what. A
+// preload that opens fewer files than write what has a caveat.
 //
 // A [Server.Tsserver] server loads a project whole when it opens one of its files. When more
 // files write what than preload opens, preload opens in their place the files that
 // [Engine.unprojected] returns and that [Engine.reaching] keeps for the file at declared, the
 // file of the declaration or the moved file. An empty declared keeps every file that
 // Engine.unprojected returns.
+//
+// For a [Server.OpenFilesOnly] server, preload then waits up to [reporting] for the diagnostics
+// of the files that it opened, by [Engine.unreported]. A caveat lists the files without a
+// report.
 func (e *Engine) preload(
 	ctx context.Context,
 	held *session,
 	what string,
 	writes func(p source.Path, content []byte) bool,
 	skip, declared source.Path,
-) (*trust.Caveat, []source.Path, error) {
-	if !e.server.Scoped || what == "" {
+) ([]trust.Caveat, []source.Path, error) {
+	if (!e.server.Scoped && !e.server.OpenFilesOnly) || what == "" {
 		return nil, nil, nil
 	}
 	files, err := e.walk(engine.Request{Scope: engine.Root})
@@ -106,19 +112,59 @@ func (e *Engine) preload(
 		opened = e.reaching(loose, projects, declared)
 		written = "files outside the projects of tsserver that write " + what + " and can refer to it"
 	}
+	var shown []source.Path
 	for _, p := range opened[:min(len(opened), preloads)] {
-		if _, err := e.open(ctx, held, p); err != nil && !refused(err) {
+		_, err := e.open(ctx, held, p)
+		switch {
+		case err == nil:
+			shown = append(shown, p)
+		case !refused(err):
 			return nil, nil, err
 		}
 	}
-	if len(opened) <= preloads {
-		return nil, writers, nil
+	var caveats []trust.Caveat
+	switch {
+	case len(opened) <= preloads:
+	case e.server.Scoped:
+		caveats = append(caveats, trust.Caveat{
+			Code: trust.CaveatIndexWarming,
+			Note: fmt.Sprintf("%s loads only the files it has open, and techne opened %d of the %d %s, "+
+				"so a use in the others may be missing", e.server.Name, preloads, len(opened), written),
+		})
+	default:
+		caveats = append(caveats, trust.Caveat{
+			Code: trust.CaveatIndexWarming,
+			Note: fmt.Sprintf("%s reports errors only in the files it has open, and techne opened %d of "+
+				"the %d %s, so an error that hides a use in the others may be missing",
+				e.server.Name, preloads, len(opened), written),
+		})
 	}
-	return &trust.Caveat{
-		Code: trust.CaveatIndexWarming,
-		Note: fmt.Sprintf("%s loads only the files it has open, and techne opened %d of the %d %s, "+
-			"so a use in the others may be missing", e.server.Name, preloads, len(opened), written),
-	}, writers, nil
+	if !e.server.OpenFilesOnly {
+		return caveats, writers, nil
+	}
+	if unreported := e.unreported(ctx, held, shown); len(unreported) > 0 {
+		caveats = append(caveats, trust.Caveat{
+			Code: trust.CaveatIndexWarming,
+			Note: fmt.Sprintf("%s reported no diagnostics of these files that write %s, "+
+				"so an error in them that hides a use may be missing", e.server.Name, what),
+			Paths: unreported,
+		})
+	}
+	return caveats, writers, nil
+}
+
+// unreported waits until [reporting] from now for the diagnostics of the files at paths, by
+// [Engine.diagnostics], and returns the files that the server reported nothing for, in the order
+// of paths. A file whose diagnostics the server fails to return has no report.
+func (e *Engine) unreported(ctx context.Context, held *session, paths []source.Path) []source.Path {
+	by := time.Now().Add(reporting)
+	var out []source.Path
+	for _, p := range paths {
+		if _, said, err := e.diagnostics(ctx, held, p, by, false); err != nil || !said {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // tsProjects are the names of the files that declare a project of tsserver.
@@ -451,8 +497,8 @@ func (e *Engine) preloaded(
 	found *finder,
 	doc document,
 	at protocol.Position,
-) (*trust.Caveat, []source.Path, error) {
-	if !e.server.Scoped {
+) ([]trust.Caveat, []source.Path, error) {
+	if !e.server.Scoped && !e.server.OpenFilesOnly {
 		return nil, nil, nil
 	}
 	offered, named, err := found.offers(ctx, doc.path, at)
@@ -464,7 +510,7 @@ func (e *Engine) preloaded(
 		declared = ""
 	}
 	word := doc.word(at)
-	return e.preload(ctx, held, word, uncommented(word), doc.path, declared)
+	return e.preload(ctx, held, word, uncommented(word, e.declared.Comment.Line), doc.path, declared)
 }
 
 // wording returns the rule of [Engine.preload] for a file that writes word as a word.
@@ -474,15 +520,11 @@ func wording(word string) func(source.Path, []byte) bool {
 	}
 }
 
-// lineComment starts a line comment of JavaScript and TypeScript, the languages of every
-// [Server.Scoped] server.
-const lineComment = "//"
-
 // uncommented returns the rule of [Engine.preload] for a file that writes word as a word on a
-// line that does not start with [lineComment], by the rule of [occurrences].
-func uncommented(word string) func(source.Path, []byte) bool {
+// line that does not start with comment, by the rule of [occurrences].
+func uncommented(word, comment string) func(source.Path, []byte) bool {
 	return func(_ source.Path, content []byte) bool {
-		for range occurrences(content, word) {
+		for range occurrences(content, word, comment) {
 			return true
 		}
 		return false
@@ -490,12 +532,15 @@ func uncommented(word string) func(source.Path, []byte) bool {
 }
 
 // occurrences returns the byte offset of each occurrence of word as a word in content, by the
-// rule of [lang.Worded], on a line that does not start with [lineComment]. Such a line has no
-// use of a declaration, because a rename and a search for references leave a comment as it is.
-// A reference directive is such a line, and it refers to a file, not to a declaration.
-func occurrences(content []byte, word string) iter.Seq[int] {
+// rule of [lang.Worded], on a line that does not start with comment. comment is the
+// [lang.CommentStyle.Line] of the language, and occurrences trims its spaces. A line comment has
+// no use of a declaration, because a rename and a search for references leave a comment as it
+// is. A reference directive of TypeScript is such a line, and it refers to a file, not to a
+// declaration. For a language without a line comment, every line counts.
+func occurrences(content []byte, word, comment string) iter.Seq[int] {
 	return func(yield func(int) bool) {
 		text := string(content)
+		marker := strings.TrimSpace(comment)
 		from := 0
 		// Each occurrence starts after the end of the one before it, so a text of n bytes has at
 		// most n occurrences.
@@ -507,7 +552,8 @@ func occurrences(content []byte, word string) iter.Seq[int] {
 			at += from
 			from = at + len(word)
 			start := strings.LastIndexByte(text[:at], '\n') + 1
-			if !strings.HasPrefix(strings.TrimLeft(text[start:], " \t"), lineComment) && !yield(at) {
+			commented := marker != "" && strings.HasPrefix(strings.TrimLeft(text[start:], " \t"), marker)
+			if !commented && !yield(at) {
 				return
 			}
 		}

@@ -5,6 +5,7 @@ package lsp_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -137,6 +138,67 @@ func TestSession(t *testing.T) {
 
 	t.Run("Verify", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("sends the declared settings as the initialization options", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, replies(t, sample())["options"], `{"fake":{"strict":true}}`, "the initialization options")
+		})
+
+		t.Run("sends the settings of Configure with the declared settings as the initialization options",
+			func(t *testing.T) {
+				t.Parallel()
+				got := replies(t, sample(), configuring(map[string]any{"absent": 1}))["options"]
+				assert.Equal(t, got, `{"absent":1,"fake":{"strict":true}}`, "the initialization options")
+			})
+
+		t.Run("asks Configure for the settings once per start of the server", func(t *testing.T) {
+			t.Parallel()
+			calls := 0
+			server := lsptest.Server(lsptest.Default)
+			server.Configure = func(string, func(string) string) map[string]any {
+				calls++
+				return nil
+			}
+			e := lsptest.Engine(t, lsptest.Workspace(t, sample()), server)
+			for range 2 {
+				_, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+				assert.NoError(t, err, "a Verify of the first server")
+			}
+			assert.NoError(t, e.Close(t.Context()), "Close of the first server")
+			_, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "the Verify of the second server")
+			assert.Equal(t, calls, 2, "the calls of Configure")
+		})
+
+		t.Run("passes Configure the root of the workspace with its symbolic links resolved", func(t *testing.T) {
+			t.Parallel()
+			root := lsptest.Workspace(t, sample())
+			resolved, err := filepath.EvalSymlinks(root)
+			assert.NoError(t, err, "the resolved root of the workspace")
+			var given string
+			server := lsptest.Server(lsptest.Default)
+			server.Configure = func(root string, _ func(string) string) map[string]any {
+				given = root
+				return nil
+			}
+			_, err = lsptest.Engine(t, root, server).Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "the Verify that starts the server")
+			assert.Equal(t, given, resolved, "the root that Configure receives")
+		})
+
+		t.Run("passes Configure the environment of techne", func(t *testing.T) {
+			t.Parallel()
+			var searched string
+			server := lsptest.Server(lsptest.Default)
+			server.Configure = func(_ string, getenv func(string) string) map[string]any {
+				searched = getenv("PATH")
+				return nil
+			}
+			_, err := lsptest.Engine(t, lsptest.Workspace(t, sample()), server).
+				Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "the Verify that starts the server")
+			assert.Equal(t, searched, os.Getenv("PATH"), "the PATH that Configure reads")
+		})
 
 		t.Run("keeps the last of two reports of a file in the order of the stream", func(t *testing.T) {
 			t.Parallel()

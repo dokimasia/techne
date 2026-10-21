@@ -127,7 +127,7 @@ func (e *Engine) relating(
 	}
 	// A relation towards the declaration is written in another file, which a scoped server
 	// reads only while it has the file open.
-	var short *trust.Caveat
+	var short []trust.Caveat
 	var writers []source.Path
 	if incoming(kind) {
 		if short, writers, err = e.preloaded(ctx, held, found, doc, pick.Position); err != nil {
@@ -202,8 +202,8 @@ func (e *Engine) relating(
 		covered = trust.ScopePartial
 		caveats = append(caveats, unresolved)
 	}
-	if short != nil {
-		covered, caveats = trust.ScopePartial, append(caveats, *short)
+	if len(short) > 0 {
+		covered, caveats = trust.ScopePartial, append(caveats, short...)
 	}
 	if len(left) > 0 {
 		caveats = append(caveats, trust.Caveat{
@@ -549,7 +549,7 @@ func (e *Engine) useIn(
 		if err != nil {
 			return "", protocol.Position{}, false, err
 		}
-		for offset := range occurrences(other.content, subject.Name) {
+		for offset := range occurrences(other.content, subject.Name, e.declared.Comment.Line) {
 			if p == doc.path && offset == declaration {
 				continue
 			}

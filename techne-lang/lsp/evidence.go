@@ -65,7 +65,10 @@ func settled(ready bool) (trust.Completeness, []trust.Caveat) {
 
 // bound returns the completeness, the lowered tier and the caveats of an answer that binds
 // names in scope, given whether the server settled before it was asked. risky decides which
-// errors of the project of scope lower the answer.
+// errors of the project of scope lower the answer. For a [Server.OpenFilesOnly] server, risky
+// decides which errors of the whole workspace lower the answer. Such a server reports the errors
+// of the files that the engine opened, and [Engine.preload] opens the files of every project
+// that can use the declaration.
 func (e *Engine) bound(
 	held *session,
 	scope source.Path,
@@ -73,7 +76,11 @@ func (e *Engine) bound(
 	risky lang.Hides,
 ) (trust.Completeness, trust.Fidelity, []trust.Caveat) {
 	covered, caveats := settled(ready)
-	reaches, why := e.lowered(held, e.project(scope), risky)
+	within := e.project(scope)
+	if e.server.OpenFilesOnly {
+		within = engine.Root
+	}
+	reaches, why := e.lowered(held, within, risky)
 	return covered, reaches, append(caveats, why...)
 }
 

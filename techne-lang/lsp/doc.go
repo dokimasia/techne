@@ -33,6 +33,13 @@
 // tier that its [Server] declares for each role. [Binding] returns the tiers of a server with
 // a type checker.
 //
+// # Settings
+//
+// A server receives [Server.Settings] as the initializationOptions of initialize and in reply to
+// workspace/configuration. [Server.Configure] returns the settings of the workspace at each start
+// of the server, and each section that it returns replaces the section of the same name. pyright
+// receives the interpreter of the virtual environment of a Python workspace this way.
+//
 // # Relations
 //
 // A server without the call hierarchy, as typescript-language-server, relates the calls of a
@@ -64,15 +71,21 @@
 // [Server.Contextual] server returns expressions among the implementations, and the engine keeps
 // an implementation at the name of a declaration that can implement, such as a class.
 //
-// # Scoped servers
+// # Open files
 //
 // A [Server.Scoped] server finds a use only in a file that it has open. Before a rename, a move
 // and a relation of the uses of a declaration that other files can use, the engine opens up to
 // 200 files of the workspace that write the name. A plan or an answer past them is partial. A
-// file writes the name of a declaration on a line that does not start with //. For a
-// [Server.Tsserver] server, the engine opens one file of each project, so that tsserver loads
-// the project whole. It then opens only the files of no project whose imports lead to the file
-// of the declaration or to a loaded project.
+// file writes the name of a declaration on a line that does not start with the line comment of
+// the language. For a [Server.Tsserver] server, the engine opens one file of each project, so
+// that tsserver loads the project whole. It then opens only the files of no project whose imports
+// lead to the file of the declaration or to a loaded project.
+//
+// A [Server.OpenFilesOnly] server reports the errors of the files that it has open and of no
+// other file, as pyright does. The engine opens the same files for it, and waits 2 seconds for
+// their diagnostics. A plan or an answer is partial when a file has no report by then. The errors
+// of every project lower the answers of such a server, because a file of any project can use the
+// declaration.
 //
 // # Identities
 //
@@ -135,8 +148,9 @@
 // request.
 //
 // The errors that the server reports for the project of an answer lower the answer by the rule
-// of [lang.Lowered]. Only an error on a line that can hide a use of the name that the answer is
-// about lowers it to [trust.Indexed]. An extraction rewrites no reference and is never lowered.
+// of [lang.Lowered]. For a [Server.OpenFilesOnly] server, the errors of the whole workspace lower
+// it. Only an error on a line that can hide a use of the name that the answer is about lowers it
+// to [trust.Indexed]. An extraction rewrites no reference and is never lowered.
 //
 // A rename is partial when the server reports a use that no edit of the plan rewrites. An edit
 // rewrites a use when it shares a byte with the use or inserts at one of its ends, because a
@@ -168,6 +182,11 @@
 // each such file without a buffer, of the kinds that its watchers name. The walk leaves out the
 // directories that [lang.Vendored] names and the paths that .gitignore excludes. A walk of the
 // 13,445 Go and module files of kubernetes takes 33 to 38 milliseconds warm.
+//
+// A [Server.Restarts] server applies a change of a manifest in the background. Until then it
+// replies with its old configuration. When the walk finds a created, changed or deleted file whose
+// name matches a manifest of the language, the engine stops such a server, and the question
+// starts a new one.
 //
 // The diagnostics of a buffer are dropped when the engine replaces or releases the buffer. A
 // server can publish a report of a file after the release. The next open of the file drops that

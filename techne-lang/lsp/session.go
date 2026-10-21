@@ -70,6 +70,10 @@ type session struct {
 
 	opened map[string]sent
 
+	// settings are [Server.Settings] with the sections that [Server.Configure] returned at the
+	// start of the session.
+	settings map[string]any
+
 	reports *reports
 
 	working *working
@@ -91,16 +95,25 @@ type session struct {
 // start runs the server that declared names in root and connects to it over stdin and stdout.
 // The process does not end with ctx, because it serves every later question. The caller
 // checks with [Server.Installed] first, so a missing command is reported as unavailable and
-// not as a failed call.
+// not as a failed call. The settings of the session are [Server.Settings], and each section that
+// [Server.Configure] returns for root replaces the section of the same name.
 func start(ctx context.Context, declared Server, root string) (*session, error) {
 	held := &session{
 		stderr:   &tail{},
 		started:  time.Now(),
 		opened:   map[string]sent{},
+		settings: declared.Settings,
 		reports:  newReports(declared.DiskCheck != ""),
 		working:  newWorking(declared.DiskCheck, declared.Diagnosis),
 		watched:  newWatching(root),
 		offering: &asking{},
+	}
+	if declared.Configure != nil {
+		if configured := declared.Configure(root, os.Getenv); len(configured) > 0 {
+			held.settings = make(map[string]any, len(declared.Settings)+len(configured))
+			maps.Copy(held.settings, declared.Settings)
+			maps.Copy(held.settings, configured)
+		}
 	}
 
 	cmd := exec.CommandContext( //nolint:gosec // the server that the language module declares
@@ -136,7 +149,7 @@ func start(ctx context.Context, declared Server, root string) (*session, error) 
 	}()
 
 	client := answers{
-		root: root, settings: declared.Settings, indentation: declared.Indentation, offering: held.offering,
+		root: root, settings: held.settings, indentation: declared.Indentation, offering: held.offering,
 	}
 	stream := ordered{
 		Stream:  jsonrpc2.NewStream(pipes{out: out, in: in}),

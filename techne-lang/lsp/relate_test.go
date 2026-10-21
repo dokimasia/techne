@@ -66,6 +66,14 @@ func projected() map[string]string {
 	}
 }
 
+// The parts of the notes of the caveats of a preload for a server of open files, pinned as the
+// engine words them: unreportedNote of the files without a report, and openNote of a preload that
+// opened 200 of 201 files.
+const (
+	unreportedNote = "reported no diagnostics of these files that write Store"
+	openNote       = "reports errors only in the files it has open, and techne opened 200 of the 201 files"
+)
+
 // writing returns an engine of a scoped server over [lsptest.Content] in a.fake and one file
 // more than a preload opens, each with the content text.
 func writing(t *testing.T, text string) *lsp.Engine {
@@ -193,6 +201,97 @@ func TestRelate(t *testing.T) {
 			got, err := writing(t, "// Store\nStore{}\n").Relate(t.Context(), request, store, sema.ReferencedBy)
 			assert.NoError(t, err, "Relate of the uses of Store")
 			assert.True(t, cutShort(got.Caveats), "the answer has the caveat of a short preload")
+		})
+
+		{
+			tests := []struct {
+				name        string
+				giveComment string // the line comment of the language
+				giveText    string // the content of each file other than a.fake
+				want        bool   // whether the answer has the caveat of a short preload
+			}{
+				{
+					name:        "opens no file that writes the name only after the line comment of the language",
+					giveComment: "# ",
+					giveText:    "# Store\n\t# uses Store\n",
+				},
+				{
+					name:        "opens a file that writes the name after the line comment of another language",
+					giveComment: "# ",
+					giveText:    "// Store\n",
+					want:        true,
+				},
+				{
+					name:     "opens a file that writes the name after a comment of a language without a line comment",
+					giveText: "// Store\n",
+					want:     true,
+				},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					files := sample()
+					for i := range 201 {
+						files[fmt.Sprintf("other/f%d.fake", i)] = tt.giveText
+					}
+					d := lsptest.Declaration()
+					d.Comment.Line = tt.giveComment
+					server := lsptest.Server(lsptest.Scoped)
+					server.Scoped = true
+					e, err := lsp.New(lsptest.Workspace(t, files), d, server, nil)
+					assert.NoError(t, err, "New with the line comment "+tt.giveComment)
+					lsptest.Cleanup(t, e)
+					got, err := e.Relate(t.Context(), request, declared("Store", sema.KindStruct), sema.ReferencedBy)
+					assert.NoError(t, err, "Relate of the uses of Store")
+					assert.Equal(t, cutShort(got.Caveats), tt.want, "the answer has the caveat of a short preload")
+				})
+			}
+		}
+
+		{
+			tests := []struct {
+				name string
+				give lsptest.Mode
+			}{
+				{"returns a partial answer when a server of open files publishes no report of a file", lsptest.Ungated},
+				{
+					"returns a partial answer when a server of open files fails to return the diagnostics of a file",
+					lsptest.Unpulled,
+				},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					server := lsptest.Server(tt.give)
+					server.OpenFilesOnly = true
+					root := lsptest.Workspace(t, map[string]string{"a.fake": lsptest.Content, "b.fake": useOfStore})
+					got, err := lsptest.Engine(t, root, server).Relate(t.Context(), request,
+						declared("Store", sema.KindStruct), sema.ReferencedBy)
+					assert.NoError(t, err, "Relate of the uses of Store")
+					assert.Equal(t, got.Completeness, trust.ScopePartial, "the completeness of the answer")
+					at := slices.IndexFunc(got.Caveats, func(one trust.Caveat) bool {
+						return one.Code == trust.CaveatIndexWarming && strings.Contains(one.Note, unreportedNote)
+					})
+					assert.InRange(t, at, 0, 1<<63, "the index of the caveat of a file without a report")
+					assert.Equal(t, got.Caveats[at].Paths, []source.Path{"b.fake"}, "the files without a report")
+				})
+			}
+		}
+
+		t.Run("returns a partial answer past the files that a server of open files opens", func(t *testing.T) {
+			t.Parallel()
+			files := sample()
+			for i := range 201 {
+				files[fmt.Sprintf("other/f%d.fake", i)] = useOfStore
+			}
+			server := lsptest.Server(lsptest.Quiet)
+			server.OpenFilesOnly = true
+			got, err := lsptest.Engine(t, lsptest.Workspace(t, files), server).Relate(t.Context(), request,
+				declared("Store", sema.KindStruct), sema.ReferencedBy)
+			assert.NoError(t, err, "Relate of the uses of Store")
+			assert.Equal(t, got.Completeness, trust.ScopePartial, "the completeness of the answer")
+			assert.True(t, caveated(got.Caveats, trust.CaveatIndexWarming, openNote),
+				"the answer has the caveat of a short preload of a server of open files")
 		})
 
 		t.Run("returns a whole answer past the preload when tsserver loads the project of every file",

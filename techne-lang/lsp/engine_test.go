@@ -124,6 +124,30 @@ func projectless(t *testing.T, files map[string]string, give string, links map[s
 	return lsptest.Engine(t, root, server)
 }
 
+// replies returns the replies of the client to the requests that the scripted server sends
+// during initialize in the Asks mode over files, by request name. The initialization options that
+// the server received are under the name options.
+func replies(t *testing.T, files map[string]string, options ...lsptest.Option) map[string]string {
+	t.Helper()
+	got, err := serving(t, lsptest.Asks, files, options...).
+		Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+	assert.NoError(t, err, "Verify in the Asks mode")
+	out := map[string]string{}
+	for _, message := range messages(got.Items) {
+		name, reply, split := strings.Cut(message, "=")
+		assert.True(t, split, "the message "+message+" names a request")
+		out[name] = reply
+	}
+	return out
+}
+
+// configuring returns the option that makes the Configure of a declaration return settings.
+func configuring(settings map[string]any) lsptest.Option {
+	return func(s *lsp.Server) {
+		s.Configure = func(string, func(string) string) map[string]any { return settings }
+	}
+}
+
 // messages returns the diagnostic messages of findings, in order.
 func messages(findings []edit.Finding) []string {
 	out := make([]string, 0, len(findings))
@@ -425,6 +449,51 @@ func TestEngine(t *testing.T) {
 			assert.NotContains(t, string(recorded), protocol.MethodTextDocumentDidSave, "the messages of the server")
 		})
 
+		t.Run("starts a new server after a change of a manifest that a restarting server watches",
+			func(t *testing.T) {
+				t.Parallel()
+				starting, requesting := filepath.Join(t.TempDir(), "starts"), filepath.Join(t.TempDir(), "requests")
+				e, root := manifested(t, true, lsptest.RecordStarts(starting), lsptest.RecordRequests(requesting))
+				rewrite(t, root, lsptest.Manifest, "second")
+				got, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+				assert.NoError(t, err, "the Verify after the change of the manifest")
+				assert.Equal(t, messages(got.Items), []string{"manifest=second"}, "the manifest that the server read")
+				assert.Equal(t, starts(t, starting), 2, "the number of servers started")
+				assert.Equal(t, requested(t, requesting, "shutdown"), 1, "the shutdowns of a server")
+			})
+
+		t.Run("starts a new server after the deletion of a manifest that a restarting server watches",
+			func(t *testing.T) {
+				t.Parallel()
+				log := filepath.Join(t.TempDir(), "starts")
+				e, root := manifested(t, true, lsptest.RecordStarts(log))
+				assert.NoError(t, os.Remove(filepath.Join(root, lsptest.Manifest)), "the test deletes the manifest")
+				_, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+				assert.NoError(t, err, "the Verify after the deletion of the manifest")
+				assert.Equal(t, starts(t, log), 2, "the number of servers started")
+			})
+
+		t.Run("keeps a restarting server after a change of a watched file that is not a manifest", func(t *testing.T) {
+			t.Parallel()
+			log := filepath.Join(t.TempDir(), "starts")
+			e, root := manifested(t, true, lsptest.RecordStarts(log))
+			rewrite(t, root, "other.toml", "second")
+			_, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "the Verify after the change of other.toml")
+			assert.Equal(t, starts(t, log), 1, "the number of servers started")
+		})
+
+		t.Run("keeps a server that does not restart after a change of a manifest", func(t *testing.T) {
+			t.Parallel()
+			log := filepath.Join(t.TempDir(), "starts")
+			e, root := manifested(t, false, lsptest.RecordStarts(log))
+			rewrite(t, root, lsptest.Manifest, "second")
+			got, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+			assert.NoError(t, err, "the Verify after the change of the manifest")
+			assert.Equal(t, messages(got.Items), []string{"manifest=first"}, "the manifest that the server read")
+			assert.Equal(t, starts(t, log), 1, "the number of servers started")
+		})
+
 		t.Run("reads a file again after a question ends while a quiet server replaces its buffer", func(t *testing.T) {
 			t.Parallel()
 			e, root := rooted(t, lsptest.Quiet, sample())
@@ -479,6 +548,23 @@ func TestEngine(t *testing.T) {
 			assert.Equal(t, paths(got.Items), []source.Path{"a.fake", "b.fake"}, "the files the rename changes")
 		})
 	})
+}
+
+// manifested returns an engine of the Manifests mode with options, and the root of its
+// workspace, after one Verify of a.fake has started the server. The workspace contains
+// [lsptest.Content] in a.fake, the manifest with the content first and other.toml, which the
+// server watches as it watches the manifest. restarts is the [lsp.Server.Restarts] of the server.
+func manifested(t *testing.T, restarts bool, options ...lsptest.Option) (*lsp.Engine, string) {
+	t.Helper()
+	root := lsptest.Workspace(t, map[string]string{
+		"a.fake": lsptest.Content, lsptest.Manifest: "first", "other.toml": "first",
+	})
+	server := lsptest.Server(lsptest.Manifests, options...)
+	server.Restarts = restarts
+	e := lsptest.Engine(t, root, server)
+	_, err := e.Verify(t.Context(), engine.Request{Scope: "a.fake"}, nil)
+	assert.NoError(t, err, "the Verify that starts the server")
+	return e, root
 }
 
 // rewrite writes content to the file name under root.

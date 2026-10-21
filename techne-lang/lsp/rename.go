@@ -108,8 +108,8 @@ func (e *Engine) renaming(
 		return engine.Result[edit.Change]{}, err
 	}
 	covered, reaches, caveats := e.corroborated(ctx, held, doc, at, uses, changes, ready)
-	if short != nil {
-		covered, caveats = trust.ScopePartial, append(caveats, *short)
+	if len(short) > 0 {
+		covered, caveats = trust.ScopePartial, append(caveats, short...)
 	}
 	if unspelled != nil {
 		covered, caveats = trust.ScopePartial, append(caveats, *unspelled)
