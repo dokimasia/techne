@@ -1,5 +1,14 @@
 # go.dokimi.dev/techne/lang/go
 
+## 0.0.3
+
+### Patch Changes
+
+- Updated dependencies [f7a5bb4]
+- Updated dependencies [f7a5bb4]
+- Updated dependencies [f7a5bb4]
+  - go.dokimi.dev/techne/lang@0.1.0
+
 ## 0.0.2
 
 ### Patch Changes
