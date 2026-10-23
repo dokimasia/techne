@@ -18,7 +18,7 @@ require (
 require (
 	github.com/bmatcuk/doublestar/v4 v4.10.3
 	github.com/tree-sitter/go-tree-sitter v0.25.0
-	go.dokimi.dev/assert v0.2.0
+	go.dokimi.dev/assert v0.3.1
 	go.dokimi.dev/techne/core v0.0.0
 	go.lsp.dev/jsonrpc2 v1.0.1
 	go.lsp.dev/protocol v1.0.1
