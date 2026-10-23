@@ -6,7 +6,7 @@ module go.dokimi.dev/techne/lang/mock
 go 1.27.3
 
 require (
-	go.dokimi.dev/assert v0.2.0
+	go.dokimi.dev/assert v0.3.1
 	go.dokimi.dev/techne/core v0.0.0
 	go.dokimi.dev/techne/lang v0.1.0
 )
