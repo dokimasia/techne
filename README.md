@@ -71,36 +71,57 @@ the `go.mod` of techne has replace directives. `techne --version` prints the ver
 
 ## Install the language servers
 
-`workspace`, `outline`, `search`, `relations` and `document.symbol` need only the grammar.
-`resolve`, `verify`, `rename.symbol`, `move.file` and `extract.function` need the language server
-of the language on `PATH`. With the server, `relations` returns resolved sites instead of the
-sites that spell the name.
 
-Homebrew installs every server but csharp-ls, and the .NET SDK installs csharp-ls:
+techne starts the language server of a language from your `PATH`. `workspace`, `outline`,
+`search`, `relations` and `document.symbol` need only the grammar. `resolve`, `verify`,
+`rename.symbol`, `move.file` and `extract.function` need the server of the language. With the
+server, `relations` returns resolved sites instead of the sites that spell the name.
+
+Install the server of each language that you work in:
+
+| Language | Server | Install |
+|---|---|---|
+| C | `clangd` | `brew install llvm`, the `clangd` package of your distribution, or the LLVM installer of [releases.llvm.org](https://releases.llvm.org) on Windows |
+| C# | `csharp-ls` | `dotnet tool install --global csharp-ls` |
+| Go | `gopls` | `go install golang.org/x/tools/gopls@latest` |
+| Java | `jdtls` | `brew install jdtls`, or a [milestone build](https://download.eclipse.org/jdtls/milestones/) with its `bin` directory on your `PATH` |
+| JavaScript and TypeScript | `typescript-language-server`, or `tsc` for TypeScript 7 | `npm install -g typescript-language-server`, and `npm install -g typescript` for TypeScript 7 |
+| Python | `pyright-langserver` | `npm install -g pyright` |
+| Ruby | `ruby-lsp` | `gem install ruby-lsp` |
+| Rust | `rust-analyzer` | `rustup component add rust-analyzer` |
+| Scala | `metals` | `cs install metals`, with [Coursier](https://get-coursier.io) |
+
+On macOS and Linux, Homebrew installs every server but csharp-ls with one command:
 
 ```sh
 brew install gopls pyright typescript-language-server rust-analyzer jdtls llvm ruby-lsp metals
-dotnet tool install --global csharp-ls
 ```
 
-Install only the servers of your languages. A server from the packages of your distribution works
-as well, when its program is on `PATH`.
+These servers need a runtime, or a directory on your `PATH`:
 
-| Language | Program | Homebrew formula | The project needs |
-|---|---|---|---|
-| C | `clangd` | `llvm` | `compile_commands.json` |
-| C# | `csharp-ls` | none | a `.csproj` or a `.sln` that `dotnet restore` has restored |
-| Go | `gopls`, and `go` for the type checker that runs inside techne | `gopls` | `go.mod` or `go.work` |
-| Java | `jdtls` | `jdtls` | a Maven or a Gradle build |
-| JavaScript and TypeScript | `typescript-language-server`, or `tsc` for a workspace on TypeScript 7 | `typescript-language-server` | the `typescript` package in the workspace |
-| Python | `pyright-langserver` | `pyright` | an interpreter with the dependencies of the project |
-| Ruby | `ruby-lsp` | `ruby-lsp` | a `Gemfile.lock` when the project has a `Gemfile` |
-| Rust | `rust-analyzer` | `rust-analyzer` | `Cargo.toml` |
-| Scala | `metals` | `metals` | a build that metals imports, such as `build.sbt` |
+- csharp-ls needs the .NET 10 SDK or later. `dotnet tool install` writes the program into
+  `~/.dotnet/tools`, so put that directory on your `PATH`.
+- `go install` writes gopls into `$(go env GOPATH)/bin` by default, so put that directory on your
+  `PATH`.
+- jdtls needs Java 21 or later, and its `bin/jdtls` script needs Python 3.9. The Homebrew formula
+  installs both.
+- metals needs a JDK. The Homebrew formula installs one.
 
-csharp-ls needs the .NET 10 SDK or later. Put `~/.dotnet/tools` on your `PATH`, because
-`dotnet tool install` writes the program there. `capabilities` lists each engine that cannot run,
-with the reason.
+Each server reads the build of its project:
+
+| Language | The project needs |
+|---|---|
+| C | `compile_commands.json` |
+| C# | a `.csproj` or a `.sln` that `dotnet restore` has restored |
+| Go | `go.mod` or `go.work`, and the `go` command for the type checker that runs inside techne |
+| Java | a Maven or a Gradle build |
+| JavaScript and TypeScript | the `typescript` package in `node_modules`. From version 7, techne runs `tsc --lsp` |
+| Python | an interpreter with the dependencies of the project |
+| Ruby | a `Gemfile.lock` when the project has a `Gemfile` |
+| Rust | `Cargo.toml` |
+| Scala | a build that metals imports, such as `build.sbt` |
+
+`capabilities` lists each engine that cannot run, with the reason.
 
 ## Connect an agent
 
