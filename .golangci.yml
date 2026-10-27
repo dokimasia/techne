@@ -422,8 +422,11 @@ formatters:
     gofumpt:
       extra:
         group-params: true
+    # golines keeps each struct tag as it is written. Its default, reformat-tags, pads the keys of
+    # the tags of a struct into columns.
     golines:
       max-len: 120
+      reformat-tags: false
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
