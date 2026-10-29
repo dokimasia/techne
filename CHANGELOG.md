@@ -1,5 +1,17 @@
 # go.dokimi.dev/techne
 
+## 0.1.0
+
+### Minor Changes
+
+- b482d32: **Breaking:** Release the Windows archives of techne as `.tar.gz` in place of `.zip`.
+- b482d32: Release `deb`, `rpm` and `apk` packages of techne.
+
+### Patch Changes
+
+- b482d32: Build the binaries of techne on Linux with the zig and the UPX that ergon pins.
+- 84951d9: Read the version of `techne --version` from the build information that Go writes.
+
 ## 0.0.3
 
 ### Patch Changes
