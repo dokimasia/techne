@@ -313,13 +313,27 @@ go:
   # tools compiles for every platform; registry, terraform for a provider of the Terraform Registry,
   # whose release remains a draft until ergon release sign signs its SHA256SUMS with GPG and
   # publishes it.
-  binaries: []
+  binaries:
+    - name: techne
+      module: .
+      main: ./cmd/techne
+      description: Serves code intelligence and refactoring of ten languages to AI agents over MCP
+      license: ""
+      registry: ""
+      platforms: []
+      packages:
+        - deb
+        - rpm
+        - apk
+      completions: false
+      homebrew: true
+      cgo: true
   # The options of the casks of the commands under binaries whose homebrew is true.
   homebrew:
     # The repository of the Homebrew tap on GitHub, as owner/name, to which the job homebrew of
     # release.yml commits each cask, with a token of the GitHub App of ERGON_APP_CLIENT_ID and
     # ERGON_APP_PRIVATE_KEY.
-    tap: ""
+    tap: dokimasia/homebrew-tap
   # The pin of setup-go, the runners and the versions of Go of the job check-go, and its limit in
   # minutes. Empty runners select every runner of the section github, and empty versions the version
   # of go.work.

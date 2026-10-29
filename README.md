@@ -40,21 +40,28 @@ tap "dokimasia/tap"
 cask "dokimasia/tap/techne"
 ```
 
+### Linux packages
+
+Each release has `deb`, `rpm` and `apk` packages for amd64 and arm64. Download the package of
+your distribution from the [latest release](https://github.com/dokimasia/techne/releases/latest),
+check its digest against `checksums.txt`, and install it with the package manager of your
+distribution. The package installs `techne` into `/usr/bin`.
+
 ### Windows
 
-Download `techne_<version>_windows_amd64.zip` or `techne_<version>_windows_arm64.zip` from the
-[latest release](https://github.com/dokimasia/techne/releases/latest). Check its digest against
-`checksums.txt`, and put `techne.exe` from the archive on your `PATH`.
+Download `techne_<version>_windows_amd64.tar.gz` or `techne_<version>_windows_arm64.tar.gz` from
+the [latest release](https://github.com/dokimasia/techne/releases/latest). Check its digest
+against `checksums.txt`, extract it with `tar -xf`, and put `techne.exe` on your `PATH`.
 
 ### Verify a download
 
-The latest release has archives for Linux, macOS and Windows on amd64 and arm64, and
-`checksums.txt` with the SHA-256 digest of each archive. cosign signs `checksums.txt` without a
-key, and each archive has an SPDX SBOM. `gh attestation verify` checks the build provenance of an
-archive or of an installed binary:
+The latest release has archives for Linux, macOS and Windows on amd64 and arm64, packages for
+Linux, and `checksums.txt` with the SHA-256 digest of each file. cosign signs `checksums.txt`
+without a key, and each archive and package has an SPDX SBOM. `gh attestation verify` checks the
+build provenance of an archive or a package:
 
 ```sh
-gh attestation verify "$(command -v techne)" --repo dokimasia/techne
+gh attestation verify techne_<version>_linux_amd64.tar.gz --repo dokimasia/techne
 ```
 
 ### Build from source
