@@ -78,7 +78,6 @@ the `go.mod` of techne has replace directives. `techne --version` prints the ver
 
 ## Install the language servers
 
-
 techne starts the language server of a language from your `PATH`. `workspace`, `outline`,
 `search`, `relations` and `document.symbol` need only the grammar. `resolve`, `verify`,
 `rename.symbol`, `move.file` and `extract.function` need the server of the language. With the
