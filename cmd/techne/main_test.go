@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 
@@ -20,26 +19,13 @@ import (
 	"go.dokimi.dev/techne/internal/version"
 )
 
-// stamps are the values that the build of the tests gives the fields of the templates of the
-// release configuration.
-var stamps = map[string]string{
-	"Version":    "1.2.3",
-	"Commit":     "0123456789abcdef0123456789abcdef01234567",
-	"CommitDate": "2026-09-24T00:00:00Z",
-}
-
-// stamp matches a -X flag of the release configuration, and captures the variable and the
-// field of its template: -X go.dokimi.dev/techne/internal/version.buildVersion={{.Version}}.
-var stamp = regexp.MustCompile(`-X (\S+)=\{\{\s*\.(\w+)\s*\}\}`)
-
 // store is a file of the mock language with a declaration and a use of it.
 const store = ";; Store maps a name to an item.\ntype Store\n  field size\nfunc New\n  use Store\n"
 
 // binary is the path of the command that TestMain builds.
 var binary string
 
-// TestMain builds the command with the -X flags of the release configuration, runs the tests,
-// and removes the build.
+// TestMain builds the command and runs the tests. It removes the build after the tests.
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "techne-cmd-")
 	if err != nil {
@@ -56,32 +42,14 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// build builds the command into the directory dir with the -X flags of the release
-// configuration, each with its value in stamps, and returns the path of the binary. go build
-// names the binary after the command, with the suffix of executables of the system, such as .exe
-// on Windows. It returns an error for a field that stamps does not have, and for a configuration
-// without a flag for each field of stamps.
+// build builds the command into the directory dir and returns the path of the binary. The build
+// does not record the information of version control, so the binary has the version dev. go build
+// names the binary after the command, with the suffix of executables of the system, such as .exe on
+// Windows.
 func build(dir string) (string, error) {
-	release, err := os.ReadFile(filepath.Join("..", "..", ".goreleaser.yml"))
-	if err != nil {
-		return "", fmt.Errorf("read the release configuration: %w", err)
-	}
-	var flags []string
-	for _, match := range stamp.FindAllStringSubmatch(string(release), -1) {
-		value, known := stamps[match[2]]
-		if !known {
-			return "", fmt.Errorf("the release configuration stamps the field %s, which the tests do not set",
-				match[2])
-		}
-		flags = append(flags, "-X "+match[1]+"="+value)
-	}
-	if len(flags) != len(stamps) {
-		return "", fmt.Errorf("the release configuration has %d -X flags for the %d fields of the tests",
-			len(flags), len(stamps))
-	}
 	// TestMain builds the command once for every test, so the build has no test's context.
-	out, err := exec.CommandContext(context.Background(), "go", "build", "-ldflags", strings.Join(flags, " "), "-o",
-		dir, ".").CombinedOutput()
+	out, err := exec.CommandContext(context.Background(), "go", "build", "-buildvcs=false", "-o", dir, ".").
+		CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("go build: %w\n%s", err, out)
 	}
@@ -148,12 +116,11 @@ func TestTechne(t *testing.T) {
 	t.Run("main", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("writes the version of the release configuration for --version", func(t *testing.T) {
+		t.Run("writes the version of the build for --version", func(t *testing.T) {
 			t.Parallel()
 			stdout, stderr, code := ran(t, environment(t), "--version")
 			assert.Equal(t, code, 0, "the exit status")
-			assert.Equal(t, stdout, version.Format(stamps["Version"], stamps["Commit"], stamps["CommitDate"])+"\n",
-				"the standard output")
+			assert.Equal(t, stdout, version.Development+"\n", "the standard output")
 			assert.Empty(t, stderr, "the standard error")
 		})
 

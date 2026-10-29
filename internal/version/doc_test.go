@@ -18,7 +18,7 @@ func TestDoc(t *testing.T) {
 	t.Run("Dependency position", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("imports no package", func(t *testing.T) {
+		t.Run("imports the standard library and two packages of golang.org/x/mod", func(t *testing.T) {
 			t.Parallel()
 			out, err := exec.CommandContext(t.Context(), "go", "list", "-json", ".").Output()
 			assert.NoError(t, err, "go list of the package")
@@ -26,7 +26,9 @@ func TestDoc(t *testing.T) {
 				Imports []string `json:"Imports"`
 			}
 			assert.NoError(t, json.Unmarshal(out, &listed), "the output of go list")
-			assert.Empty(t, listed.Imports, "the imports of the package")
+			assert.Equal(t, listed.Imports,
+				[]string{"golang.org/x/mod/module", "golang.org/x/mod/semver", "runtime/debug", "strings"},
+				"the imports of the package")
 		})
 	})
 }

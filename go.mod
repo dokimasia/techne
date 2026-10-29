@@ -24,6 +24,7 @@ require (
 	go.dokimi.dev/techne/presenter v0.0.0
 	go.dokimi.dev/techne/service v0.0.1
 	go.dokimi.dev/techne/tool v0.0.0
+	golang.org/x/mod v0.42.0
 )
 
 require (
@@ -48,7 +49,6 @@ require (
 	go.lsp.dev/jsonrpc2 v1.0.1 // indirect
 	go.lsp.dev/protocol v1.0.1 // indirect
 	go.lsp.dev/uri v1.0.1 // indirect
-	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect

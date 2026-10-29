@@ -158,7 +158,7 @@ The presenter serves every tool of its registry and sends each payload as the to
 | Package | Contains | Imports |
 |---|---|---|
 | `internal/app` | the command line, and the composition of the languages, the mock languages, the services, the tools and the presenter | every module |
-| `internal/version` | the version of the build, which the release stamps with the linker | nothing |
+| `internal/version` | the version of the build, which the go command records from the tag of a release | `golang.org/x/mod` |
 | `cmd/techne` | the command | `internal/app`, `internal/version` |
 | `test/corpus` | the harness that drives the binary over large repositories. Its test `TestCorpus` builds only with the tag `corpus` | `core/source`, `tool`, the MCP SDK |
 
