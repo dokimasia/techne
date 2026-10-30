@@ -1,5 +1,5 @@
-github.com/bmatcuk/doublestar/v4 v4.10.3 h1:1UIv1+fqH3++ViVkpnaPTB+Pi1UHycnPFAq14zgK+gI=
-github.com/bmatcuk/doublestar/v4 v4.10.3/go.mod h1:xBQ8jztBU6kakFMg+8WGxn0c6z1fTSPVIjEY1Wr7jzc=
+github.com/bmatcuk/doublestar/v4 v4.10.4 h1:oTKkRmRuOsKMqFe1AQazd9gGBFNEpOmgKp/xzB97dnA=
+github.com/bmatcuk/doublestar/v4 v4.10.4/go.mod h1:xBQ8jztBU6kakFMg+8WGxn0c6z1fTSPVIjEY1Wr7jzc=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dokimasia/tree-sitter-go v0.0.0-20261008091630-10115b8fc25d h1:H38QmybYzIVB2KZe7IpJsZXtTHWtb0j6uCMIu0jeurc=
@@ -56,8 +56,8 @@ github.com/tree-sitter/tree-sitter-typescript v0.23.2 h1:/Odvphn18PniVixb9e97X0D
 github.com/tree-sitter/tree-sitter-typescript v0.23.2/go.mod h1:zjzMXT/Ulffel2xfOcAkQQkiAkmgnbtPGlFQw/5X4xA=
 github.com/yosida95/uritemplate/v3 v3.0.2 h1:Ed3Oyj9yrmi9087+NczuL5BwkIc4wvTb5zIM+UJPGz4=
 github.com/yosida95/uritemplate/v3 v3.0.2/go.mod h1:ILOh0sOhIJR3+L/8afwt/kE++YT040gmv5BQTMR2HP4=
-go.dokimi.dev/assert v0.2.0 h1:g0gJpU6Zu9Nyb/gxCniz4znBEVksOjahgaLL7IgcNeo=
-go.dokimi.dev/assert v0.2.0/go.mod h1:NeZvtoRhjUZSooEp8kN1mMakVUowb+EDKFR/YOUey2w=
+go.dokimi.dev/assert v0.9.0 h1:OGkugoEEt9ep+mpBq/60zJLCmWXryxrk4RTOMDZNK1A=
+go.dokimi.dev/assert v0.9.0/go.mod h1:NeZvtoRhjUZSooEp8kN1mMakVUowb+EDKFR/YOUey2w=
 go.lsp.dev/jsonrpc2 v1.0.1 h1:JZAchpm6RcOuwEOnZ7kF3kA1EpEjdJZ/6rMSfOF3+F4=
 go.lsp.dev/jsonrpc2 v1.0.1/go.mod h1:WN+TesqrPumBmUdsuWyn9DHq3zl4i85L/qG0NLdj8qg=
 go.lsp.dev/protocol v1.0.1 h1:kLWUIk1v/deXxo1D0VO4avjZnfeuZ82mouJgJd/NbdU=

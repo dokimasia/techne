@@ -8,14 +8,14 @@ go 1.27.3
 require (
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 	github.com/tree-sitter/tree-sitter-go v0.25.0
-	go.dokimi.dev/assert v0.2.0
+	go.dokimi.dev/assert v0.9.0
 	go.dokimi.dev/techne/core v0.0.0
 	go.dokimi.dev/techne/lang v0.1.0
 	golang.org/x/tools v0.52.0
 )
 
 require (
-	github.com/bmatcuk/doublestar/v4 v4.10.3 // indirect
+	github.com/bmatcuk/doublestar/v4 v4.10.4 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260623181947-01eb4420fa68 // indirect
 	github.com/mattn/go-pointer v0.0.1 // indirect
 	go.lsp.dev/jsonrpc2 v1.0.1 // indirect
