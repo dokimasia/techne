@@ -7,7 +7,7 @@ go 1.27.3
 
 require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
-	go.dokimi.dev/assert v0.2.0
+	go.dokimi.dev/assert v0.20.0
 	go.dokimi.dev/techne/tool v0.0.0
 )
 
@@ -19,8 +19,9 @@ require (
 	go.dokimi.dev/techne/core v0.0.0 // indirect
 	golang.org/x/oauth2 v0.35.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
+	golang.org/x/tools v0.52.0 // indirect
 )
 
 replace (
