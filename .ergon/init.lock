@@ -1,5 +1,5 @@
 {
-  "ergon": "0.17.0",
+  "ergon": "0.17.2",
   "files": [
     {
       "path": ".commitlint.yaml",
@@ -64,7 +64,7 @@
     {
       "path": ".github/workflows/ci.yml",
       "producer": "github",
-      "sha256": "f3c6dc611200c39dead228510d2b5c3d975cdc6dd1582e5eda24dc12d0e2c9dc"
+      "sha256": "ca5582534e1ca7a560fdc6ca23ae1ad1917ba2fe20338b3d4fc5361a4208dc1d"
     },
     {
       "path": ".github/workflows/codeql.yml",
@@ -74,12 +74,12 @@
     {
       "path": ".github/workflows/nightly.yml",
       "producer": "github",
-      "sha256": "79be51dcbe60f5ef9197ca4c11d9d400dd0bef45c9ac981f1fad7059c816f2c5"
+      "sha256": "0765246c5c12769d256b3a90e0def64dc44c79a75016473492d0613759372be4"
     },
     {
       "path": ".github/workflows/release.yml",
       "producer": "github",
-      "sha256": "2997e71de585bdf3edb86d921b3518a76bdb9ba69973182ff2528e18325e2827"
+      "sha256": "56d0be0cfcf5ef85b80e1bf744769005dd874fa73288f615e77d0c85d5948da1"
     },
     {
       "path": ".github/workflows/security.yml",
@@ -137,7 +137,7 @@
       "path": "Makefile",
       "producer": "common",
       "local": "f2c96a3fede76b5cb7dc626d8d7be89f606aaaec06c6fff7718db154759d895e",
-      "sha256": "67cc14dd6fb3af7e671f971c6410a90f25e57a5d209a848fc18fff7ed8824164"
+      "sha256": "0a11deb5c67256ee27bef3821752d1f0afbd7aa933eed61134f64fe4c19b42cc"
     }
   ],
   "settings": {
@@ -244,7 +244,11 @@
     ],
     "go.homebrew.tap": "",
     "go.lint.analyzers": "go.dokimi.dev/lint/golangci@v0.2.0",
+    "go.lint.cache-invalidation-interval": 7,
     "go.lint.plugins": {},
+    "go.longtest.args": [
+      "-count=1"
+    ],
     "go.mutate.args": [],
     "go.mutate.skip": [],
     "go.mutate.timeout": "0s",
@@ -273,7 +277,7 @@
       "windows/amd64": "cbe953787074611f1334cbf37dc1cf953995bb8c45398eb4fc7bb781d29c1f2a"
     },
     "go.tools.cosign.version": "3.1.4",
-    "go.tools.dokimi-mutate-go": "go.dokimi.dev/mutate/cmd/dokimi-mutate-go@v0.1.0",
+    "go.tools.dokimi-mutate-go": "go.dokimi.dev/mutate/cmd/dokimi-mutate-go@v0.3.0",
     "go.tools.golangci-lint": "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0",
     "go.tools.goreleaser.sha256": {
       "darwin/amd64": "164fce297e601ec00009e40d26858789b637335b5564bff2c99027b10d28bafe",
